@@ -46,7 +46,7 @@ import {
 
 export default function App() {
   // Navigation & View State
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'configs' | 'proxies' | 'join' | 'settings' | 'autopost' | 'broadcast'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'configs' | 'proxies' | 'vpn_files' | 'join' | 'settings' | 'autopost' | 'broadcast'>('dashboard');
   
   // Data States
   const [stats, setStats] = useState<DashboardStats>({
@@ -65,6 +65,7 @@ export default function App() {
   const [forceJoinChannels, setForceJoinChannels] = useState<ForceJoinChannel[]>([]);
   const [configs, setConfigs] = useState<ConfigItem[]>([]);
   const [proxies, setProxies] = useState<ProxyItem[]>([]);
+  const [vpnFiles, setVpnFiles] = useState<any[]>([]);
   const [users, setUsers] = useState<BotUser[]>([]);
   const [logs, setLogs] = useState<BotLog[]>([]);
   const [settings, setSettings] = useState<SystemSettings>({
@@ -84,6 +85,7 @@ export default function App() {
       proxyCount: 1,
       customText: '',
       adText: '',
+      postFiles: false,
       silentMode: false,
       lastPostedAt: null
     }
@@ -126,6 +128,7 @@ export default function App() {
     proxyCount: 1,
     customText: '',
     adText: '',
+    postFiles: false,
     silentMode: false,
     lastPostedAt: null
   });
@@ -156,7 +159,7 @@ export default function App() {
   const fetchData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes] = await Promise.all([
+      const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes] = await Promise.all([
         fetch('/api/stats').then(r => r.json()),
         fetch('/api/sources').then(r => r.json()),
         fetch('/api/force-join').then(r => r.json()),
@@ -164,7 +167,8 @@ export default function App() {
         fetch('/api/proxies').then(r => r.json()),
         fetch('/api/users').then(r => r.json()),
         fetch('/api/logs').then(r => r.json()),
-        fetch('/api/settings').then(r => r.json())
+        fetch('/api/settings').then(r => r.json()),
+        fetch('/api/vpn-files').then(r => r.json())
       ]);
 
       setStats(statsRes);
@@ -172,6 +176,7 @@ export default function App() {
       setForceJoinChannels(fjRes);
       setConfigs(configsRes);
       setProxies(proxiesRes || []);
+      setVpnFiles(vpnRes || []);
       setUsers(usersRes);
       setLogs(logsRes);
       setSettings(settingsRes);
@@ -526,6 +531,25 @@ export default function App() {
     }
   };
 
+  const handleMarkConfigStatus = async (id: string, status: string) => {
+    try {
+      const res = await fetch(`/api/configs/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setConfigs(prev => prev.map(c => c.id === id ? { ...c, status: status as any, latency: status === 'working' ? 10 : c.latency, lastChecked: new Date().toISOString() } : c));
+        showToast(`وضعیت کانفیگ با موفقیت به ${status === 'working' ? 'فعال' : 'غیرفعال'} تغییر یافت.`, 'success');
+      } else {
+        showToast(data.message || 'خطا در تغییر وضعیت', 'error');
+      }
+    } catch (err: any) {
+      showToast('خطای شبکه در تغییر وضعیت', 'error');
+    }
+  };
+
   // --- Proxy Handlers ---
   const handleTestAllProxies = async () => {
     setActionLoading('test_proxies');
@@ -540,6 +564,25 @@ export default function App() {
     } finally {
       setActionLoading(null);
       fetchData(true);
+    }
+  };
+
+  const handleMarkProxyStatus = async (id: string, status: string) => {
+    try {
+      const res = await fetch(`/api/proxies/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setProxies(prev => prev.map(p => p.id === id ? { ...p, status: status as any, latency: status === 'working' ? 10 : p.latency, lastChecked: new Date().toISOString() } : p));
+        showToast(`وضعیت پروکسی با موفقیت به ${status === 'working' ? 'فعال' : 'غیرفعال'} تغییر یافت.`, 'success');
+      } else {
+        showToast(data.message || 'خطا در تغییر وضعیت', 'error');
+      }
+    } catch (err: any) {
+      showToast('خطای شبکه در تغییر وضعیت', 'error');
     }
   };
 
@@ -574,6 +617,38 @@ export default function App() {
     } finally {
       setActionLoading(null);
       fetchData(true);
+    }
+  };
+
+  // --- VPN Files Handlers ---
+  const handleDeleteVpnFile = async (id: string) => {
+    if (!confirm('آیا از حذف این فایل مطمئن هستید؟')) return;
+    try {
+      const res = await fetch(`/api/vpn-files/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        setVpnFiles(prev => prev.filter(f => f.id !== id));
+        showToast('فایل با موفقیت حذف شد.', 'success');
+      }
+    } catch (err) {
+      showToast('خطا در حذف فایل', 'error');
+    }
+  };
+
+  const handleClearAllVpnFiles = async () => {
+    if (!confirm('هشدار: آیا می‌خواهید تمام فایل‌های ذخیره شده را حذف کنید؟')) return;
+    setActionLoading('clear_all_vpn_files');
+    try {
+      const res = await fetch('/api/vpn-files', { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        setVpnFiles([]);
+        showToast('تمامی فایل‌ها با موفقیت حذف شدند.', 'success');
+      }
+    } catch (err) {
+      showToast('خطا در حذف فایل‌ها', 'error');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -867,6 +942,21 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('vpn_files')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
+              activeTab === 'vpn_files'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+            }`}
+          >
+            <Download className="w-4 h-4" />
+            <span>فایل‌های VPN</span>
+            <span className="mr-auto bg-blue-500/20 text-blue-300 text-xs px-2 py-0.5 rounded-full">
+              {vpnFiles.length} فایل
+            </span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('join')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
               activeTab === 'join'
@@ -940,6 +1030,7 @@ export default function App() {
               {activeTab === 'sources' && 'مدیریت و پایش منابع'}
               {activeTab === 'configs' && 'بانک جامع کانفیگ‌های استخراج شده'}
               {activeTab === 'proxies' && 'بانک جامع پروکسی‌های استخراج شده'}
+              {activeTab === 'vpn_files' && 'بانک فایل‌های پیکربندی (.npvt, .ovpn)'}
               {activeTab === 'join' && 'بررسی عضویت اجباری (Force Join)'}
               {activeTab === 'settings' && 'پیکربندی هوشمند ربات و پلتفرم'}
               {activeTab === 'autopost' && 'زمان‌بندی و ارسال خودکار پست'}
@@ -950,6 +1041,7 @@ export default function App() {
               {activeTab === 'sources' && 'تعریف کانال‌های تلگرامی، آدرس‌های ساب و گیت‌هاب جهت استخراج خودکار.'}
               {activeTab === 'configs' && 'بررسی، تست اتصال و برندسازی کانفیگ‌های ویتوری و NapsternetV.'}
               {activeTab === 'proxies' && 'بررسی و مدیریت پروکسی‌های تلگرامی Socks5 و MTProto جهت ارائه به کاربران یا پست کانال.'}
+              {activeTab === 'vpn_files' && 'مشاهده و مدیریت فایل‌های جمع‌آوری شده از منابع جهت ارسال مستقیم به کانال.'}
               {activeTab === 'join' && 'تنظیم کانال‌های حامی جهت ملزم کردن کاربران برای عضویت قبل از استفاده.'}
               {activeTab === 'settings' && 'تنظیم توکن API تلگرام، فواصل زمانی پویش خودکار و متن برندینگ شخصی.'}
               {activeTab === 'autopost' && 'پیکربندی هوشمند ربات برای ارسال اتوماتیک کانفیگ‌ها و پروکسی‌های برتر به کانال شما در فواصل مشخص.'}
@@ -1703,6 +1795,14 @@ export default function App() {
                             {/* Right actions: Copy link & delete */}
                             <div className="flex items-center gap-2 self-end lg:self-center shrink-0">
                               <button
+                                onClick={() => handleMarkConfigStatus(config.id, 'working')}
+                                className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer border border-emerald-200"
+                                title="تایید سلامت دستی (برای ارسال به کانال)"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>سالم</span>
+                              </button>
+                              <button
                                 onClick={() => copyToClipboard(config.raw, config.id)}
                                 className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
                               >
@@ -2019,6 +2119,14 @@ export default function App() {
                             {/* Actions */}
                             <div className="flex items-center gap-2 self-end lg:self-center shrink-0">
                               <button
+                                onClick={() => handleMarkProxyStatus(proxy.id, 'working')}
+                                className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer border border-emerald-200"
+                                title="تایید سلامت دستی (برای ارسال به کانال)"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>سالم</span>
+                              </button>
+                              <button
                                 onClick={() => copyToClipboard(proxy.raw, proxy.id)}
                                 className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
                               >
@@ -2034,6 +2142,69 @@ export default function App() {
                     {filteredProxies.length > 150 && (
                       <div className="p-4 text-center bg-slate-50 border-t border-slate-100 text-xs text-slate-500">
                         نمایش ۱۵۰ پروکسی اول جهت بهینه‌سازی سرعت مرورگر.
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* --- TAB: VPN FILES (.npvt / .ovpn) --- */}
+              {activeTab === 'vpn_files' && (
+                <motion.div
+                  key="vpn_files"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  className="space-y-6"
+                >
+                  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      <div>
+                        <h3 className="font-bold text-slate-800">مدیریت فایل‌های ذخیره شده</h3>
+                        <p className="text-xs text-slate-500 mt-1">
+                          این فایل‌ها به صورت مستقیم از طریق منابع و یا ارسال توسط شما/ربات، دریافت و برای استفاده در کانال ذخیره شده‌اند.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleClearAllVpnFiles}
+                          disabled={actionLoading === 'clear_all_vpn_files'}
+                          className="px-4 py-2 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          تخلیه کل فایل‌ها
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                    {vpnFiles.length === 0 ? (
+                      <div className="py-24 text-center flex flex-col items-center justify-center text-slate-400 gap-3">
+                        <Download className="w-12 h-12 text-slate-300" />
+                        <p className="text-sm">هیچ فایل VPN (.npvt یا .ovpn) ذخیره نشده است.</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {vpnFiles.map((file) => (
+                          <div key={file.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/50 transition-colors">
+                            <div className="flex-1 space-y-1.5 min-w-0">
+                              <h4 className="text-sm font-bold text-slate-800" dir="ltr">
+                                {file.filename}
+                              </h4>
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-400">
+                                <span>دریافت: <strong>{new Date(file.createdAt).toLocaleDateString('fa-IR')} - {new Date(file.createdAt).toLocaleTimeString('fa-IR')}</strong></span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 self-end lg:self-center shrink-0">
+                              <button
+                                onClick={() => handleDeleteVpnFile(file.id)}
+                                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold cursor-pointer"
+                              >
+                                حذف فایل
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -2189,6 +2360,23 @@ export default function App() {
                           onClick={() => setAutoPostForm(prev => ({ ...prev, silentMode: !prev.silentMode }))}
                           className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
                             autoPostForm.silentMode ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                          }`}
+                        >
+                          <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                        </button>
+                      </div>
+
+                      {/* Post Files */}
+                      <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                        <div>
+                          <h4 className="text-xs font-bold text-slate-800">ارسال فایل‌های پیکربندی (.npvt, .ovpn)</h4>
+                          <p className="text-[10px] text-slate-400 mt-0.5">آپلود و ارسال فایل‌ها به محض استخراج با نام اختصاصی شما.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAutoPostForm(prev => ({ ...prev, postFiles: !prev.postFiles }))}
+                          className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                            autoPostForm.postFiles ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
                           }`}
                         >
                           <span className="w-5 h-5 rounded-full bg-white shadow-sm" />

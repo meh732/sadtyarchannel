@@ -2049,20 +2049,20 @@ async function executeAutoPost(): Promise<boolean> {
 
     // Get configs
     const workingConfigs = db.configs.filter(c => c.status === 'working');
-    const availableConfigs = workingConfigs.length > 0 ? workingConfigs : db.configs.slice(0, 50);
+    const availableConfigs = workingConfigs;
     const shuffledConfigs = [...availableConfigs].sort(() => 0.5 - Math.random());
     const configLimit = typeof settings.configCount === 'number' ? settings.configCount : 1;
     const selectedConfigs = shuffledConfigs.slice(0, Math.min(configLimit, shuffledConfigs.length));
 
     // Get proxies
     const workingProxies = (db.proxies || []).filter(p => p.status === 'working');
-    const availableProxies = workingProxies.length > 0 ? workingProxies : (db.proxies || []).slice(0, 50);
+    const availableProxies = workingProxies;
     const shuffledProxies = [...availableProxies].sort(() => 0.5 - Math.random());
     const proxyLimit = typeof settings.proxyCount === 'number' ? settings.proxyCount : 1;
     const selectedProxies = shuffledProxies.slice(0, Math.min(proxyLimit, shuffledProxies.length));
 
     if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
-      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی فعالی در دیتابیس یافت نشد.');
+      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی سالمی در دیتابیس یافت نشد (باید وضعیت آنها فعال/سالم باشد).');
       return false;
     }
 
@@ -2128,8 +2128,8 @@ async function executeAutoPost(): Promise<boolean> {
       disable_notification: !!settings.silentMode
     });
 
-    // Try to post an NPV file alongside the configs
-    if (db.npvFiles && db.npvFiles.length > 0) {
+    // Try to post an NPV/OVPN file alongside the configs
+    if (settings.postFiles && db.npvFiles && db.npvFiles.length > 0) {
       // Get a recent npv file
       const npvFile = db.npvFiles[Math.floor(Math.random() * Math.min(db.npvFiles.length, 10))];
       if (npvFile) {
@@ -2142,15 +2142,19 @@ async function executeAutoPost(): Promise<boolean> {
           let brandedFilename = npvFile.filename;
           if (db.settings.branding) {
             const cleanBranding = db.settings.branding.replace('@', '');
-            brandedFilename = brandedFilename.replace(/\.npv(t)?$/i, `_${cleanBranding}.npv$1`);
+            brandedFilename = brandedFilename.replace(/\.(npv(t)?|ovpn)$/i, `_${cleanBranding}.$1`);
           }
           
           formData.append('document', blob, brandedFilename);
-          const caption = `🌐 **فایل پیکربندی اختصاصی NapsternetV**\n\nجهت استفاده، این فایل را در نرم‌افزار ایمپورت کنید.\n\n🆔 ${db.settings.branding}`;
+          const fileType = npvFile.filename.endsWith('.ovpn') ? 'OpenVPN' : 'NapsternetV';
+          const caption = `🌐 **فایل پیکربندی اختصاصی ${fileType}**\n\nجهت استفاده، این فایل را در نرم‌افزار ایمپورت کنید.\n\n🆔 ${db.settings.branding || ''}`;
           formData.append('caption', caption);
           
           if (inlineButtons.length > 0) {
             formData.append('reply_markup', JSON.stringify({ inline_keyboard: inlineButtons }));
+          }
+          if (settings.silentMode) {
+            formData.append('disable_notification', 'true');
           }
 
           await fetch(`https://api.telegram.org/bot${db.settings.botToken}/sendDocument`, {
@@ -2161,7 +2165,8 @@ async function executeAutoPost(): Promise<boolean> {
           console.error('Failed to send auto-post NPV file:', err);
         }
       }
-    }
+
+        }
 
     // Add to posted messages
     const postConfigs = selectedConfigs.map((c, idx) => ({
@@ -2776,8 +2781,56 @@ async function handleBotUpdate(update: any) {
 
     if (!chatId) return;
 
-    // --- Map persistent custom keyboard buttons to standard commands/callbacks ---
     const cleanMsg = messageText ? messageText.trim() : '';
+
+    // --- Check for User Feedback via Text Reply ---
+    if (update.message && update.message.reply_to_message && update.message.reply_to_message.text && cleanMsg) {
+      const feedbackKeywords = ['فعال', 'سالم', 'وصل', 'کار میکنه', 'working', 'عالی', 'مرسی', 'ممنون', 'خوبه', 'تست شد'];
+      const isFeedback = feedbackKeywords.some(kw => cleanMsg.toLowerCase().includes(kw));
+      if (isFeedback) {
+        const repliedText = update.message.reply_to_message.text;
+        let foundMatch = false;
+        
+        // Check for Configs
+        const extractedConfigs = extractConfigsFromText(repliedText, 'reply_feedback');
+        for (const conf of extractedConfigs) {
+          const dbConf = db.configs.find(c => c.raw === conf.raw);
+          if (dbConf) {
+            dbConf.status = 'working';
+            dbConf.latency = dbConf.latency || 15;
+            dbConf.lastChecked = new Date().toISOString();
+            if (!dbConf.reports) dbConf.reports = { up: 0, down: 0 };
+            dbConf.reports.up += 1;
+            foundMatch = true;
+          }
+        }
+        
+        // Check for Proxies
+        const extractedProxies = extractProxiesFromText(repliedText, 'reply_feedback');
+        for (const proxy of extractedProxies) {
+          const dbProxy = db.proxies.find(p => p.raw === proxy.raw);
+          if (dbProxy) {
+            dbProxy.status = 'working';
+            dbProxy.latency = dbProxy.latency || 15;
+            dbProxy.lastChecked = new Date().toISOString();
+            foundMatch = true;
+          }
+        }
+        
+        if (foundMatch) {
+          saveDatabase();
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: '✅ **بازخورد شما دریافت شد!**\nمورد ارسال شده به عنوان **سالم و فعال** در سیستم ثبت شد و در اولویت‌های بالاتر قرار گرفت. با تشکر از همکاری شما 🌹',
+            parse_mode: 'Markdown',
+            reply_to_message_id: update.message.message_id
+          });
+          return;
+        }
+      }
+    }
+
+    // --- Map persistent custom keyboard buttons to standard commands/callbacks ---
     if (cleanMsg.includes('دریافت کانفیگ ویتوری') || cleanMsg.includes('ویتوری')) {
       callbackData = 'get_v2ray_configs';
     } else if (cleanMsg.includes('دریافت کانفیگ NPV') || cleanMsg.includes('NPV')) {
@@ -2877,7 +2930,10 @@ async function handleBotUpdate(update: any) {
         if (!config.reports) config.reports = { up: 0, down: 0 };
         if (isUp) {
           config.reports.up += 1;
-          await answerCallback('✅ با تشکر! بازخورد شما درباره فعال بودن کانفیگ ثبت شد.');
+          config.status = 'working';
+          config.latency = config.latency || 15;
+          config.lastChecked = new Date().toISOString();
+          await answerCallback('✅ با تشکر! بازخورد شما ثبت شد و این کانفیگ در سیستم به عنوان سالم تایید شد.');
         } else {
           config.reports.down += 1;
           await answerCallback('⚠️ گزارش قطعی شما ثبت شد. با تکرار گزارش کاربران، این کانفیگ غیرفعال می‌شود.');
@@ -2911,7 +2967,7 @@ async function handleBotUpdate(update: any) {
       }
       if (channelPost.document) {
         const cDoc = channelPost.document;
-        if (cDoc.file_name && (cDoc.file_name.endsWith('.npvt') || cDoc.file_name.endsWith('.npv') || cDoc.file_name.endsWith('.txt') || cDoc.file_name.endsWith('.json'))) {
+        if (cDoc.file_name && (cDoc.file_name.endsWith('.npvt') || cDoc.file_name.endsWith('.npv') || cDoc.file_name.endsWith('.ovpn') || cDoc.file_name.endsWith('.txt') || cDoc.file_name.endsWith('.json'))) {
           try {
             const fileInfo = await callTelegramApi('getFile', { file_id: cDoc.file_id });
             if (fileInfo?.file_path) {
@@ -2919,8 +2975,8 @@ async function handleBotUpdate(update: any) {
               const arrayBuffer = await fRes.arrayBuffer();
             const fContentText = Buffer.from(arrayBuffer).toString('utf-8');
               
-              const isNpvFormat = cDoc.file_name.endsWith('.npvt') || cDoc.file_name.endsWith('.npv');
-              if (isNpvFormat) {
+              const isVpnFormat = cDoc.file_name.endsWith('.npvt') || cDoc.file_name.endsWith('.npv') || cDoc.file_name.endsWith('.ovpn');
+              if (isVpnFormat) {
                 const fContentBase64 = Buffer.from(arrayBuffer).toString('base64');
               if (!db.npvFiles) db.npvFiles = [];
                 db.npvFiles.unshift({
@@ -2931,6 +2987,39 @@ async function handleBotUpdate(update: any) {
                   createdAt: new Date().toISOString()
                 });
                 addLog('success', `فایل ${cDoc.file_name} جهت تست و ارسال خودکار ذخیره شد.`);
+
+                // Immediately upload the new file if postFiles is enabled
+                if (db.settings.autoPost && db.settings.autoPost.enabled && db.settings.autoPost.postFiles && db.settings.autoPost.targetChannel) {
+                  try {
+                    const channelHandle = db.settings.autoPost.targetChannel.startsWith('@') ? db.settings.autoPost.targetChannel : `@${db.settings.autoPost.targetChannel.replace('@', '')}`;
+                    const formData = new FormData();
+                    formData.append('chat_id', channelHandle);
+                    const blob = new Blob([arrayBuffer], { type: 'application/octet-stream' });
+                    
+                    let brandedFilename = cDoc.file_name;
+                    if (db.settings.branding) {
+                      const cleanBranding = db.settings.branding.replace('@', '');
+                      brandedFilename = brandedFilename.replace(/\.(npv(t)?|ovpn)$/i, `_${cleanBranding}.$1`);
+                    }
+                    
+                    formData.append('document', blob, brandedFilename);
+                    const fileType = cDoc.file_name.endsWith('.ovpn') ? 'OpenVPN' : 'NapsternetV';
+                    const caption = `🌐 **فایل پیکربندی اختصاصی ${fileType}**\n\nجهت استفاده، این فایل را در نرم‌افزار ایمپورت کنید.\n\n🆔 ${db.settings.branding || ''}`;
+                    formData.append('caption', caption);
+                    
+                    if (db.settings.autoPost.silentMode) {
+                      formData.append('disable_notification', 'true');
+                    }
+                    
+                    await fetch(`https://api.telegram.org/bot${db.settings.botToken}/sendDocument`, {
+                      method: 'POST',
+                      body: formData
+                    });
+                    addLog('success', `فایل ${brandedFilename} به صورت آنی در کانال ${channelHandle} ارسال شد.`);
+                  } catch (err) {
+                    addLog('error', `خطا در ارسال آنی فایل به کانال: ${err}`);
+                  }
+                }
               }
               
               const fExtracted = extractConfigsFromText(fContentText, `پست کانال (${cDoc.file_name})`);
@@ -2938,7 +3027,7 @@ async function handleBotUpdate(update: any) {
                 db.configs.unshift(...fExtracted);
                 saveDatabase();
                 addLog('success', `تعداد ${fExtracted.length} کانفیگ با موفقیت از فایل ارسالی در کانال (${cDoc.file_name}) استخراج شد.`);
-              } else if (isNpvFormat) {
+              } else if (isVpnFormat) {
                 saveDatabase();
               }
             }
@@ -2949,10 +3038,10 @@ async function handleBotUpdate(update: any) {
       }
     }
 
-    // --- Direct User/Admin Document Uploads (.npvt / .npv / .txt) ---
+    // --- Direct User/Admin Document Uploads (.npvt / .npv / .ovpn / .txt) ---
     if (update.message?.document && chatId) {
       const uDoc = update.message.document;
-      if (uDoc.file_name && (uDoc.file_name.endsWith('.npvt') || uDoc.file_name.endsWith('.npv') || uDoc.file_name.endsWith('.txt'))) {
+      if (uDoc.file_name && (uDoc.file_name.endsWith('.npvt') || uDoc.file_name.endsWith('.npv') || uDoc.file_name.endsWith('.ovpn') || uDoc.file_name.endsWith('.txt'))) {
         try {
           const fileInfo = await callTelegramApi('getFile', { file_id: uDoc.file_id });
           if (fileInfo?.file_path) {
@@ -2960,8 +3049,8 @@ async function handleBotUpdate(update: any) {
             const arrayBuffer = await fRes.arrayBuffer();
             const fContentText = Buffer.from(arrayBuffer).toString('utf-8');
             
-            const isNpvFormat = uDoc.file_name.endsWith('.npvt') || uDoc.file_name.endsWith('.npv');
-            if (isNpvFormat) {
+            const isVpnFormat = uDoc.file_name.endsWith('.npvt') || uDoc.file_name.endsWith('.npv') || uDoc.file_name.endsWith('.ovpn');
+            if (isVpnFormat) {
               const fContentBase64 = Buffer.from(arrayBuffer).toString('base64');
               if (!db.npvFiles) db.npvFiles = [];
               db.npvFiles.unshift({
@@ -2972,6 +3061,39 @@ async function handleBotUpdate(update: any) {
                 createdAt: new Date().toISOString()
               });
               saveDatabase();
+
+              // Immediately upload the new file if postFiles is enabled
+              if (db.settings.autoPost && db.settings.autoPost.enabled && db.settings.autoPost.postFiles && db.settings.autoPost.targetChannel) {
+                try {
+                  const channelHandle = db.settings.autoPost.targetChannel.startsWith('@') ? db.settings.autoPost.targetChannel : `@${db.settings.autoPost.targetChannel.replace('@', '')}`;
+                  const formData = new FormData();
+                  formData.append('chat_id', channelHandle);
+                  const blob = new Blob([arrayBuffer], { type: 'application/octet-stream' });
+                  
+                  let brandedFilename = uDoc.file_name;
+                  if (db.settings.branding) {
+                    const cleanBranding = db.settings.branding.replace('@', '');
+                    brandedFilename = brandedFilename.replace(/\.(npv(t)?|ovpn)$/i, `_${cleanBranding}.$1`);
+                  }
+                  
+                  formData.append('document', blob, brandedFilename);
+                  const fileType = uDoc.file_name.endsWith('.ovpn') ? 'OpenVPN' : 'NapsternetV';
+                  const caption = `🌐 **فایل پیکربندی اختصاصی ${fileType}**\n\nجهت استفاده، این فایل را در نرم‌افزار ایمپورت کنید.\n\n🆔 ${db.settings.branding || ''}`;
+                  formData.append('caption', caption);
+                  
+                  if (db.settings.autoPost.silentMode) {
+                    formData.append('disable_notification', 'true');
+                  }
+                  
+                  await fetch(`https://api.telegram.org/bot${db.settings.botToken}/sendDocument`, {
+                    method: 'POST',
+                    body: formData
+                  });
+                  addLog('success', `فایل ${brandedFilename} به صورت آنی در کانال ${channelHandle} ارسال شد.`);
+                } catch (err) {
+                  addLog('error', `خطا در ارسال آنی فایل به کانال: ${err}`);
+                }
+              }
             }
 
             const fExtracted = extractConfigsFromText(fContentText, `فایل ارسالی (${uDoc.file_name})`);
@@ -2981,10 +3103,10 @@ async function handleBotUpdate(update: any) {
               addLog('success', `تعداد ${fExtracted.length} کانفیگ از فایل ارسالی (${uDoc.file_name}) استخراج گردید.`);
               await callTelegramApi('sendMessage', {
                 chat_id: chatId,
-                text: `✅ **تعداد ${fExtracted.length} کانفیگ جدید با موفقیت از فایل ${uDoc.file_name} استخراج و ذخیره شد!**\n${isNpvFormat ? 'ضمناً این فایل جهت ارسال در کانال نیز ذخیره گردید.' : ''}`,
+                text: `✅ **تعداد ${fExtracted.length} کانفیگ جدید با موفقیت از فایل ${uDoc.file_name} استخراج و ذخیره شد!**\n${isVpnFormat ? 'ضمناً این فایل جهت ارسال در کانال نیز ذخیره گردید.' : ''}`,
                 parse_mode: 'Markdown'
               });
-            } else if (isNpvFormat) {
+            } else if (isVpnFormat) {
               await callTelegramApi('sendMessage', {
                 chat_id: chatId,
                 text: `✅ فایل ${uDoc.file_name} دریافت و در سیستم ذخیره شد. (هیچ کانفیگ متنی مستقیمی جهت تست پینگ داخل آن یافت نشد).`
@@ -5279,6 +5401,42 @@ async function startExpressServer() {
     res.json({ success: true });
   });
 
+  // API: Manually Update Config Status
+  app.patch('/api/configs/:id/status', (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+    const config = db.configs.find(c => c.id === id);
+    if (!config) return res.status(404).json({ success: false, message: 'Config not found' });
+    config.status = status;
+    if (status === 'working') config.latency = 10;
+    config.lastChecked = new Date().toISOString();
+    saveDatabase();
+    addLog('info', `وضعیت کانفیگ به صورت دستی به ${status} تغییر یافت.`);
+    res.json({ success: true });
+  });
+
+  // API: Get VPN Files
+  app.get('/api/vpn-files', (req, res) => {
+    if (!db.npvFiles) db.npvFiles = [];
+    res.json(db.npvFiles.map((f: any) => ({ id: f.id, filename: f.filename, status: f.status, createdAt: f.createdAt })));
+  });
+
+  // API: Delete VPN File
+  app.delete('/api/vpn-files/:id', (req, res) => {
+    const { id } = req.params;
+    if (!db.npvFiles) db.npvFiles = [];
+    db.npvFiles = db.npvFiles.filter((f: any) => f.id !== id);
+    saveDatabase();
+    res.json({ success: true });
+  });
+
+  // API: Clear All VPN Files
+  app.delete('/api/vpn-files', (req, res) => {
+    db.npvFiles = [];
+    saveDatabase();
+    res.json({ success: true });
+  });
+
   // API: Get Proxies
   app.get('/api/proxies', (req, res) => {
     if (!db.proxies) db.proxies = [];
@@ -5320,10 +5478,25 @@ async function startExpressServer() {
     res.json({ success: true });
   });
 
+  // API: Manually Update Proxy Status
+  app.patch('/api/proxies/:id/status', (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!db.proxies) db.proxies = [];
+    const proxy = db.proxies.find(p => p.id === id);
+    if (!proxy) return res.status(404).json({ success: false, message: 'Proxy not found' });
+    proxy.status = status;
+    if (status === 'working') proxy.latency = 10;
+    proxy.lastChecked = new Date().toISOString();
+    saveDatabase();
+    addLog('info', `وضعیت پروکسی به صورت دستی به ${status} تغییر یافت.`);
+    res.json({ success: true });
+  });
+
   // API: Save Auto-Post settings
   app.post('/api/settings/auto-post', (req, res) => {
     try {
-      const { enabled, targetChannel, postIntervalHours, configCount, proxyCount, customText, adText, silentMode } = req.body;
+      const { enabled, targetChannel, postIntervalHours, configCount, proxyCount, customText, adText, silentMode, postFiles } = req.body;
       
       db.settings.autoPost = {
         enabled: !!enabled,
@@ -5333,6 +5506,7 @@ async function startExpressServer() {
         proxyCount: Number(proxyCount) || 1,
         customText: customText || '',
         adText: adText || '',
+        postFiles: !!postFiles,
         silentMode: !!silentMode,
         lastPostedAt: db.settings.autoPost?.lastPostedAt || null
       };

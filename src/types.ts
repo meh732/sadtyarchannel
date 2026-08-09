@@ -59,6 +59,7 @@ export interface AutoPostSettings {
   proxyCount: number; // 1 or 2
   customText: string; // custom Persian text to add to the post
   adText: string; // bot or channel to advertise
+  postFiles?: boolean; // send .npvt and .ovpn files
   silentMode: boolean; // send silently (disable_notification)
   lastPostedAt: string | null;
 }
