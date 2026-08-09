@@ -29,6 +29,7 @@ import {
   Sliders,
   HelpCircle
 } from 'lucide-react';
+import { Download, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ConfigItem, 
@@ -193,6 +194,38 @@ export default function App() {
     }, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Handle Restore Backup
+  const handleRestoreBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!window.confirm('آیا مطمئن هستید که می‌خواهید دیتابیس را از روی این فایل بکاپ بازگردانی (Restore) کنید؟ اطلاعات فعلی جایگزین خواهد شد.')) {
+      e.target.value = '';
+      return;
+    }
+    try {
+      setActionLoading('restore_backup');
+      const text = await file.text();
+      const json = JSON.parse(text);
+      const res = await fetch('/api/backup/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(json)
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('✅ دیتابیس با موفقیت بازگردانی شد!');
+        window.location.reload();
+      } else {
+        alert(`❌ خطا در بازگردانی بکاپ: ${data.message}`);
+      }
+    } catch (err: any) {
+      alert(`❌ خطا در خواندن فایل یا ارتباط با سرور: ${err.message}`);
+    } finally {
+      setActionLoading(null);
+      e.target.value = '';
+    }
+  };
 
   // Handle Save Settings
   const handleSaveSettings = async (e: React.FormEvent) => {
@@ -2149,6 +2182,43 @@ export default function App() {
                       )}
                     </div>
                   </form>
+
+                  {/* --- DATABASE BACKUP & RESTORE CARD --- */}
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 mt-6">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600">
+                        <Database className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-slate-900 text-base">پشتیبان‌گیری و بازگردانی دیتابیس (Backup & Restore)</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">می‌توانید از تمام اطلاعات دیتابیس فایل پشتیبان بگیرید یا فایل بکاپ قبلی خود را بارگذاری کنید.</p>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 flex flex-col sm:flex-row items-center gap-4">
+                      <a
+                        href="/api/backup/export"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-full sm:w-auto px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <Download className="w-4 h-4" />
+                        <span>دانلود فایل پشتیبان دیتابیس (Export JSON)</span>
+                      </a>
+
+                      <label className="w-full sm:w-auto px-5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer">
+                        <Upload className="w-4 h-4" />
+                        <span>بارگذاری و بازگردانی فایل بکاپ (Restore)</span>
+                        <input
+                          type="file"
+                          accept=".json"
+                          className="hidden"
+                          onChange={handleRestoreBackup}
+                          disabled={actionLoading === 'restore_backup'}
+                        />
+                      </label>
+                    </div>
+                  </div>
                 </motion.div>
               )}
 

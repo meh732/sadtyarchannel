@@ -4087,7 +4087,53 @@ if (db.settings.botToken) {
 // --- API Routing Logic ---
 async function startExpressServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+
+  // API: Export Database Backup
+  app.get('/api/backup/export', (req, res) => {
+    try {
+      res.setHeader('Content-Disposition', `attachment; filename=data_store_backup_${Date.now()}.json`);
+      res.setHeader('Content-Type', 'application/json');
+      res.send(JSON.stringify(db, null, 2));
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Import Database Backup (Restore)
+  app.post('/api/backup/import', (req, res) => {
+    try {
+      const importedData = req.body;
+      if (!importedData || typeof importedData !== 'object' || !importedData.settings) {
+        return res.status(400).json({ success: false, message: 'فایل بکاپ نامعتبر است یا ساختار دیتابیس را ندارد.' });
+      }
+
+      const envAdminId = db.settings.adminId;
+      const envBotToken = db.settings.botToken;
+
+      db = {
+        settings: {
+          ...DEFAULT_SETTINGS,
+          ...(importedData.settings || {}),
+          adminId: importedData.settings?.adminId || envAdminId,
+          botToken: importedData.settings?.botToken || envBotToken
+        },
+        sources: Array.isArray(importedData.sources) ? importedData.sources : DEFAULT_SOURCES,
+        forceJoinChannels: Array.isArray(importedData.forceJoinChannels) ? importedData.forceJoinChannels : [],
+        configs: Array.isArray(importedData.configs) ? importedData.configs : [],
+        proxies: Array.isArray(importedData.proxies) ? importedData.proxies : [],
+        users: Array.isArray(importedData.users) ? importedData.users : [],
+        logs: Array.isArray(importedData.logs) ? importedData.logs : [],
+        postedMessages: Array.isArray(importedData.postedMessages) ? importedData.postedMessages : []
+      };
+
+      saveDatabase();
+      addLog('success', 'دیتابیس سیستم با موفقیت از روی فایل بکاپ بازیابی (Restore) شد.');
+      res.json({ success: true, message: 'بکاپ با موفقیت بازگردانی شد.', settings: db.settings });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
 
   // API: Stats
   app.get('/api/stats', (req, res) => {
