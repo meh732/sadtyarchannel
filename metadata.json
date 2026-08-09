@@ -1,0 +1,6 @@
+{
+  "name": "Telegram Config Extractor Bot",
+  "description": "A powerful full-stack dashboard to extract, brand, test, and deliver V2Ray & NPV configurations to Telegram Bot users with force-join support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
