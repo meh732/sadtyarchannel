@@ -1088,41 +1088,35 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    let protocolCheck = { working: false, latency: 999 };
+    // Tier 1: Direct TCP socket / TLS handshake check for high reliability & fast latency test
+    let handCheck = { working: false, latency: 999 };
+    if (details.tls) {
+      handCheck = await checkTlsHandshake(details.host, details.port, details.sni, 2500);
+    }
+    if (!handCheck.working) {
+      handCheck = await checkPort(details.host, details.port, 2500);
+    }
+
+    let isWorking = handCheck.working;
+    let finalLatency = handCheck.latency;
+
+    // Tier 2: Real end-to-end handshake & proxy test via Xray core if available
     const xrayPath = path.join(process.cwd(), 'bin/xray');
-
-    // Tier 1: Real end-to-end handshake & proxy test via Xray core if available
     if (fs.existsSync(xrayPath)) {
-      protocolCheck = await checkConfigWithXray(rawConfig);
-    } else {
-      // Fallback if Xray core binary missing
-      if (details.tls) {
-        protocolCheck = await checkTlsHandshake(details.host, details.port, details.sni, 5000);
-      }
-      if (!protocolCheck.working) {
-        protocolCheck = await checkPort(details.host, details.port, 5000);
+      const xrayCheck = await checkConfigWithXray(rawConfig);
+      if (xrayCheck.working) {
+        isWorking = true;
+        if (xrayCheck.latency < finalLatency || finalLatency === 999) {
+          finalLatency = xrayCheck.latency;
+        }
       }
     }
 
-    // If protocol / proxy handshake failed, mark as DEAD immediately
-    if (!protocolCheck.working) {
+    if (!isWorking) {
       return { working: false, latency: 999 };
     }
 
-    // Tier 2: Check reachability from inside Iran via check-host API nodes
-    const iranCheck = await checkPortFromIran(details.host, details.port, details.sni);
-    
-    // If Iran nodes explicitly confirmed connection failed (and not rate limited), mark as blocked in Iran!
-    if (!iranCheck.working && !iranCheck.rateLimited) {
-      return { working: false, latency: 999 };
-    }
-
-    // Combine latencies appropriately
-    const finalLatency = (iranCheck.working && iranCheck.latency < 999) 
-      ? Math.max(protocolCheck.latency, iranCheck.latency) 
-      : protocolCheck.latency;
-
-    return { working: true, latency: finalLatency };
+    return { working: true, latency: Math.max(10, Math.round(finalLatency)) };
   } catch (err) {
     return { working: false, latency: 999 };
   }
