@@ -64,6 +64,7 @@ export interface SystemSettings {
   branding: string; // e.g., "@MyChannel"
   isBotRunning: boolean;
   autoTest: boolean;
+  testBatchLimit?: number; // Batch limit for config testing (default: 100)
   autoExtractInterval: number; // in minutes
   autoPost: AutoPostSettings;
   postMonitoringEnabled?: boolean;

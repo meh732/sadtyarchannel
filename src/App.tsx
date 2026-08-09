@@ -74,6 +74,7 @@ export default function App() {
     branding: '',
     isBotRunning: false,
     autoTest: true,
+    testBatchLimit: 100,
     autoExtractInterval: 30,
     autoPost: {
       enabled: false,
@@ -463,14 +464,23 @@ export default function App() {
   const handleTestAllPorts = async () => {
     setActionLoading('test_all');
     try {
+      const limit = settings.testBatchLimit || 100;
       const [res1, res2] = await Promise.all([
-        fetch('/api/configs/test-all', { method: 'POST' }),
-        fetch('/api/proxies/test-all', { method: 'POST' })
+        fetch('/api/configs/test-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ limit })
+        }),
+        fetch('/api/proxies/test-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ limit })
+        })
       ]);
       const data1 = await res1.json();
       const data2 = await res2.json();
       if (data1.success || data2.success) {
-        showToast('بررسی اتصال پورت‌های کانفیگ‌ها و پروکسی‌ها در پس‌زمینه آغاز شد.', 'success');
+        showToast(`بررسی اتصال ${limit} کانفیگ و پروکسی اخیر در پس‌زمینه با سرعت بالا آغاز شد.`, 'success');
       }
     } catch (err) {
       showToast('خطا در آغاز فرآیند تست اتصال', 'error');
@@ -2308,6 +2318,26 @@ export default function App() {
                           className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none text-left"
                           dir="ltr"
                         />
+                      </div>
+
+                      {/* Test Batch Limit Input */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                          <span>محدودیت تعداد تست همزمان (پیش‌فرض: ۱۰۰ کانفیگ اخیر)</span>
+                        </label>
+                        <input
+                          type="number"
+                          min="10"
+                          max="2000"
+                          required
+                          value={settings.testBatchLimit || 100}
+                          onChange={(e) => setSettings(prev => ({ ...prev, testBatchLimit: Number(e.target.value) }))}
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none text-left"
+                          dir="ltr"
+                        />
+                        <p className="text-[10px] text-slate-400">
+                          تست پورت‌ها فقط روی این تعداد از آخرین کانفیگ‌های جدید استخراج‌شده انجام می‌شود تا سرعت تست حداکثری باشد.
+                        </p>
                       </div>
 
                       {/* Toggles */}

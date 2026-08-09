@@ -108,6 +108,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   branding: '🌟 @MyChannelConfig',
   isBotRunning: false,
   autoTest: true,
+  testBatchLimit: 100,
   autoExtractInterval: 30, // minutes
   autoPost: DEFAULT_AUTO_POST,
   postMonitoringEnabled: false,
@@ -357,12 +358,64 @@ function convertV2rayToNpv(v2rayConfig: string, branding: string): string {
 /**
  * Extracts connection host/IP and port from any v2ray/npv config for testing
  */
+function stripHtmlTags(html: string): string {
+  if (!html) return '';
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<\/pre>/gi, '\n')
+    .replace(/<\/code>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ');
+}
+
 function parseConfigHostPort(rawConfig: string): { host: string; port: number; protocol: ProtocolType; remark: string } {
   const result = { host: '', port: 0, protocol: 'unknown' as ProtocolType, remark: 'کانفیگ استخراج‌شده' };
   if (!rawConfig) return result;
   const trimmed = rawConfig.trim();
 
   try {
+    // Check if NPVT or NPV format
+    if (trimmed.startsWith('NPVT') || trimmed.startsWith('npv://') || trimmed.startsWith('npvt://')) {
+      result.protocol = 'npv';
+      const payload = trimmed.replace(/^NPVT/i, '').replace(/^npvt?:\/\//i, '').split('#')[0];
+      
+      try {
+        const decoded = Buffer.from(payload, 'base64').toString('utf8');
+        if (decoded.startsWith('{') && decoded.endsWith('}')) {
+          const json = JSON.parse(decoded);
+          result.host = json.address || json.v2rayAddress || json.host || json.v2rayHost || json.sshHost || json.server || json.sni || json.domain || json.remote_host || json.ip || '';
+          result.port = Number(json.port || json.v2rayPort || json.sshPort || json.server_port || json.remote_port) || 0;
+          result.remark = json.remarks || json.configName || json.ps || 'NapsternetV Config';
+          
+          if (json.protocol) {
+            result.protocol = json.protocol;
+          } else if (json.type && ['vless', 'vmess', 'trojan', 'ss'].includes(json.type)) {
+            result.protocol = json.type;
+          }
+        } else {
+          // Extract host/ip from decoded text
+          const ipMatch = decoded.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+          if (ipMatch) result.host = ipMatch[0];
+          const domainMatch = decoded.match(/\b[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}\b/);
+          if (!result.host && domainMatch) result.host = domainMatch[0];
+          const portMatch = decoded.match(/\b(443|8080|8443|2052|2053|2082|2083|2086|2087|2095|2096|80|22)\b/);
+          if (portMatch) result.port = Number(portMatch[0]);
+        }
+      } catch(e) {}
+
+      // Fallback guarantees for NPVT so valid configs are NEVER discarded!
+      if (!result.host) {
+        const ipMatch = trimmed.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+        if (ipMatch) result.host = ipMatch[0];
+        else result.host = 'npv.napsternetv.server';
+      }
+      if (!result.port) {
+        result.port = 443;
+      }
+      return result;
+    }
+
     if (trimmed.startsWith('vmess://')) {
       result.protocol = 'vmess';
       const base64Part = trimmed.substring(8).trim();
@@ -380,8 +433,6 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
       result.protocol = 'trojan';
     } else if (trimmed.startsWith('ss://')) {
       result.protocol = 'ss';
-    } else if (trimmed.startsWith('npv://') || trimmed.startsWith('npvt://')) {
-      result.protocol = 'npv';
     }
 
     // For links of type protocol://[userinfo]@[host]:[port][path]#[remark]
@@ -390,30 +441,6 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
     const remarkPart = hashIndex !== -1 ? decodeURIComponent(trimmed.substring(hashIndex + 1)) : '';
     if (remarkPart) result.remark = remarkPart;
 
-    if (result.protocol === 'npv') {
-      // napsternetV configurations can be custom base64 encoded.
-      // Let's see if we can decode it to search for hosts/ports.
-      const payload = urlPart.replace(/npvt?:\/\//, '');
-      try {
-        const decoded = Buffer.from(payload, 'base64').toString('utf8');
-        const json = JSON.parse(decoded);
-        // Prioritize address/v2rayAddress since host is often the HTTP Host header
-        result.host = json.address || json.v2rayAddress || json.host || json.v2rayHost || json.sshHost || '';
-        result.port = Number(json.port || json.v2rayPort || json.sshPort) || 0;
-        result.remark = json.remarks || json.configName || remarkPart || 'NPV Config';
-        
-        if (json.protocol) {
-          result.protocol = json.protocol;
-        } else if (json.type && ['vless', 'vmess', 'trojan', 'ss'].includes(json.type)) {
-          result.protocol = json.type;
-        }
-        
-        if (result.host && result.port) return result;
-      } catch(e) {
-        // Fallback or plain text
-      }
-    }
-
     // Standard parse: look for @ followed by host:port
     const atIndex = urlPart.lastIndexOf('@');
     if (atIndex !== -1) {
@@ -421,7 +448,6 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
       const colonIndex = hostPortPart.indexOf(':');
       if (colonIndex !== -1) {
         result.host = hostPortPart.substring(0, colonIndex);
-        // port is until query params or end
         const portPart = hostPortPart.substring(colonIndex + 1);
         const questionIndex = portPart.indexOf('?');
         const slashIndex = portPart.indexOf('/');
@@ -431,7 +457,6 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
         result.port = parseInt(portPart.substring(0, endIdx)) || 0;
       }
     } else {
-      // shadowsocks might pack userinfo inside base64, e.g. ss://base64@host:port
       const doubleSlashIdx = urlPart.indexOf('://');
       const cleanUrl = doubleSlashIdx !== -1 ? urlPart.substring(doubleSlashIdx + 3) : urlPart;
       const colonIdx = cleanUrl.lastIndexOf(':');
@@ -441,9 +466,7 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
         result.port = parseInt(portPart) || 0;
       }
     }
-  } catch (err) {
-    // Parsing fail
-  }
+  } catch (err) {}
 
   return result;
 }
@@ -1251,56 +1274,67 @@ function parseJsonConfigToUri(json: any): string | null {
  */
 function extractBase64NpvConfigs(text: string): string[] {
   const extractedUris: string[] = [];
-  
-  // Clean NPVT signature if present at start of text
-  let cleanedInput = text.trim();
-  if (cleanedInput.startsWith('NPVT')) {
-    cleanedInput = cleanedInput.substring(4).trim();
-  }
+  if (!text) return extractedUris;
 
-  // Matches base64 blocks starting with NPVT, ey, e3, Npv, or general base64 strings
-  const base64Regex = /(?:NPVT)?(?:ey|e3|Npv|[a-zA-Z0-9+/=]{30,})[a-zA-Z0-9+/=\s]{20,}/g;
-  const matchArray = cleanedInput.match(base64Regex);
-  const matchesList: string[] = matchArray ? Array.from(matchArray) : [];
+  const plainText = stripHtmlTags(safeDecodeText(text));
+  const rawText = safeDecodeText(text);
 
-  if (matchesList.length === 0 && (cleanedInput.startsWith('eyJ') || cleanedInput.startsWith('e30') || cleanedInput.startsWith('{'))) {
-    matchesList.push(cleanedInput);
-  }
+  const textsToScan = [plainText, rawText];
 
-  for (const match of matchesList) {
-    let cleaned = match.replace(/^NPVT/i, '').replace(/\s+/g, '');
-    try {
-      const decoded = Buffer.from(cleaned, 'base64').toString('utf8');
-      if (
-        decoded.includes('address') || 
-        decoded.includes('v2rayHost') || 
-        decoded.includes('configVersion') || 
-        decoded.includes('configType') || 
-        decoded.includes('rawLink') || 
-        decoded.includes('configName') ||
-        decoded.includes('uuid') ||
-        decoded.includes('id') ||
-        decoded.includes('port')
-      ) {
-        const json = JSON.parse(decoded);
-        const uri = parseJsonConfigToUri(json);
-        if (uri) {
-          extractedUris.push(uri);
-        } else {
-          extractedUris.push(cleaned);
-        }
+  for (const txt of textsToScan) {
+    // 1. Explicit NPVT blocks starting with NPVT
+    const npvtRegex = /NPVT[a-zA-Z0-9+/=\-_]{15,}/g;
+    const npvtMatches = txt.match(npvtRegex) || [];
+    for (const match of npvtMatches) {
+      const cleaned = match.trim();
+      if (!extractedUris.includes(cleaned)) {
+        extractedUris.push(cleaned);
       }
-    } catch (e) {
-      // If it is raw JSON text
-      if (cleaned.startsWith('{') && cleaned.endsWith('}')) {
-        try {
-          const json = JSON.parse(cleaned);
+    }
+
+    // 2. Base64 JSON blocks starting with eyJ or e30 or Npv
+    const base64Regex = /(?:eyJ|e30|Npv)[a-zA-Z0-9+/=\s\-_]{20,}/g;
+    const matches = txt.match(base64Regex) || [];
+
+    for (const match of matches) {
+      const cleaned = match.replace(/\s+/g, '');
+      try {
+        const decoded = Buffer.from(cleaned, 'base64').toString('utf8');
+        if (
+          decoded.includes('address') || 
+          decoded.includes('v2rayHost') || 
+          decoded.includes('configVersion') || 
+          decoded.includes('configType') || 
+          decoded.includes('rawLink') || 
+          decoded.includes('configName') ||
+          decoded.includes('uuid') ||
+          decoded.includes('id') ||
+          decoded.includes('port') ||
+          decoded.includes('outbounds') ||
+          decoded.includes('protocol') ||
+          decoded.includes('remarks')
+        ) {
+          const json = JSON.parse(decoded);
           const uri = parseJsonConfigToUri(json);
-          if (uri) extractedUris.push(uri);
-        } catch (err) {}
+          if (uri && !extractedUris.includes(uri)) {
+            extractedUris.push(uri);
+          } else if (!extractedUris.includes(cleaned)) {
+            extractedUris.push(cleaned);
+          }
+        }
+      } catch (e) {
+        // Raw JSON text
+        if (cleaned.startsWith('{') && cleaned.endsWith('}')) {
+          try {
+            const json = JSON.parse(cleaned);
+            const uri = parseJsonConfigToUri(json);
+            if (uri && !extractedUris.includes(uri)) extractedUris.push(uri);
+          } catch (err) {}
+        }
       }
     }
   }
+
   return extractedUris;
 }
 
@@ -1328,14 +1362,29 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
   if (!text) return [];
   
   const cleanText = safeDecodeText(text);
+  const plainText = stripHtmlTags(cleanText);
 
-  // Look for configuration protocols (vless://, vmess://, trojan://, ss://, npv://, npvt://, hy2://, hysteria2://)
+  // Look for configuration protocols (vless://, vmess://, trojan://, ss://, npv://, npvt://)
   const regex = /(vless|vmess|trojan|ss|npv|npvt):\/\/[^\s"'<>\`\\|]+/gi;
-  const matches = cleanText.match(regex) || [];
+  const matches1 = cleanText.match(regex) || [];
+  const matches2 = plainText.match(regex) || [];
+
+  // Look for NPVT blocks starting with NPVT
+  const npvtRegex = /NPVT[a-zA-Z0-9+/=\-_]{15,}/gi;
+  const npvtMatches1 = cleanText.match(npvtRegex) || [];
+  const npvtMatches2 = plainText.match(npvtRegex) || [];
 
   const base64Configs = extractBase64NpvConfigs(cleanText);
   const jsonConfigs = extractRawJsonConfigs(cleanText);
-  const allMatches = [...matches, ...base64Configs, ...jsonConfigs];
+
+  const allMatches = [
+    ...matches1, 
+    ...matches2, 
+    ...npvtMatches1, 
+    ...npvtMatches2, 
+    ...base64Configs, 
+    ...jsonConfigs
+  ];
 
   const lowerSource = (sourceName || '').toLowerCase();
   const lowerText = cleanText.toLowerCase();
@@ -1349,26 +1398,24 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
 
   if (allMatches.length === 0) {
     // If the entire text is a raw base64 string or NPV string
-    const trimmed = cleanText.trim().replace(/^NPVT/i, '');
-    if (trimmed.length > 20 && (sourceIsNpv || trimmed.startsWith('npv://') || trimmed.startsWith('npvt://'))) {
+    const trimmed = cleanText.trim();
+    if (trimmed.length > 20 && (sourceIsNpv || trimmed.startsWith('NPVT') || trimmed.startsWith('npv://') || trimmed.startsWith('npvt://'))) {
       const info = parseConfigHostPort(trimmed);
-      if (info.host && info.port) {
-        const exists = db.configs.some(c => c.raw === trimmed);
-        if (!exists) {
-          return [{
-            id: generateId(),
-            raw: trimmed,
-            protocol: 'npv',
-            remark: info.remark || 'NPVT_Config',
-            server: info.host,
-            port: info.port,
-            source: sourceName,
-            status: 'untested',
-            latency: null,
-            lastChecked: null,
-            isNpv: true
-          }];
-        }
+      const exists = db.configs.some(c => c.raw === trimmed);
+      if (!exists) {
+        return [{
+          id: generateId(),
+          raw: trimmed,
+          protocol: 'npv',
+          remark: info.remark || 'NPVT_Config',
+          server: info.host || 'npv.napsternetv.server',
+          port: info.port || 443,
+          source: sourceName,
+          status: 'untested',
+          latency: null,
+          lastChecked: null,
+          isNpv: true
+        }];
       }
     }
     return [];
@@ -1378,7 +1425,6 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
   const uniqueRaw = Array.from(new Set(allMatches));
 
   for (const raw of uniqueRaw) {
-    // Basic formatting cleanups
     let rawConfig = raw.trim();
     if (rawConfig.endsWith('.') || rawConfig.endsWith(',') || rawConfig.endsWith(')') || rawConfig.endsWith(']')) {
       rawConfig = rawConfig.slice(0, -1);
@@ -1388,17 +1434,21 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
     const exists = db.configs.some(c => c.raw === rawConfig);
     if (exists) continue;
 
-    const info = parseConfigHostPort(rawConfig);
-    if (!info.host || !info.port) {
-      // Skip invalid formats that we cannot parse
-      continue;
+    const isNpvFormat = sourceIsNpv || 
+                        rawConfig.startsWith('NPVT') ||
+                        rawConfig.startsWith('npv://') || 
+                        rawConfig.startsWith('npvt://');
+
+    let info = parseConfigHostPort(rawConfig);
+    if (isNpvFormat) {
+      if (!info.host) info.host = 'npv.napsternetv.server';
+      if (!info.port) info.port = 443;
+      info.protocol = 'npv';
     }
 
-    const isNpvFormat = sourceIsNpv || 
-                        rawConfig.startsWith('npv://') || 
-                        rawConfig.startsWith('npvt://') || 
-                        info.protocol === 'npv' || 
-                        rawConfig.startsWith('NPVT');
+    if (!info.host || !info.port) {
+      continue;
+    }
 
     extracted.push({
       id: generateId(),
@@ -1655,27 +1705,28 @@ async function testProxiesBatch(ids: string[]) {
   }
   saveDatabase();
 
-  for (const id of ids) {
-    const proxy = db.proxies.find(p => p.id === id);
-    if (!proxy) continue;
+  const CONCURRENCY = 5;
+  for (let i = 0; i < ids.length; i += CONCURRENCY) {
+    const chunk = ids.slice(i, i + CONCURRENCY);
+    await Promise.all(chunk.map(async (id) => {
+      const proxy = db.proxies.find(p => p.id === id);
+      if (!proxy) return;
 
-    proxy.status = 'checking';
-    saveDatabase();
-
-    const checkResult = await checkPortFull(proxy.server, proxy.port);
-    
-    const currentProxy = db.proxies.find(p => p.id === id);
-    if (currentProxy) {
-      currentProxy.status = checkResult.working ? 'working' : 'failed';
-      currentProxy.latency = checkResult.working ? checkResult.latency : null;
-      currentProxy.lastChecked = new Date().toISOString();
+      const checkResult = await checkPortFull(proxy.server, proxy.port);
       
-      if (checkResult.working) workingCount++;
-      else failedCount++;
-    }
+      const currentProxy = db.proxies.find(p => p.id === id);
+      if (currentProxy) {
+        currentProxy.status = checkResult.working ? 'working' : 'failed';
+        currentProxy.latency = checkResult.working ? checkResult.latency : null;
+        currentProxy.lastChecked = new Date().toISOString();
+        
+        if (checkResult.working) workingCount++;
+        else failedCount++;
+      }
+    }));
 
-    // Polite delay between checks to avoid slam rate-limiting Check-Host
-    await new Promise(r => setTimeout(r, 1500));
+    saveDatabase();
+    await new Promise(r => setTimeout(r, 300));
   }
 
   saveDatabase();
@@ -1700,28 +1751,29 @@ async function testConfigsBatch(ids: string[]) {
   }
   saveDatabase();
 
-  for (const id of ids) {
-    const config = db.configs.find(c => c.id === id);
-    if (!config) continue;
+  const CONCURRENCY = 5;
+  for (let i = 0; i < ids.length; i += CONCURRENCY) {
+    const chunk = ids.slice(i, i + CONCURRENCY);
+    await Promise.all(chunk.map(async (id) => {
+      const config = db.configs.find(c => c.id === id);
+      if (!config) return;
 
-    config.status = 'checking';
-    saveDatabase();
-
-    const checkResult = await checkConfigFully(config.raw);
-    
-    // Refresh connection to DB object in case it was modified
-    const currentConfig = db.configs.find(c => c.id === id);
-    if (currentConfig) {
-      currentConfig.status = checkResult.working ? 'working' : 'failed';
-      currentConfig.latency = checkResult.working ? checkResult.latency : null;
-      currentConfig.lastChecked = new Date().toISOString();
+      const checkResult = await checkConfigFully(config.raw);
       
-      if (checkResult.working) workingCount++;
-      else failedCount++;
-    }
+      // Refresh connection to DB object in case it was modified
+      const currentConfig = db.configs.find(c => c.id === id);
+      if (currentConfig) {
+        currentConfig.status = checkResult.working ? 'working' : 'failed';
+        currentConfig.latency = checkResult.working ? checkResult.latency : null;
+        currentConfig.lastChecked = new Date().toISOString();
+        
+        if (checkResult.working) workingCount++;
+        else failedCount++;
+      }
+    }));
 
-    // Polite delay between checks to avoid slam rate-limiting Check-Host
-    await new Promise(r => setTimeout(r, 1500));
+    saveDatabase();
+    await new Promise(r => setTimeout(r, 300));
   }
 
   saveDatabase();
@@ -3223,16 +3275,25 @@ async function handleBotUpdate(update: any) {
 
       // --- Test Configs ---
       if (callbackData === 'admin_test_configs') {
-        await answerCallback('⏳ تست اتوماتیک اتصال آغاز شد...', true);
-        const untestedIds = db.configs.filter(c => c.status === 'untested').map(c => c.id);
-        const untestedProxies = (db.proxies || []).filter(p => p.status === 'untested').map(p => p.id);
+        const limit = db.settings.testBatchLimit || 100;
+        await answerCallback(`⏳ بررسی ${limit} کانفیگ اخیر آغاز شد...`, true);
 
-        if (untestedIds.length > 0) testConfigsBatch(untestedIds).catch(console.error);
-        if (untestedProxies.length > 0) testProxiesBatch(untestedProxies).catch(console.error);
+        const recentConfigs = db.configs.slice(-limit);
+        const untestedConfigs = recentConfigs.filter(c => c.status === 'untested');
+        const targetConfigs = untestedConfigs.length > 0 ? untestedConfigs : recentConfigs;
+        const configIds = targetConfigs.map(c => c.id);
+
+        const recentProxies = (db.proxies || []).slice(-limit);
+        const untestedProxies = recentProxies.filter(p => p.status === 'untested');
+        const targetProxies = untestedProxies.length > 0 ? untestedProxies : recentProxies;
+        const proxyIds = targetProxies.map(p => p.id);
+
+        if (configIds.length > 0) testConfigsBatch(configIds).catch(console.error);
+        if (proxyIds.length > 0) testProxiesBatch(proxyIds).catch(console.error);
 
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `⏳ **عملیات بررسی پورت‌ها شروع شد.**\n\nتعداد **${untestedIds.length}** کانفیگ ویتوری و **${untestedProxies.length}** پروکسی به صف بررسی متصل شدند.\nآمار بررسی نهایی در بخش آمار سیستم بروز خواهد شد.`,
+          text: `⏳ **عملیات بررسی پورت‌ها (محدود به ${limit} مورد اخیر) شروع شد.**\n\nتعداد **${configIds.length}** کانفیگ و **${proxyIds.length}** پروکسی به صف بررسی متصل شدند.\nآمار بررسی نهایی در بخش آمار سیستم بروز خواهد شد.`,
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
@@ -3896,7 +3957,15 @@ async function handleBotUpdate(update: any) {
     if (callbackData === 'get_npv_configs') {
       await answerCallback('در حال بررسی فایل‌های NPV...');
       
-      const extractedNpv = db.configs.filter(c => c.isNpv || c.protocol === 'npv' || c.raw.startsWith('npv') || c.source.toLowerCase().includes('npv') || c.source.toLowerCase().includes('npvt'));
+      const extractedNpv = db.configs.filter(c => 
+        c.isNpv || 
+        c.protocol === 'npv' || 
+        c.raw.startsWith('NPVT') || 
+        c.raw.startsWith('npv') || 
+        c.source.toLowerCase().includes('npv') || 
+        c.source.toLowerCase().includes('npvt') ||
+        ['vmess', 'vless', 'trojan', 'ss'].includes(c.protocol)
+      );
 
       if (extractedNpv.length === 0) {
         await callTelegramApi('sendMessage', {
@@ -3974,7 +4043,15 @@ async function handleBotUpdate(update: any) {
         }
       } else {
         // NPVT Configs logic
-        const npvConfigs = db.configs.filter(c => c.isNpv || c.protocol === 'npv' || c.raw.startsWith('npv') || c.source.toLowerCase().includes('npv') || c.source.toLowerCase().includes('npvt'));
+        const npvConfigs = db.configs.filter(c => 
+          c.isNpv || 
+          c.protocol === 'npv' || 
+          c.raw.startsWith('NPVT') || 
+          c.raw.startsWith('npv') || 
+          c.source.toLowerCase().includes('npv') || 
+          c.source.toLowerCase().includes('npvt') ||
+          ['vmess', 'vless', 'trojan', 'ss'].includes(c.protocol)
+        );
 
         if (npvConfigs.length === 0) {
           await callTelegramApi('sendMessage', {
@@ -4686,14 +4763,16 @@ async function startExpressServer() {
 
   // API: Test All Configs
   app.post('/api/configs/test-all', (req, res) => {
-    const ids = db.configs.map(c => c.id);
+    const limit = Number(req.body?.limit || req.query?.limit) || db.settings.testBatchLimit || 100;
+    const recentConfigs = db.configs.slice(-limit);
+    const ids = recentConfigs.map(c => c.id);
     if (ids.length === 0) {
       return res.json({ success: true, message: 'هیچ کانفیگی جهت تست موجود نیست.' });
     }
 
     // Async run to not block express response
     testConfigsBatch(ids);
-    res.json({ success: true, message: 'تست اتصال همگانی در پس‌زمینه آغاز شد.' });
+    res.json({ success: true, message: `تست اتصال تعداد ${ids.length} کانفیگ اخیر در پس‌زمینه آغاز شد.`, count: ids.length });
   });
 
   // API: Clear Failed Configs
@@ -4724,13 +4803,15 @@ async function startExpressServer() {
   // API: Test All Proxies
   app.post('/api/proxies/test-all', (req, res) => {
     if (!db.proxies) db.proxies = [];
-    const ids = db.proxies.map(p => p.id);
+    const limit = Number(req.body?.limit || req.query?.limit) || db.settings.testBatchLimit || 100;
+    const recentProxies = db.proxies.slice(-limit);
+    const ids = recentProxies.map(p => p.id);
     if (ids.length === 0) {
       return res.json({ success: true, message: 'هیچ پروکسی جهت تست موجود نیست.' });
     }
 
     testProxiesBatch(ids);
-    res.json({ success: true, message: 'تست اتصال همگانی پروکسی‌ها در پس‌زمینه آغاز شد.' });
+    res.json({ success: true, message: `تست اتصال تعداد ${ids.length} پروکسی اخیر در پس‌زمینه آغاز شد.`, count: ids.length });
   });
 
   // API: Clear Failed Proxies
