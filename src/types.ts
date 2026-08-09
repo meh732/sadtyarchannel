@@ -12,6 +12,7 @@ export interface ConfigItem {
   latency: number | null;
   lastChecked: string | null;
   isNpv?: boolean;
+  createdAt?: string;
 }
 
 export interface ProxyItem {
@@ -25,6 +26,7 @@ export interface ProxyItem {
   status: 'working' | 'failed' | 'untested' | 'checking';
   latency: number | null;
   lastChecked: string | null;
+  createdAt?: string;
 }
 
 export interface SourceItem {

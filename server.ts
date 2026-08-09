@@ -1355,6 +1355,65 @@ function extractRawJsonConfigs(text: string): string[] {
   return extractedUris;
 }
 
+const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000; // 3 days in milliseconds
+
+/**
+ * Filters scraped Telegram Web HTML to strictly include message posts from the last 3 days
+ */
+function filterTelegramHtmlLast3Days(html: string): string {
+  if (!html) return html;
+  
+  const now = Date.now();
+  const blocks = html.split(/(?=<div class="tgme_widget_message)/i);
+  if (blocks.length <= 1) return html;
+
+  const validBlocks: string[] = [blocks[0]];
+
+  for (let i = 1; i < blocks.length; i++) {
+    const block = blocks[i];
+    const timeMatch = block.match(/<time[^>]+datetime=["']([^"']+)["']/i);
+    if (timeMatch && timeMatch[1]) {
+      const postTime = new Date(timeMatch[1]).getTime();
+      if (!isNaN(postTime) && (now - postTime > THREE_DAYS_MS)) {
+        // Skip messages/posts older than 3 days
+        continue;
+      }
+    }
+    validBlocks.push(block);
+  }
+
+  return validBlocks.join('');
+}
+
+/**
+ * Purges stored configs and proxies that are older than 3 days
+ */
+function purgeOldConfigsAndProxies() {
+  const now = Date.now();
+  const initialConfigs = db.configs.length;
+  const initialProxies = (db.proxies || []).length;
+
+  db.configs = db.configs.filter(c => {
+    if (!c.createdAt) return true;
+    const time = new Date(c.createdAt).getTime();
+    if (isNaN(time)) return true;
+    return (now - time) <= THREE_DAYS_MS;
+  });
+
+  if (db.proxies) {
+    db.proxies = db.proxies.filter(p => {
+      if (!p.createdAt) return true;
+      const time = new Date(p.createdAt).getTime();
+      if (isNaN(time)) return true;
+      return (now - time) <= THREE_DAYS_MS;
+    });
+  }
+
+  if (initialConfigs !== db.configs.length || initialProxies !== (db.proxies || []).length) {
+    saveDatabase();
+  }
+}
+
 /**
  * Extracts configuration protocols from HTML or plain text
  */
@@ -1414,7 +1473,8 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
           status: 'untested',
           latency: null,
           lastChecked: null,
-          isNpv: true
+          isNpv: true,
+          createdAt: new Date().toISOString()
         }];
       }
     }
@@ -1461,7 +1521,8 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
       status: 'untested',
       latency: null,
       lastChecked: null,
-      isNpv: isNpvFormat
+      isNpv: isNpvFormat,
+      createdAt: new Date().toISOString()
     });
   }
 
@@ -1569,7 +1630,8 @@ function extractProxiesFromText(text: string, sourceName: string): ProxyItem[] {
       source: sourceName,
       status: 'untested',
       latency: null,
-      lastChecked: null
+      lastChecked: null,
+      createdAt: new Date().toISOString()
     });
   }
 
@@ -1583,6 +1645,9 @@ async function scrapeSource(source: SourceItem): Promise<number> {
   if (!source.enabled) return 0;
   
   try {
+    // Purge items older than 3 days
+    purgeOldConfigsAndProxies();
+
     let url = source.urlOrHandle;
     addLog('info', `در حال استخراج کدهای کانفیگ و پروکسی از منبع: ${source.name}`);
 
@@ -1602,7 +1667,10 @@ async function scrapeSource(source: SourceItem): Promise<number> {
       throw new Error(`خطای HTTP: ${response.status}`);
     }
 
-    const text = await response.text();
+    let rawText = await response.text();
+    // Strictly filter Telegram HTML to messages/posts from the last 3 days
+    const text = source.type === 'telegram' ? filterTelegramHtmlLast3Days(rawText) : rawText;
+
     let extracted: ConfigItem[] = [];
     let extractedProxies: ProxyItem[] = [];
 
@@ -1637,6 +1705,16 @@ async function scrapeSource(source: SourceItem): Promise<number> {
           for (const res of postResults) {
             if (res.status === 'fulfilled') {
               const pText = res.value;
+
+              // Check if individual post is older than 3 days
+              const timeMatch = pText.match(/<time[^>]+datetime=["']([^"']+)["']/i);
+              if (timeMatch && timeMatch[1]) {
+                const postTime = new Date(timeMatch[1]).getTime();
+                if (!isNaN(postTime) && (Date.now() - postTime > THREE_DAYS_MS)) {
+                  continue; // Skip post older than 3 days
+                }
+              }
+
               const hasNpvDoc = pText.toLowerCase().includes('.npvt') || pText.toLowerCase().includes('.npv') || pText.includes('NPVT') || pText.toLowerCase().includes('napsternet');
               const srcLabel = hasNpvDoc ? `${source.name} (.npvt)` : source.name;
               
