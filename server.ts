@@ -1247,15 +1247,28 @@ function parseJsonConfigToUri(json: any): string | null {
 }
 
 /**
- * Scans text for Base64 blocks starting with ey (NapsternetV / NPV / JSON configs)
+ * Scans text for Base64 or NPVT blocks (NapsternetV / NPV / JSON configs)
  */
 function extractBase64NpvConfigs(text: string): string[] {
   const extractedUris: string[] = [];
-  const base64Regex = /ey[a-zA-Z0-9+/=\s]{20,}/g;
-  const matches = text.match(base64Regex) || [];
+  
+  // Clean NPVT signature if present at start of text
+  let cleanedInput = text.trim();
+  if (cleanedInput.startsWith('NPVT')) {
+    cleanedInput = cleanedInput.substring(4).trim();
+  }
 
-  for (const match of matches) {
-    const cleaned = match.replace(/\s+/g, '');
+  // Matches base64 blocks starting with NPVT, ey, e3, Npv, or general base64 strings
+  const base64Regex = /(?:NPVT)?(?:ey|e3|Npv|[a-zA-Z0-9+/=]{30,})[a-zA-Z0-9+/=\s]{20,}/g;
+  const matchArray = cleanedInput.match(base64Regex);
+  const matchesList: string[] = matchArray ? Array.from(matchArray) : [];
+
+  if (matchesList.length === 0 && (cleanedInput.startsWith('eyJ') || cleanedInput.startsWith('e30') || cleanedInput.startsWith('{'))) {
+    matchesList.push(cleanedInput);
+  }
+
+  for (const match of matchesList) {
+    let cleaned = match.replace(/^NPVT/i, '').replace(/\s+/g, '');
     try {
       const decoded = Buffer.from(cleaned, 'base64').toString('utf8');
       if (
@@ -1266,13 +1279,27 @@ function extractBase64NpvConfigs(text: string): string[] {
         decoded.includes('rawLink') || 
         decoded.includes('configName') ||
         decoded.includes('uuid') ||
-        decoded.includes('id')
+        decoded.includes('id') ||
+        decoded.includes('port')
       ) {
         const json = JSON.parse(decoded);
         const uri = parseJsonConfigToUri(json);
-        if (uri) extractedUris.push(uri);
+        if (uri) {
+          extractedUris.push(uri);
+        } else {
+          extractedUris.push(cleaned);
+        }
       }
-    } catch (e) {}
+    } catch (e) {
+      // If it is raw JSON text
+      if (cleaned.startsWith('{') && cleaned.endsWith('}')) {
+        try {
+          const json = JSON.parse(cleaned);
+          const uri = parseJsonConfigToUri(json);
+          if (uri) extractedUris.push(uri);
+        } catch (err) {}
+      }
+    }
   }
   return extractedUris;
 }
@@ -1309,7 +1336,43 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
   const base64Configs = extractBase64NpvConfigs(cleanText);
   const jsonConfigs = extractRawJsonConfigs(cleanText);
   const allMatches = [...matches, ...base64Configs, ...jsonConfigs];
-  if (allMatches.length === 0) return [];
+
+  const lowerSource = (sourceName || '').toLowerCase();
+  const lowerText = cleanText.toLowerCase();
+
+  const sourceIsNpv = lowerSource.includes('npv') || 
+                      lowerSource.includes('npvt') || 
+                      lowerSource.includes('napsternet') || 
+                      lowerText.includes('.npvt') || 
+                      lowerText.includes('.npv') || 
+                      cleanText.trim().startsWith('NPVT');
+
+  if (allMatches.length === 0) {
+    // If the entire text is a raw base64 string or NPV string
+    const trimmed = cleanText.trim().replace(/^NPVT/i, '');
+    if (trimmed.length > 20 && (sourceIsNpv || trimmed.startsWith('npv://') || trimmed.startsWith('npvt://'))) {
+      const info = parseConfigHostPort(trimmed);
+      if (info.host && info.port) {
+        const exists = db.configs.some(c => c.raw === trimmed);
+        if (!exists) {
+          return [{
+            id: generateId(),
+            raw: trimmed,
+            protocol: 'npv',
+            remark: info.remark || 'NPVT_Config',
+            server: info.host,
+            port: info.port,
+            source: sourceName,
+            status: 'untested',
+            latency: null,
+            lastChecked: null,
+            isNpv: true
+          }];
+        }
+      }
+    }
+    return [];
+  }
 
   const extracted: ConfigItem[] = [];
   const uniqueRaw = Array.from(new Set(allMatches));
@@ -1331,11 +1394,11 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
       continue;
     }
 
-    const isNpvFormat = rawConfig.startsWith('npv://') || 
+    const isNpvFormat = sourceIsNpv || 
+                        rawConfig.startsWith('npv://') || 
                         rawConfig.startsWith('npvt://') || 
                         info.protocol === 'npv' || 
-                        sourceName.toLowerCase().includes('npv') ||
-                        sourceName.toLowerCase().includes('npvt');
+                        rawConfig.startsWith('NPVT');
 
     extracted.push({
       id: generateId(),
@@ -1513,7 +1576,7 @@ async function scrapeSource(source: SourceItem): Promise<number> {
           if (m[1]) postUrls.push(m[1].replace('t.me/', 't.me/s/'));
         }
         
-        const uniquePostUrls = Array.from(new Set(postUrls)).slice(-12);
+        const uniquePostUrls = Array.from(new Set(postUrls)).slice(-20);
         if (uniquePostUrls.length > 0) {
           const postResults = await Promise.allSettled(
             uniquePostUrls.map(pUrl => fetch(pUrl, {
@@ -1524,8 +1587,11 @@ async function scrapeSource(source: SourceItem): Promise<number> {
           for (const res of postResults) {
             if (res.status === 'fulfilled') {
               const pText = res.value;
-              const pConfigs = extractConfigsFromText(pText, source.name);
-              const pProxies = extractProxiesFromText(pText, source.name);
+              const hasNpvDoc = pText.toLowerCase().includes('.npvt') || pText.toLowerCase().includes('.npv') || pText.includes('NPVT') || pText.toLowerCase().includes('napsternet');
+              const srcLabel = hasNpvDoc ? `${source.name} (.npvt)` : source.name;
+              
+              const pConfigs = extractConfigsFromText(pText, srcLabel);
+              const pProxies = extractProxiesFromText(pText, srcLabel);
               extracted.push(...pConfigs);
               extractedProxies.push(...pProxies);
             }
@@ -3835,7 +3901,7 @@ async function handleBotUpdate(update: any) {
       if (extractedNpv.length === 0) {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `⚠️ <b>فایل کانفیگ NapsternetV (.NPVT) در دیتابیس یافت نشد!</b>\n\nربات هنوز هیچ فایل یا لینک با فرمت NPVT را از کانال‌های تلگرامی استخراج نکرده است.\n\n<b>توضیح روند سیستم:</b>\nکانال‌های منبع باید فایل‌های NapsternetV (.npvt) را منتشر کرده باشند تا ربات آنها را از کانال‌ها استخراج کند، سپس تست سلامت پورت روی آنها انجام شده، نام آنها به برند انحصاری شما (<b>${db.settings.branding}</b>) تغییر کرده و در این بخش فایل .npvt اصلی صادر گردد.\n\nلطفاً از پنل مدیریت، کانال‌های منبع حاوی فایل NPVT را افزوده و پویش دستی را اجرا نمایید.`,
+          text: `⚠️ <b>فایل کانفیگ NapsternetV (.NPVT) در حال حاضر موجود نیست!</b>\n\nدر حال حاضر فایل NPVT فعال و تست‌شده در سیستم ثبت نشده است.\n\nسیستم به صورت خودکار در حال به روزرسانی و دریافت فایل‌های جدید است. لطفاً دقایقی دیگر دوباره امتحان کنید.`,
           parse_mode: 'HTML',
           reply_markup: getReplyKeyboard(userId)
         });
@@ -3860,7 +3926,7 @@ async function handleBotUpdate(update: any) {
       
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
-        text: `🌀 <b>دریافت کانفیگ‌های NapsternetV (.NPVT)</b>\n\nتعداد ${extractedNpv.length} فایل NPVT استخراج شده از کانال‌ها در دیتابیس موجود است.\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید:\n*(کانفیگ‌ها به اسم برند <b>${db.settings.branding}</b> تغییر نام داده شده و به صورت فایل .npvt ارسال می‌گردند)*`,
+        text: `🌀 <b>دریافت کانفیگ‌های NapsternetV (.NPVT)</b>\n\nتعداد <b>${extractedNpv.length}</b> فایل NPVT فعال در دیتابیس موجود است.\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید:\n*(کانفیگ‌ها به اسم برند <b>${db.settings.branding}</b> تغییر نام داده شده و به صورت فایل .npvt ارسال می‌گردند)*`,
         parse_mode: 'HTML',
         reply_markup: qtyKeyboard
       });
@@ -3902,7 +3968,7 @@ async function handleBotUpdate(update: any) {
         if (list.length === 0) {
           await callTelegramApi('sendMessage', {
             chat_id: chatId,
-            text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده فعال در دیتابیس موجود نیست. تیم ما هم‌اکنون در حال استخراج و بررسی خودکار است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
+            text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده فعال در دیتابیس موجود نیست. سیستم هم‌اکنون در حال بررسی خودکار موارد جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
           });
           return;
         }
@@ -3913,7 +3979,7 @@ async function handleBotUpdate(update: any) {
         if (npvConfigs.length === 0) {
           await callTelegramApi('sendMessage', {
             chat_id: chatId,
-            text: `⚠️ <b>فایل کانفیگ NapsternetV (.NPVT) در دیتابیس یافت نشد!</b>\n\nربات هنوز فایلهای NPVT را از کانال‌های تلگرامی استخراج نکرده است. کانال‌های مبدا باید فایل‌های NPVT داشته باشند تا ربات آنها را استخراج، تست سلامت کرده و تغییر نام دهد.`,
+            text: `⚠️ <b>فایل کانفیگ NapsternetV (.NPVT) در حال حاضر موجود نیست!</b>\n\nدر حال حاضر فایل NPVT فعال در دیتابیس ثبت نشده است. سیستم به صورت خودکار در حال آماده‌سازی فایل‌های جدید است. لطفاً دقایقی دیگر دوباره امتحان کنید.`,
             parse_mode: 'HTML',
             reply_markup: getReplyKeyboard(userId)
           });
