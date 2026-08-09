@@ -140,8 +140,8 @@ function loadDatabase() {
       const content = fs.readFileSync(DB_FILE, 'utf8');
       const loaded = JSON.parse(content);
       
-      const envAdminId = process.env.ADMIN_ID ? process.env.ADMIN_ID.trim() : '';
-      const envBotToken = process.env.BOT_TOKEN ? process.env.BOT_TOKEN.trim() : '';
+      const envAdminId = process.env.ADMIN_ID ? process.env.ADMIN_ID.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+      const envBotToken = process.env.BOT_TOKEN ? process.env.BOT_TOKEN.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
 
       db = {
         settings: { 
@@ -357,7 +357,143 @@ function checkPort(host: string, port: number, timeout = 2500): Promise<{ workin
   });
 }
 
+/**
+ * Robust port check from inside Iran utilizing check-host.net API
+ */
+async function checkPortFromIran(host: string, port: number): Promise<{ working: boolean; latency: number }> {
+  try {
+    const checkUrl = `https://check-host.net/check-tcp?host=${encodeURIComponent(`${host}:${port}`)}&node=ir1.node.check-host.net&node=ir2.node.check-host.net&node=ir3.node.check-host.net&node=ir5.node.check-host.net&node=ir7.node.check-host.net`;
+    const res = await fetch(checkUrl, {
+      headers: { 'Accept': 'application/json' }
+    });
+    if (!res.ok) {
+      throw new Error(`Check-Host API returned status ${res.status}`);
+    }
+    const data: any = await res.json();
+    if (!data || !data.request_id) {
+      throw new Error('No request_id returned from Check-Host');
+    }
+
+    const requestId = data.request_id;
+    const nodes = data.nodes || {};
+    
+    // Find all node keys where country is Iran ('ir')
+    const irNodeKeys: string[] = [];
+    for (const key of Object.keys(nodes)) {
+      const nodeMeta = nodes[key];
+      if (Array.isArray(nodeMeta) && nodeMeta[0] && String(nodeMeta[0]).toLowerCase() === 'ir') {
+        irNodeKeys.push(key);
+      }
+    }
+
+    // Fallback if no specific IR nodes found in the metadata
+    if (irNodeKeys.length === 0) {
+      irNodeKeys.push('ir1.node.check-host.net', 'ir2.node.check-host.net', 'ir3.node.check-host.net', 'ir5.node.check-host.net', 'ir7.node.check-host.net');
+    }
+
+    // Poll for results (up to 4 times with 2s delay)
+    let attempts = 0;
+    while (attempts < 4) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      attempts++;
+
+      const resultRes = await fetch(`https://check-host.net/check-result/${requestId}`, {
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!resultRes.ok) continue;
+
+      const resultData: any = await resultRes.json();
+      if (!resultData) continue;
+
+      let hasPending = false;
+      let anyWorking = false;
+      let minLatency = 999;
+      let testedCount = 0;
+
+      for (const nodeKey of irNodeKeys) {
+        const nodeResults = resultData[nodeKey];
+        if (nodeResults === null) {
+          hasPending = true;
+          continue;
+        }
+        if (Array.isArray(nodeResults)) {
+          testedCount++;
+          for (const attempt of nodeResults) {
+            if (attempt && attempt.time !== undefined && attempt.error === undefined) {
+              anyWorking = true;
+              const lat = Math.round(attempt.time * 1000);
+              if (lat < minLatency) {
+                minLatency = lat;
+              }
+            }
+          }
+        }
+      }
+
+      if (anyWorking) {
+        return { working: true, latency: minLatency };
+      }
+
+      // If all IR nodes completed and none worked, we know it's blocked/failed
+      if (!hasPending && testedCount > 0) {
+        return { working: false, latency: 999 };
+      }
+    }
+
+    // If polling timed out and no success, we default to false
+    return { working: false, latency: 999 };
+  } catch (err: any) {
+    console.error('Error checking port from Iran via Check-Host:', err.message);
+    throw err;
+  }
+}
+
+/**
+ * Integrated full testing strategy:
+ * Tries Check-Host from Iran nodes first for absolute accuracy.
+ * Fallbacks to local port tester on any check-host rate limits or issues.
+ */
+async function checkPortFull(host: string, port: number): Promise<{ working: boolean; latency: number }> {
+  try {
+    const iranResult = await checkPortFromIran(host, port);
+    return iranResult;
+  } catch (err) {
+    console.log(`[CheckPort] Check-Host failed for ${host}:${port}. Falling back to local port check.`);
+    return checkPort(host, port, 2000);
+  }
+}
+
 // --- Scraping & Extraction Engine ---
+
+/**
+ * Decodes HTML entities and common URL encodings safely
+ */
+function safeDecodeText(text: string): string {
+  if (!text) return '';
+  let clean = text
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&apos;/gi, "'");
+
+  // Decode percent-encoded components to extract links that might be embedded or encoded inside href attributes
+  try {
+    clean = decodeURIComponent(clean);
+  } catch (e) {
+    // Fallback targeted replacement for standard URL characters if the overall string is malformed
+    clean = clean
+      .replace(/%3A/gi, ':')
+      .replace(/%2F/gi, '/')
+      .replace(/%3F/gi, '?')
+      .replace(/%3D/gi, '=')
+      .replace(/%26/gi, '&')
+      .replace(/%40/gi, '@')
+      .replace(/%23/gi, '#')
+      .replace(/%2B/gi, '+');
+  }
+  return clean;
+}
 
 /**
  * Extracts configuration protocols from HTML or plain text
@@ -365,17 +501,11 @@ function checkPort(host: string, port: number, timeout = 2500): Promise<{ workin
 function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] {
   if (!text) return [];
   
-  // Decodes html entities that telegram public feed may encode
-  let cleanText = text
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/%20/g, ' ');
+  const cleanText = safeDecodeText(text);
 
   // Look for configuration protocols (vless://, vmess://, trojan://, ss://, npv://, hy2://, hysteria2://)
   // Matching up to a space, double quote, single quote, less-than, greater-than, newline or backtick
-  const regex = /(vless|vmess|trojan|ss|npv):\/\/[^\s"'<>\`\\|]+/g;
+  const regex = /(vless|vmess|trojan|ss|npv):\/\/[^\s"'<>\`\\|]+/gi;
   const matches = cleanText.match(regex);
   if (!matches) return [];
 
@@ -422,23 +552,16 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
 function extractProxiesFromText(text: string, sourceName: string): ProxyItem[] {
   if (!text) return [];
 
-  let cleanText = text
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/%20/g, ' ');
+  const cleanText = safeDecodeText(text);
 
   // Match:
   // tg://proxy?server=SERVER&port=PORT&secret=SECRET
   // tg://socks?server=SERVER&port=PORT
-  // t.me/proxy?server=SERVER&port=PORT&secret=SECRET
-  // t.me/socks?server=SERVER&port=PORT
-  // socks5://SERVER:PORT
-  const regex = /(?:tg:\/\/|t\.me\/|https:\/\/t\.me\/)(?:proxy|socks)\?[^\s"'<>\`\\|]+/g;
+  // And any t.me, telegram.me, telegram.dog equivalents (with http, https, or no prefix)
+  const regex = /(?:tg:\/\/|(?:https?:\/\/)?(?:t\.me|telegram\.me|telegram\.dog)\/)(?:proxy|socks)\?[^\s"'<>\`\\|]+/gi;
   const matches1 = cleanText.match(regex) || [];
   
-  const socks5Regex = /socks5:\/\/[^\s"'<>\`\\|]+/g;
+  const socks5Regex = /socks5:\/\/[^\s"'<>\`\\|]+/gi;
   const matches2 = cleanText.match(socks5Regex) || [];
   
   const allMatches = [...matches1, ...matches2];
@@ -449,8 +572,22 @@ function extractProxiesFromText(text: string, sourceName: string): ProxyItem[] {
 
   for (let raw of uniqueRaw) {
     let rawProxy = raw.trim();
-    if (rawProxy.startsWith('t.me/') || rawProxy.startsWith('https://t.me/')) {
-      rawProxy = rawProxy.replace(/^https:\/\/t\.me\//, 'tg://').replace(/^t\.me\//, 'tg://');
+
+    // Standardize all Telegram web formats (t.me, telegram.me, telegram.dog) to tg:// protocol
+    let cleanUrl = rawProxy;
+    if (cleanUrl.toLowerCase().startsWith('http://') || cleanUrl.toLowerCase().startsWith('https://')) {
+      cleanUrl = cleanUrl.replace(/^https?:\/\//i, '');
+    }
+    if (
+      cleanUrl.toLowerCase().startsWith('t.me/') || 
+      cleanUrl.toLowerCase().startsWith('telegram.me/') || 
+      cleanUrl.toLowerCase().startsWith('telegram.dog/')
+    ) {
+      cleanUrl = cleanUrl
+        .replace(/^t\.me\//i, 'tg://')
+        .replace(/^telegram\.me\//i, 'tg://')
+        .replace(/^telegram\.dog\//i, 'tg://');
+      rawProxy = cleanUrl;
     }
 
     if (rawProxy.endsWith('.') || rawProxy.endsWith(',') || rawProxy.endsWith(')') || rawProxy.endsWith(']')) {
@@ -610,7 +747,7 @@ async function testProxiesBatch(ids: string[]) {
     proxy.status = 'checking';
     saveDatabase();
 
-    const checkResult = await checkPort(proxy.server, proxy.port);
+    const checkResult = await checkPortFull(proxy.server, proxy.port);
     
     const currentProxy = db.proxies.find(p => p.id === id);
     if (currentProxy) {
@@ -621,6 +758,9 @@ async function testProxiesBatch(ids: string[]) {
       if (checkResult.working) workingCount++;
       else failedCount++;
     }
+
+    // Polite delay between checks to avoid slam rate-limiting Check-Host
+    await new Promise(r => setTimeout(r, 1500));
   }
 
   saveDatabase();
@@ -644,7 +784,7 @@ async function testConfigsBatch(ids: string[]) {
     // Save checking status
     saveDatabase();
 
-    const checkResult = await checkPort(config.server, config.port);
+    const checkResult = await checkPortFull(config.server, config.port);
     
     // Refresh connection to DB object in case it was modified
     const currentConfig = db.configs.find(c => c.id === id);
@@ -656,6 +796,9 @@ async function testConfigsBatch(ids: string[]) {
       if (checkResult.working) workingCount++;
       else failedCount++;
     }
+
+    // Polite delay between checks to avoid slam rate-limiting Check-Host
+    await new Promise(r => setTimeout(r, 1500));
   }
 
   saveDatabase();
@@ -780,7 +923,8 @@ async function executeAutoPost(): Promise<boolean> {
       const label = `🔌 اتصال به پروکسی ${p.type.toUpperCase()} شماره ${idx + 1}`;
       inlineButtons.push([{
         text: label,
-        url: p.raw
+        url: p.raw,
+        style: 'success'
       }]);
     });
 
@@ -796,7 +940,7 @@ async function executeAutoPost(): Promise<boolean> {
       } else if (settings.adText.startsWith('http')) {
         adUrl = settings.adText;
       }
-      inlineButtons.push([{ text: adLabel, url: adUrl }]);
+      inlineButtons.push([{ text: adLabel, url: adUrl, style: 'primary' }]);
     }
 
     const channelHandle = settings.targetChannel.startsWith('@') ? settings.targetChannel : `@${settings.targetChannel.replace('@', '')}`;
@@ -938,7 +1082,8 @@ async function monitorChannelPosts() {
           const label = `🔌 اتصال به پروکسی ${p.type.toUpperCase()} شماره ${p.index}`;
           inlineButtons.push([{
             text: label,
-            url: p.raw
+            url: p.raw,
+            style: 'success'
           }]);
         }
       });
@@ -956,7 +1101,7 @@ async function monitorChannelPosts() {
         } else if (ap.adText.startsWith('http')) {
           adUrl = ap.adText;
         }
-        inlineButtons.push([{ text: adLabel, url: adUrl }]);
+        inlineButtons.push([{ text: adLabel, url: adUrl, style: 'primary' }]);
       }
 
       // 1. Edit the main post
@@ -1286,7 +1431,11 @@ async function handleBotUpdate(update: any) {
     let userHasJoinedAll = true;
     const notJoinedList: ForceJoinChannel[] = [];
 
-    const isAdmin = db.settings.adminId && String(userId) === String(db.settings.adminId);
+    const cleanId = (id: string | number | undefined) => {
+      if (!id) return '';
+      return String(id).replace(/^['"\s]+|['"\s]+$/g, '').trim();
+    };
+    const isAdmin = db.settings.adminId && cleanId(userId) === cleanId(db.settings.adminId);
 
     if (requiredChannels.length > 0 && !isAdmin) {
       // Check cache first to avoid rate limits (valid for 30 seconds)
@@ -1538,27 +1687,27 @@ async function handleBotUpdate(update: any) {
         const keyboard = {
           inline_keyboard: [
             [
-              { text: `📊 آمار لحظه‌ای سیستم`, callback_data: 'admin_stats' },
-              { text: `${db.settings.isBotRunning ? '🟢 ربات: روشن' : '🔴 ربات: خاموش'}`, callback_data: 'admin_toggle_bot' }
+              { text: `📊 آمار لحظه‌ای سیستم`, callback_data: 'admin_stats', style: 'primary' },
+              { text: `${db.settings.isBotRunning ? '🟢 ربات: روشن' : '🔴 ربات: خاموش'}`, callback_data: 'admin_toggle_bot', style: db.settings.isBotRunning ? 'success' : 'danger' }
             ],
             [
-              { text: `🔄 استخراج فوری همین حالا`, callback_data: 'admin_scrape_now' },
-              { text: `🌐 تست اتصال پورت‌ها`, callback_data: 'admin_test_configs' }
+              { text: `🔄 استخراج فوری همین حالا`, callback_data: 'admin_scrape_now', style: 'success' },
+              { text: `🌐 تست اتصال پورت‌ها`, callback_data: 'admin_test_configs', style: 'primary' }
             ],
             [
-              { text: `📢 عضویت اجباری (Force Join)`, callback_data: 'admin_fj_list' },
-              { text: `📝 تنظیم ارسال خودکار`, callback_data: 'admin_autopost_menu' }
+              { text: `📢 عضویت اجباری (Force Join)`, callback_data: 'admin_fj_list', style: 'primary' },
+              { text: `📝 تنظیم ارسال خودکار`, callback_data: 'admin_autopost_menu', style: 'primary' }
             ],
             [
-              { text: `🔍 پایش ۵ روزه کانال`, callback_data: 'admin_monitor_menu' },
-              { text: `📦 پشتیبانی و بکاپ دیتابیس`, callback_data: 'admin_backup_menu' }
+              { text: `🔍 پایش ۵ روزه کانال`, callback_data: 'admin_monitor_menu', style: 'primary' },
+              { text: `📦 پشتیبانی و بکاپ دیتابیس`, callback_data: 'admin_backup_menu', style: 'primary' }
             ],
             [
-              { text: `✍️ برندینگ: ${db.settings.branding}`, callback_data: 'admin_edit_branding' }
+              { text: `✍️ برندینگ: ${db.settings.branding}`, callback_data: 'admin_edit_branding', style: 'primary' }
             ],
             [
-              { text: `🧹 پاکسازی دیتابیس`, callback_data: 'admin_cleanup_menu' },
-              { text: `📣 ارسال پیام همگانی`, callback_data: 'admin_broadcast_start' }
+              { text: `🧹 پاکسازی دیتابیس`, callback_data: 'admin_cleanup_menu', style: 'danger' },
+              { text: `📣 ارسال پیام همگانی`, callback_data: 'admin_broadcast_start', style: 'primary' }
             ]
           ]
         };
@@ -2204,12 +2353,12 @@ async function handleBotUpdate(update: any) {
       notJoinedList.forEach((ch, idx) => {
         msg += `${idx + 1}️⃣ کانال ${ch.title} (${ch.username})\n`;
         const url = ch.inviteLink || `https://t.me/${ch.username.replace('@', '')}`;
-        keyboard.push([{ text: `📢 عضویت در کانال ${ch.title}`, url }]);
+        keyboard.push([{ text: `📢 عضویت در کانال ${ch.title}`, url, style: 'primary' }]);
       });
       
       msg += `\nپس از عضویت در تمامی کانال‌ها، دکمه **تایید عضویت ✅** را در زیر فشار دهید تا ربات برای شما فعال شود.`;
       
-      keyboard.push([{ text: '✅ تایید عضویت (بررسی مجدد)', callback_data: 'check_join_status' }]);
+      keyboard.push([{ text: '✅ تایید عضویت (بررسی مجدد)', callback_data: 'check_join_status', style: 'success' }]);
 
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
@@ -2226,18 +2375,18 @@ async function handleBotUpdate(update: any) {
     const startKeyboard = {
       inline_keyboard: [
         [
-          { text: '📥 دریافت کانفیگ V2Ray (ویتوری)', callback_data: 'get_v2ray_configs' },
-          { text: '🌀 دریافت کانفیگ NPV تانل', callback_data: 'get_npv_configs' }
+          { text: '📥 دریافت کانفیگ V2Ray (ویتوری)', callback_data: 'get_v2ray_configs', style: 'success' },
+          { text: '🌀 دریافت کانفیگ NPV تانل', callback_data: 'get_npv_configs', style: 'success' }
         ],
         [
-          { text: '🔌 دریافت پروکسی جدید تلگرام', callback_data: 'get_proxies' },
-          { text: '📊 وضعیت اتصال و تست نت ایران', callback_data: 'get_net_status' }
+          { text: '🔌 دریافت پروکسی جدید تلگرام', callback_data: 'get_proxies', style: 'primary' },
+          { text: '📊 وضعیت اتصال و تست نت ایران', callback_data: 'get_net_status', style: 'primary' }
         ],
         [
           { text: 'ℹ️ راهنمای اتصال آسان', callback_data: 'get_help' }
         ],
         [
-          { text: '⭐ عضویت در کانال‌های ما', url: requiredChannels[0]?.inviteLink || 'https://t.me' }
+          { text: '⭐ عضویت در کانال‌های ما', url: requiredChannels[0]?.inviteLink || 'https://t.me', style: 'primary' }
         ]
       ]
     };
@@ -2423,7 +2572,8 @@ async function handleBotUpdate(update: any) {
         
         proxyButtons.push([{
           text: `🔌 پروکسی ${p.type.toUpperCase()} | ${pingText} (${loc.country} ${flag})`,
-          url: p.raw
+          url: p.raw,
+          style: 'success'
         }]);
       }
       
