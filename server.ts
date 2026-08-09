@@ -2002,7 +2002,7 @@ async function testConfigsBatch(ids: string[]) {
 
       const checkResult = await withHardTimeout(
         () => checkConfigFully(config.raw),
-        4000,
+        20000,
         { working: false, latency: 999 }
       );
       
