@@ -2049,20 +2049,26 @@ async function executeAutoPost(): Promise<boolean> {
 
     // Get configs
     const workingConfigs = db.configs.filter(c => c.status === 'working');
-    const availableConfigs = workingConfigs.length > 0 ? workingConfigs : db.configs.slice(0, 50);
+    let availableConfigs = workingConfigs;
+    if (availableConfigs.length === 0) {
+      availableConfigs = db.configs.filter(c => c.status === 'untested').slice(0, 50);
+    }
     const shuffledConfigs = [...availableConfigs].sort(() => 0.5 - Math.random());
     const configLimit = typeof settings.configCount === 'number' ? settings.configCount : 1;
     const selectedConfigs = shuffledConfigs.slice(0, Math.min(configLimit, shuffledConfigs.length));
 
     // Get proxies
     const workingProxies = (db.proxies || []).filter(p => p.status === 'working');
-    const availableProxies = workingProxies.length > 0 ? workingProxies : (db.proxies || []).slice(0, 50);
+    let availableProxies = workingProxies;
+    if (availableProxies.length === 0) {
+      availableProxies = (db.proxies || []).filter(p => p.status === 'untested').slice(0, 50);
+    }
     const shuffledProxies = [...availableProxies].sort(() => 0.5 - Math.random());
     const proxyLimit = typeof settings.proxyCount === 'number' ? settings.proxyCount : 1;
     const selectedProxies = shuffledProxies.slice(0, Math.min(proxyLimit, shuffledProxies.length));
 
     if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
-      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی فعالی در دیتابیس یافت نشد.');
+      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی فعال یا تست‌نشده‌ای در دیتابیس یافت نشد.');
       return false;
     }
 
@@ -2073,9 +2079,10 @@ async function executeAutoPost(): Promise<boolean> {
       const conf = selectedConfigs[i];
       const loc = await getIpLocation(conf.server);
       const flag = getFlagEmoji(loc.countryCode);
-      const pingText = conf.latency ? `پینگ: ${conf.latency}ms` : 'پورت: فعال';
+      const pingText = conf.status === 'working' ? (conf.latency ? `پینگ: ${conf.latency}ms` : 'پورت: فعال') : 'وضعیت: بررسی نشده';
+      const statusIcon = conf.status === 'working' ? '🟢' : '⚪';
       
-      text += `🟢 **کانفیگ شماره ${i + 1}** [${conf.protocol.toUpperCase()}]\n`;
+      text += `${statusIcon} **کانفیگ شماره ${i + 1}** [${conf.protocol.toUpperCase()}]\n`;
       text += `🔹 ${pingText} | لوکیشن: ${loc.country} ${flag}\n`;
       const brandedRaw = applyBrandingToConfig(conf.raw, db.settings.branding);
       text += `\`${brandedRaw}\`\n\n`;
@@ -2088,8 +2095,9 @@ async function executeAutoPost(): Promise<boolean> {
         const proxy = selectedProxies[i];
         const loc = await getIpLocation(proxy.server);
         const flag = getFlagEmoji(loc.countryCode);
-        const pingText = proxy.latency ? `پینگ: ${proxy.latency}ms` : 'پورت: فعال';
-        text += `🔹 پروکسی ${proxy.type.toUpperCase()} | ${pingText} | کشور: ${loc.country} ${flag}\n`;
+        const pingText = proxy.status === 'working' ? (proxy.latency ? `پینگ: ${proxy.latency}ms` : 'پورت: فعال') : 'وضعیت: بررسی نشده';
+        const statusIcon = proxy.status === 'working' ? '🟢' : '⚪';
+        text += `${statusIcon} پروکسی ${proxy.type.toUpperCase()} | ${pingText} | کشور: ${loc.country} ${flag}\n`;
       }
       text += `\n👇 برای اتصال، روی دکمه‌های شیشه‌ای زیر ضربه بزنید:\n`;
     }
@@ -3983,7 +3991,7 @@ async function handleBotUpdate(update: any) {
 
       if (callbackData === 'admin_ap_conf_count') {
         let count = (db.settings.autoPost.configCount || 0) + 1;
-        if (count > 2) count = 0;
+        if (count > 5) count = 0;
         db.settings.autoPost.configCount = count;
         saveDatabase();
         await answerCallback(`تعداد کانفیگ: ${count} عدد`);
@@ -3993,7 +4001,7 @@ async function handleBotUpdate(update: any) {
 
       if (callbackData === 'admin_ap_proxy_count') {
         let count = (db.settings.autoPost.proxyCount || 0) + 1;
-        if (count > 2) count = 0;
+        if (count > 5) count = 0;
         db.settings.autoPost.proxyCount = count;
         saveDatabase();
         await answerCallback(`تعداد پروکسی: ${count} عدد`);
