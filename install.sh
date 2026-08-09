@@ -158,7 +158,7 @@ install_bot() {
     else
         echo -e "Cloning latest source files to $INSTALL_DIR..."
         rm -rf "$INSTALL_DIR"
-        git clone https://github.com/aistudio-build/v2ray-extractor-bot.git "$INSTALL_DIR"
+        git clone https://github.com/meh732/sadtyarchannel.git "$INSTALL_DIR"
     fi
 
     cd "$INSTALL_DIR" || exit 1
