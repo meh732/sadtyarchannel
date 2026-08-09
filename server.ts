@@ -943,6 +943,16 @@ async function executeAutoPost(): Promise<boolean> {
       inlineButtons.push([{ text: adLabel, url: adUrl, style: 'primary' }]);
     }
 
+    // Add bot advertisement button
+    const botUser = db.settings.botUsername;
+    const botUrl = botUser ? `https://t.me/${botUser.replace('@', '')}` : null;
+    if (botUrl) {
+      inlineButtons.push([{
+        text: '🤖 دریافت کانفیگ و پروکسی رایگان بیشتر',
+        url: botUrl
+      }]);
+    }
+
     const channelHandle = settings.targetChannel.startsWith('@') ? settings.targetChannel : `@${settings.targetChannel.replace('@', '')}`;
     const sentMsg = await callTelegramApi('sendMessage', {
       chat_id: channelHandle,
@@ -981,6 +991,7 @@ async function executeAutoPost(): Promise<boolean> {
       postedAt: new Date().toISOString(),
       originalText: text,
       configs: postConfigs,
+      proxies: postProxies,
       repliedMessageId: null
     });
 
@@ -1102,6 +1113,16 @@ async function monitorChannelPosts() {
           adUrl = ap.adText;
         }
         inlineButtons.push([{ text: adLabel, url: adUrl, style: 'primary' }]);
+      }
+
+      // Add bot advertisement button
+      const botUser = db.settings.botUsername;
+      const botUrl = botUser ? `https://t.me/${botUser.replace('@', '')}` : null;
+      if (botUrl) {
+        inlineButtons.push([{
+          text: '🤖 دریافت کانفیگ و پروکسی رایگان بیشتر',
+          url: botUrl
+        }]);
       }
 
       // 1. Edit the main post
@@ -1321,6 +1342,69 @@ async function callTelegramApi(method: string, body: object): Promise<any> {
 }
 
 /**
+ * Registers default bot commands with Telegram so the native "Menu" button appears next to the chat bar
+ */
+async function setBotCommands(token: string) {
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commands: [
+          { command: 'start', description: '🚀 شروع کار ربات و منوی اصلی' },
+          { command: 'admin', description: '⚙️ ورود به پنل مدیریت (ادمین)' },
+          { command: 'help', description: 'ℹ️ راهنمای گام به گام اتصال' }
+        ]
+      })
+    });
+    const data = await response.json();
+    if (data.ok) {
+      addLog('success', 'منوی دستورات پیش‌فرض ربات تلگرام با موفقیت تنظیم و ثبت گردید.');
+    } else {
+      console.error('Failed to set bot commands:', data.description);
+    }
+  } catch (err: any) {
+    console.error('Error setting bot commands:', err.message || err);
+  }
+}
+
+/**
+ * Generates the persistent custom keyboard (ReplyKeyboardMarkup) to be displayed in the bar below the chat
+ */
+function getReplyKeyboard(userId: string | number) {
+  const cleanId = (id: string | number | undefined) => {
+    if (!id) return '';
+    return String(id).replace(/^['"\s]+|['"\s]+$/g, '').trim();
+  };
+  const isAdmin = db.settings.adminId && cleanId(userId) === cleanId(db.settings.adminId);
+
+  const keyboard: any[][] = [
+    [
+      { text: '📥 دریافت کانفیگ ویتوری' },
+      { text: '🌀 دریافت کانفیگ NPV' }
+    ],
+    [
+      { text: '🔌 دریافت پروکسی تلگرام' },
+      { text: '📊 وضعیت شبکه' }
+    ],
+    [
+      { text: 'ℹ️ راهنمای اتصال' }
+    ]
+  ];
+
+  if (isAdmin) {
+    // Show Admin Panel quick shortcut button directly in the bar below the chat for the admin!
+    keyboard.push([{ text: '⚙️ ورود به پنل مدیریت' }]);
+  }
+
+  return {
+    keyboard,
+    resize_keyboard: true,
+    one_time_keyboard: false
+  };
+}
+
+/**
  * Tests Bot Connection / Fetches Profile info
  */
 async function testBotConnection(token: string): Promise<string> {
@@ -1406,6 +1490,21 @@ async function handleBotUpdate(update: any) {
     }
 
     if (!chatId) return;
+
+    // --- Map persistent custom keyboard buttons to standard commands/callbacks ---
+    if (messageText === '📥 دریافت کانفیگ ویتوری') {
+      callbackData = 'get_v2ray_configs';
+    } else if (messageText === '🌀 دریافت کانفیگ NPV') {
+      callbackData = 'get_npv_configs';
+    } else if (messageText === '🔌 دریافت پروکسی تلگرام') {
+      callbackData = 'get_proxies';
+    } else if (messageText === '📊 وضعیت شبکه') {
+      callbackData = 'get_net_status';
+    } else if (messageText === 'ℹ️ راهنمای اتصال') {
+      callbackData = 'get_help';
+    } else if (messageText === '⚙️ ورود به پنل مدیریت') {
+      messageText = '/admin';
+    }
 
     // Save or update bot user
     let userIdx = db.users.findIndex(u => u.chatId === chatId);
@@ -2336,13 +2435,71 @@ async function handleBotUpdate(update: any) {
         // Clear cache and re-evaluate
         delete joinChecksCache[userId];
         await answerCallback('در حال بررسی مجدد عضویت...');
-        await handleBotUpdate({
-          message: {
-            chat: { id: chatId },
-            from: { id: userId, username, first_name: firstName },
-            text: '/start'
+
+        // Perform instant live check
+        let hasJoinedNow = true;
+        const freshNotJoined: ForceJoinChannel[] = [];
+        for (const channel of requiredChannels) {
+          try {
+            const handle = channel.username.startsWith('@') ? channel.username : `@${channel.username}`;
+            const member = await callTelegramApi('getChatMember', {
+              chat_id: handle,
+              user_id: userId
+            });
+            const validStatus = ['creator', 'administrator', 'member'];
+            if (!member || !validStatus.includes(member.status)) {
+              hasJoinedNow = false;
+              freshNotJoined.push(channel);
+            }
+          } catch (e) {
+            console.error(`Force join check error for ${channel.username}:`, e);
           }
-        });
+        }
+
+        joinChecksCache[userId] = {
+          checkedAt: Date.now(),
+          hasJoined: hasJoinedNow
+        };
+
+        if (hasJoinedNow) {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `🎉 **عضویت شما با موفقیت تایید شد!**\n\nهم‌اکنون ربات برای شما فعال گردیده است. خوش آمدید! ❤️`,
+            parse_mode: 'Markdown'
+          });
+
+          await handleBotUpdate({
+            message: {
+              chat: { id: chatId },
+              from: { id: userId, username, first_name: firstName },
+              text: '/start'
+            }
+          });
+        } else {
+          // Send notification that they haven't joined yet
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `⚠️ **عدم عضویت کامل**\n\nشما هنوز عضو کانال‌های زیر نشده‌اید. لطفاً ابتدا عضو شده و مجدداً تلاش کنید.`,
+            parse_mode: 'Markdown'
+          });
+
+          let msg = `⚠️ **عضویت اجباری**\n\nکاربر گرامی **${firstName}**، برای استفاده از ربات و دریافت کانفیگ‌های رایگان و پرسرعت، ابتدا باید در کانال‌های اسپانسر ما عضو شوید:\n\n`;
+          const keyboard: any[] = [];
+          freshNotJoined.forEach((ch, idx) => {
+            msg += `${idx + 1}️⃣ کانال ${ch.title} (${ch.username})\n`;
+            const url = ch.inviteLink || `https://t.me/${ch.username.replace('@', '')}`;
+            keyboard.push([{ text: `📢 عضویت در کانال ${ch.title}`, url, style: 'primary' }]);
+          });
+          msg += `\nپس از عضویت در تمامی کانال‌ها، دکمه **تایید عضویت ✅** را در زیر فشار دهید تا ربات برای شما فعال شود.`;
+          keyboard.push([{ text: '✅ تایید عضویت (بررسی مجدد)', callback_data: 'check_join_status', style: 'success' }]);
+
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: msg,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        }
         return;
       }
 
@@ -2392,11 +2549,11 @@ async function handleBotUpdate(update: any) {
     };
 
     if (messageText === '/start') {
-      const welcome = `سلام ${firstName} عزیز! 🌹\nبه ربات بزرگ استخراج و پخش کانفیگ‌ها و پروکسی‌های کاملاً تست شده و پرسرعت خوش آمدید.\n\nمن هر چند دقیقه کانال‌ها و منابع معتبر را جستجو می‌کنم، پورت‌های آن‌ها را در داخل نت ایران تست می‌کنم و فقط موارد فعال را ارائه می‌دهم.\n\nنوع اتصال درخواستی خود را از منوی زیر انتخاب کنید:`;
+      const welcome = `سلام ${firstName} عزیز! 🌹\nبه ربات بزرگ استخراج و پخش کانفیگ‌ها و پروکسی‌های کاملاً تست شده و پرسرعت خوش آمدید.\n\nمن هر چند دقیقه کانال‌ها و منابع معتبر را جستجو می‌کنم، پورت‌های آن‌ها را در داخل نت ایران تست می‌کنم و فقط موارد فعال را ارائه می‌دهم.\n\nاز دکمه‌های منوی لمسی در زیر کادر پیام جهت دسترسی آسان استفاده کنید:`;
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: welcome,
-        reply_markup: startKeyboard
+        reply_markup: getReplyKeyboard(userId)
       });
       return;
     }
@@ -2439,7 +2596,7 @@ async function handleBotUpdate(update: any) {
         chat_id: chatId,
         text: msg,
         parse_mode: 'Markdown',
-        reply_markup: startKeyboard
+        reply_markup: getReplyKeyboard(userId)
       });
 
       // Increment statistics
@@ -2484,7 +2641,7 @@ async function handleBotUpdate(update: any) {
         chat_id: chatId,
         text: msg,
         parse_mode: 'Markdown',
-        reply_markup: startKeyboard
+        reply_markup: getReplyKeyboard(userId)
       });
 
       const idx = db.users.findIndex(u => u.chatId === chatId);
@@ -2512,7 +2669,7 @@ async function handleBotUpdate(update: any) {
         chat_id: chatId,
         text: msg,
         parse_mode: 'Markdown',
-        reply_markup: startKeyboard
+        reply_markup: getReplyKeyboard(userId)
       });
       return;
     }
@@ -2534,7 +2691,7 @@ async function handleBotUpdate(update: any) {
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: msg,
-        reply_markup: startKeyboard
+        reply_markup: getReplyKeyboard(userId)
       });
       return;
     }
@@ -2590,22 +2747,22 @@ async function handleBotUpdate(update: any) {
 
     if (callbackData === 'back_to_main') {
       await answerCallback('منوی اصلی');
-      const welcome = `نوع اتصال درخواستی خود را از منوی زیر انتخاب کنید:`;
+      const welcome = `منوی کاربری مجدداً فعال شد. لطفاً گزینه‌ مورد نظر خود را از دکمه‌های زیر انتخاب کنید:`;
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: welcome,
-        reply_markup: startKeyboard
+        reply_markup: getReplyKeyboard(userId)
       });
       return;
     }
 
     // Default reply to unrecognized text message
     if (messageText) {
-      const defaultMsg = `⚠️ متوجه دستور نشدم.\nبرای شروع کار ربات و دریافت منوی هوشمند، دستور /start را تایپ کنید و یا از دکمه‌های شیشه‌ای بالا استفاده نمایید.`;
+      const defaultMsg = `⚠️ متوجه دستور نشدم.\nبرای دریافت منوی هوشمند، بر روی دکمه‌های زیر کادر پیام کلیک کنید و یا دستور /start را تایپ کنید.`;
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: defaultMsg,
-        reply_markup: startKeyboard
+        reply_markup: getReplyKeyboard(userId)
       });
     }
 
@@ -2639,6 +2796,7 @@ async function startBot() {
   try {
     addLog('info', 'در حال اتصال به سرورهای تلگرام...');
     const username = await testBotConnection(token);
+    await setBotCommands(token);
     db.settings.botUsername = username;
     db.settings.isBotRunning = true;
     pollingActive = true;

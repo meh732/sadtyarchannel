@@ -67,6 +67,7 @@ export default function App() {
   const [users, setUsers] = useState<BotUser[]>([]);
   const [logs, setLogs] = useState<BotLog[]>([]);
   const [settings, setSettings] = useState<SystemSettings>({
+    adminId: '',
     botToken: '',
     botUsername: '',
     branding: '',
@@ -2044,6 +2045,25 @@ export default function App() {
                           className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-mono text-left focus:border-indigo-500 focus:outline-none"
                           dir="ltr"
                         />
+                      </div>
+
+                      {/* Admin Chat ID Input */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                          <span>شناسه عددی مدیر تلگرام (Admin Chat ID)</span>
+                          <span className="text-[10px] text-indigo-600 font-semibold">تأیید نقش ادمین در ربات</span>
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="مثال: 123456789"
+                          value={settings.adminId || ''}
+                          onChange={(e) => setSettings(prev => ({ ...prev, adminId: e.target.value }))}
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-mono text-left focus:border-indigo-500 focus:outline-none"
+                          dir="ltr"
+                        />
+                        <p className="text-[10px] text-slate-400">
+                          پس از عضویت در ربات تلگرام، شناسه خود را از لیست کاربران (در تب داشبورد) کپی کرده و در اینجا ذخیره کنید تا دکمه کنترل مدیریت زیر چت تلگرام برای شما فعال گردد.
+                        </p>
                       </div>
 
                       {/* Branding Input */}
