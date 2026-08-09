@@ -1330,6 +1330,34 @@ async function sendBackupToAdmin(): Promise<boolean> {
   }
 }
 
+/**
+ * Sends an NPV Tunnel configuration file (.npv) to a Telegram user.
+ */
+async function sendNpvFile(chatId: string | number, configText: string, filename: string, caption: string): Promise<boolean> {
+  const token = db.settings.botToken;
+  if (!token) return false;
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', String(chatId));
+    
+    const blob = new Blob([configText], { type: 'text/plain' });
+    formData.append('document', blob, filename);
+    if (caption) {
+      formData.append('caption', caption);
+    }
+
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+      method: 'POST',
+      body: formData
+    });
+    const resData = await res.json();
+    return !!resData.ok;
+  } catch (e) {
+    console.error('Error sending NPV file:', e);
+    return false;
+  }
+}
+
 async function checkAndTriggerBackup() {
   if (!db.settings.backupEnabled) return;
   const lastBackup = db.settings.lastBackupAt;
@@ -2763,15 +2791,15 @@ async function handleBotUpdate(update: any) {
       const qtyKeyboard = {
         inline_keyboard: [
           [
-            { text: '1️⃣ یک عدد', callback_data: 'v2ray_qty_1' },
-            { text: '2️⃣ دو عدد', callback_data: 'v2ray_qty_2' }
+            { text: '1️⃣ یک عدد', callback_data: 'v2ray_qty_1', style: 'success' },
+            { text: '2️⃣ دو عدد', callback_data: 'v2ray_qty_2', style: 'success' }
           ],
           [
-            { text: '3️⃣ سه عدد', callback_data: 'v2ray_qty_3' },
-            { text: '5️⃣ پنج عدد', callback_data: 'v2ray_qty_5' }
+            { text: '3️⃣ سه عدد', callback_data: 'v2ray_qty_3', style: 'primary' },
+            { text: '5️⃣ پنج عدد', callback_data: 'v2ray_qty_5', style: 'primary' }
           ],
           [
-            { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main' }
+            { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }
           ]
         ]
       };
@@ -2791,22 +2819,22 @@ async function handleBotUpdate(update: any) {
       const qtyKeyboard = {
         inline_keyboard: [
           [
-            { text: '1️⃣ یک عدد', callback_data: 'npv_qty_1' },
-            { text: '2️⃣ دو عدد', callback_data: 'npv_qty_2' }
+            { text: '1️⃣ یک عدد', callback_data: 'npv_qty_1', style: 'success' },
+            { text: '2️⃣ دو عدد', callback_data: 'npv_qty_2', style: 'success' }
           ],
           [
-            { text: '3️⃣ سه عدد', callback_data: 'npv_qty_3' },
-            { text: '5️⃣ پنج عدد', callback_data: 'npv_qty_5' }
+            { text: '3️⃣ سه عدد', callback_data: 'npv_qty_3', style: 'primary' },
+            { text: '5️⃣ پنج عدد', callback_data: 'npv_qty_5', style: 'primary' }
           ],
           [
-            { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main' }
+            { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }
           ]
         ]
       };
       
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
-        text: '🌀 **دریافت کانفیگ‌های NPV Tunnel**\n\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید:\n*(در این بخش کانفیگ‌های V2Ray تبدیل شده به فرمت NPV به شما ارائه خواهد شد)*',
+        text: '🌀 **دریافت کانفیگ‌های NPV Tunnel**\n\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید:\n*(در این بخش کانفیگ‌های V2Ray تبدیل شده به فرمت NPV به صورت فایل با پسوند .npv برای شما ارسال خواهد شد)*',
         parse_mode: 'Markdown',
         reply_markup: qtyKeyboard
       });
@@ -2854,7 +2882,7 @@ async function handleBotUpdate(update: any) {
       } else {
         msg = `🌀 <b>کانفیگ‌های اختصاصی NPV Tunnel</b>\n`;
         msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
-        msg += `🔒 برای نرم‌افزار NapsternetV در گوشی‌های اندروید و آیفون\n`;
+        msg += `🔒 فایل‌های با پسوند <b>.npv</b> مخصوص کلاینت NapsternetV در اندروید و آیفون\n`;
         msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
 
         selected.forEach((conf, idx) => {
@@ -2866,7 +2894,7 @@ async function handleBotUpdate(update: any) {
           msg += `<code>${npvConfig}</code>\n\n`;
         });
 
-        msg += `📍 جهت کپی روی کانفیگ‌ها ضربه بزنید. سپس در نرم‌افزار NapsternetV وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
+        msg += `📍 جهت کپی دستی می‌توانید روی متن بالا ضربه بزنید. همچنین فایل‌های قابل نصب (.npv) نیز در زیر برای شما فرستاده شد:\n\n🆔 ${db.settings.branding}`;
       }
 
       await callTelegramApi('sendMessage', {
@@ -2875,6 +2903,18 @@ async function handleBotUpdate(update: any) {
         parse_mode: 'HTML',
         reply_markup: getReplyKeyboard(userId)
       });
+
+      // If requested NPV configs, let's also send them as real .npv files!
+      if (!isV2ray) {
+        for (let i = 0; i < selected.length; i++) {
+          const conf = selected[i];
+          const npvConfig = convertV2rayToNpv(conf.raw, db.settings.branding);
+          const cleanBranding = (db.settings.branding || 'NPV').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_');
+          const filename = `${cleanBranding}_Config_${i + 1}.npv`;
+          const caption = `🌀 فایل کانفیگ NPV Tunnel شماره ${i + 1}\n🔒 مخصوص وارد کردن در نرم‌افزار NapsternetV`;
+          await sendNpvFile(chatId, npvConfig, filename, caption);
+        }
+      }
 
       // Increment statistics
       const idx = db.users.findIndex(u => u.chatId === chatId);
@@ -2967,7 +3007,7 @@ async function handleBotUpdate(update: any) {
         }]);
       }
       
-      proxyButtons.push([{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main' }]);
+      proxyButtons.push([{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]);
 
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
