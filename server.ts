@@ -977,14 +977,20 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
       return resolve({ working: false, latency: 999 });
     }
 
+    try {
+      fs.chmodSync(xrayPath, '755');
+    } catch (e) {}
+
     let isFinished = false;
     let child: any = null;
+
+    let curlInterval: NodeJS.Timeout;
 
     const cleanup = () => {
       if (isFinished) return;
       isFinished = true;
       clearTimeout(globalTimeout);
-      clearTimeout(curlTimer);
+      clearInterval(curlInterval);
       if (child) {
         try { child.kill('SIGKILL'); } catch (e) {}
       }
@@ -998,7 +1004,7 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
 
     const globalTimeout = setTimeout(() => {
       finish(false, 999);
-    }, 4500);
+    }, 7000);
 
     try {
       child = spawn(xrayPath, ['-config', configPath], { stdio: 'ignore' });
@@ -1007,16 +1013,20 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
       return finish(false, 999);
     }
 
-    const curlTimer = setTimeout(() => {
-      if (isFinished) return;
+    const curlCmd = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 3`;
+    let attempts = 0;
 
-      const curlCmd = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 3`;
-      
+    const runCurl = () => {
+      if (isFinished) return;
+      attempts++;
       exec(curlCmd, { timeout: 3500 }, (error, stdout) => {
         if (isFinished) return;
 
         if (error || !stdout) {
-          return finish(false, 999);
+          if (attempts >= 6) {
+            return finish(false, 999);
+          }
+          return; // Will retry on next interval
         }
 
         const output = stdout.trim();
@@ -1029,9 +1039,16 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
           return finish(true, latencyMs);
         }
 
-        finish(false, 999);
+        if (attempts >= 6) {
+          finish(false, 999);
+        }
       });
-    }, 250);
+    };
+
+    // Retry every 1000ms
+    curlInterval = setInterval(runCurl, 1000);
+    // Initial delay for Xray to start
+    setTimeout(runCurl, 500);
   });
 }
 
@@ -1877,7 +1894,7 @@ async function testProxiesBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 25;
+  const CONCURRENCY = 10;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
@@ -1935,7 +1952,7 @@ async function testConfigsBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 25;
+  const CONCURRENCY = 10;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
@@ -1944,7 +1961,7 @@ async function testConfigsBatch(ids: string[]) {
 
       const checkResult = await withHardTimeout(
         () => checkConfigFully(config.raw),
-        4000,
+        15000,
         { working: false, latency: 999 }
       );
       
@@ -4968,7 +4985,7 @@ async function startExpressServer() {
   app.post('/api/settings/test-bot', async (req, res) => {
     try {
       const { botToken } = req.body;
-      const token = botToken || db.settings.botToken;
+      const token = (botToken || db.settings.botToken || '').trim();
       if (!token) {
         return res.status(400).json({ success: false, message: 'توکن ربات وارد نشده است.' });
       }
@@ -5434,7 +5451,7 @@ async function startExpressServer() {
   // API: Bot Status Toggle
   app.post('/api/bot/toggle', async (req, res) => {
     try {
-      if (pollingActive) {
+      if (db.settings.isBotRunning) {
         stopBot();
         res.json({ success: true, isBotRunning: false });
       } else {
