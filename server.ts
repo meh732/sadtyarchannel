@@ -380,7 +380,7 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
       result.protocol = 'trojan';
     } else if (trimmed.startsWith('ss://')) {
       result.protocol = 'ss';
-    } else if (trimmed.startsWith('npv://')) {
+    } else if (trimmed.startsWith('npv://') || trimmed.startsWith('npvt://')) {
       result.protocol = 'npv';
     }
 
@@ -393,7 +393,7 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
     if (result.protocol === 'npv') {
       // napsternetV configurations can be custom base64 encoded.
       // Let's see if we can decode it to search for hosts/ports.
-      const payload = urlPart.replace('npv://', '');
+      const payload = urlPart.replace(/npvt?:\/\//, '');
       try {
         const decoded = Buffer.from(payload, 'base64').toString('utf8');
         const json = JSON.parse(decoded);
@@ -530,9 +530,9 @@ function parseFullConfigDetails(rawConfig: string): {
       return result;
     }
 
-    if (trimmed.startsWith('npv://')) {
+    if (trimmed.startsWith('npv://') || trimmed.startsWith('npvt://')) {
       result.protocol = 'npv';
-      const payload = trimmed.replace('npv://', '').split('#')[0];
+      const payload = trimmed.replace(/npvt?:\/\//, '').split('#')[0];
       const decoded = safeBase64Decode(payload);
       if (decoded) {
         const json = JSON.parse(decoded);
@@ -1207,59 +1207,89 @@ function safeDecodeText(text: string): string {
  * Scans text for Base64 blocks starting with eyJ (which decodes to '{"')
  * and tries to parse and reconstruct them into valid V2Ray URIs if they represent NapsternetV / NPV configs.
  */
+function parseJsonConfigToUri(json: any): string | null {
+  try {
+    if (!json) return null;
+    if (json.rawLink) return json.rawLink;
+    
+    const address = json.address || json.v2rayAddress || json.host || json.v2rayHost || json.sshHost || '';
+    const port = Number(json.port || json.v2rayPort || json.sshPort) || 0;
+    const uuid = json.uuid || json.id || '';
+    
+    if (address && port) {
+      const protocol = json.protocol || json.type || 'vless';
+      const remark = json.remarks || json.configName || 'NPVT_Config';
+      if (['vless', 'trojan', 'ss'].includes(protocol) && uuid) {
+        return `${protocol}://${uuid}@${address}:${port}?security=${json.security || 'none'}&sni=${json.sni || ''}&type=${json.network || json.type || 'tcp'}&path=${encodeURIComponent(json.path || '')}#${encodeURIComponent(remark)}`;
+      } else if (protocol === 'vmess' && uuid) {
+        const vmessJson = {
+          v: "2",
+          ps: remark,
+          add: address,
+          port: port,
+          id: uuid,
+          aid: "0",
+          scy: "auto",
+          net: json.network || json.type || "tcp",
+          type: "none",
+          host: json.host || "",
+          path: json.path || "",
+          tls: json.security === 'tls' || json.tls === true ? "tls" : "none",
+          sni: json.sni || ""
+        };
+        return `vmess://${Buffer.from(JSON.stringify(vmessJson)).toString('base64')}`;
+      } else {
+        return `vless://${uuid || '00000000-0000-0000-0000-000000000000'}@${address}:${port}?security=${json.security || 'none'}&sni=${json.sni || ''}&type=${json.network || json.type || 'tcp'}#${encodeURIComponent(remark)}`;
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
+/**
+ * Scans text for Base64 blocks starting with ey (NapsternetV / NPV / JSON configs)
+ */
 function extractBase64NpvConfigs(text: string): string[] {
   const extractedUris: string[] = [];
-  const base64Regex = /eyJ[a-zA-Z0-9+/=\s]{30,}/g;
-  const matches = text.match(base64Regex);
-  if (!matches) return [];
+  const base64Regex = /ey[a-zA-Z0-9+/=\s]{20,}/g;
+  const matches = text.match(base64Regex) || [];
 
   for (const match of matches) {
     const cleaned = match.replace(/\s+/g, '');
     try {
       const decoded = Buffer.from(cleaned, 'base64').toString('utf8');
       if (
-        decoded.includes('"configVersion"') || 
-        decoded.includes('"configType"') || 
-        decoded.includes('"rawLink"') || 
-        decoded.includes('"configName"') ||
-        (decoded.includes('"remarks"') && (decoded.includes('"uuid"') || decoded.includes('"id"')))
+        decoded.includes('address') || 
+        decoded.includes('v2rayHost') || 
+        decoded.includes('configVersion') || 
+        decoded.includes('configType') || 
+        decoded.includes('rawLink') || 
+        decoded.includes('configName') ||
+        decoded.includes('uuid') ||
+        decoded.includes('id')
       ) {
         const json = JSON.parse(decoded);
-        if (json.rawLink) {
-          extractedUris.push(json.rawLink);
-        } else if (json.address && json.port && (json.uuid || json.id)) {
-          // Reconstruct standard config if rawLink is missing
-          const protocol = json.protocol || json.type || 'vless';
-          let link = '';
-          if (protocol === 'vless' || protocol === 'trojan' || protocol === 'ss') {
-            const remark = json.remarks || json.configName || 'NPVScraped';
-            const uuid = json.uuid || json.id || '';
-            link = `${protocol}://${uuid}@${json.address}:${json.port}?security=${json.security || 'none'}&sni=${json.sni || ''}&type=${json.network || json.type || 'tcp'}&path=${encodeURIComponent(json.path || '')}#${encodeURIComponent(remark)}`;
-            extractedUris.push(link);
-          } else if (protocol === 'vmess') {
-            const vmessJson = {
-              v: "2",
-              ps: json.remarks || json.configName || "NPVScraped",
-              add: json.address,
-              port: json.port,
-              id: json.uuid || json.id || '',
-              aid: "0",
-              scy: "auto",
-              net: json.network || json.type || "tcp",
-              type: "none",
-              host: json.host || "",
-              path: json.path || "",
-              tls: json.security === 'tls' || json.tls === true ? "tls" : "none",
-              sni: json.sni || ""
-            };
-            const vmessBase64 = Buffer.from(JSON.stringify(vmessJson)).toString('base64');
-            extractedUris.push(`vmess://${vmessBase64}`);
-          }
-        }
+        const uri = parseJsonConfigToUri(json);
+        if (uri) extractedUris.push(uri);
       }
-    } catch (e) {
-      // Ignore invalid JSON or base64
-    }
+    } catch (e) {}
+  }
+  return extractedUris;
+}
+
+/**
+ * Scans text for raw JSON config objects
+ */
+function extractRawJsonConfigs(text: string): string[] {
+  const extractedUris: string[] = [];
+  const jsonRegex = /\{[^}]*(?:"address"|"v2rayHost"|"uuid"|"id"|"configVersion"|"configName")[^}]*\}/g;
+  const matches = text.match(jsonRegex) || [];
+  for (const match of matches) {
+    try {
+      const json = JSON.parse(match);
+      const uri = parseJsonConfigToUri(json);
+      if (uri) extractedUris.push(uri);
+    } catch (e) {}
   }
   return extractedUris;
 }
@@ -1272,14 +1302,13 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
   
   const cleanText = safeDecodeText(text);
 
-  // Look for configuration protocols (vless://, vmess://, trojan://, ss://, npv://, hy2://, hysteria2://)
-  // Matching up to a space, double quote, single quote, less-than, greater-than, newline or backtick
-  const regex = /(vless|vmess|trojan|ss|npv):\/\/[^\s"'<>\`\\|]+/gi;
+  // Look for configuration protocols (vless://, vmess://, trojan://, ss://, npv://, npvt://, hy2://, hysteria2://)
+  const regex = /(vless|vmess|trojan|ss|npv|npvt):\/\/[^\s"'<>\`\\|]+/gi;
   const matches = cleanText.match(regex) || [];
 
-  // Also parse raw base64-encoded NPV configurations
   const base64Configs = extractBase64NpvConfigs(cleanText);
-  const allMatches = [...matches, ...base64Configs];
+  const jsonConfigs = extractRawJsonConfigs(cleanText);
+  const allMatches = [...matches, ...base64Configs, ...jsonConfigs];
   if (allMatches.length === 0) return [];
 
   const extracted: ConfigItem[] = [];
@@ -1582,11 +1611,12 @@ async function testConfigsBatch(ids: string[]) {
  * Triggers bulk extraction across all active sources
  */
 async function triggerBulkScrape(): Promise<number> {
+  const enabledSources = db.sources.filter(s => s.enabled);
+  const results = await Promise.allSettled(enabledSources.map(src => scrapeSource(src)));
   let totalExtracted = 0;
-  for (const src of db.sources) {
-    if (src.enabled) {
-      const count = await scrapeSource(src);
-      totalExtracted += count;
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      totalExtracted += r.value;
     }
   }
   return totalExtracted;
@@ -4141,11 +4171,15 @@ async function startExpressServer() {
     const totalConfigs = db.configs.length;
     const workingConfigsCount = db.configs.filter(c => c.status === 'working').length;
     const failedConfigsCount = db.configs.filter(c => c.status === 'failed').length;
+    const checkingConfigsCount = db.configs.filter(c => c.status === 'checking').length;
+    const untestedConfigsCount = db.configs.filter(c => c.status === 'untested').length;
     
     if (!db.proxies) db.proxies = [];
     const totalProxies = db.proxies.length;
     const workingProxiesCount = db.proxies.filter(p => p.status === 'working').length;
     const failedProxiesCount = db.proxies.filter(p => p.status === 'failed').length;
+    const checkingProxiesCount = db.proxies.filter(p => p.status === 'checking').length;
+    const untestedProxiesCount = db.proxies.filter(p => p.status === 'untested').length;
 
     const telegramChannelsCount = db.sources.filter(s => s.type === 'telegram').length;
     const subsCount = db.sources.filter(s => s.type !== 'telegram').length;
@@ -4166,13 +4200,45 @@ async function startExpressServer() {
       totalConfigs,
       workingConfigsCount,
       failedConfigsCount,
+      checkingConfigsCount,
+      untestedConfigsCount,
       totalProxies,
       workingProxiesCount,
       failedProxiesCount,
+      checkingProxiesCount,
+      untestedProxiesCount,
       telegramChannelsCount,
       subsCount,
       extractedTodayCount
     } as DashboardStats);
+  });
+
+  // API: Test Bot Connection
+  app.post('/api/settings/test-bot', async (req, res) => {
+    try {
+      const { botToken } = req.body;
+      const token = botToken || db.settings.botToken;
+      if (!token) {
+        return res.status(400).json({ success: false, message: 'توکن ربات وارد نشده است.' });
+      }
+      const response = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+      const data = await response.json();
+      if (data.ok && data.result) {
+        db.settings.botUsername = data.result.username;
+        db.settings.isBotRunning = true;
+        saveDatabase();
+        return res.json({
+          success: true,
+          username: data.result.username,
+          firstName: data.result.first_name,
+          message: `اتصال موفق! ربات @${data.result.username} (${data.result.first_name}) متصل است و آماده به کار می‌باشد.`
+        });
+      } else {
+        return res.status(400).json({ success: false, message: data.description || 'توکن نامعتبر است یا ارتباط با تلگرام برقرار نشد.' });
+      }
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'خطا در ارتباط با سرور تلگرام' });
+    }
   });
 
   // API: Get Settings

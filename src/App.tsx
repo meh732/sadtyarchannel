@@ -227,6 +227,33 @@ export default function App() {
     }
   };
 
+  // Handle Test Bot Connection
+  const handleTestBot = async () => {
+    if (!settings.botToken) {
+      alert('لطفاً ابتدا توکن ربات را وارد کنید.');
+      return;
+    }
+    setActionLoading('test_bot');
+    try {
+      const res = await fetch('/api/settings/test-bot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ botToken: settings.botToken })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`✅ ${data.message}`);
+        setSettings(prev => ({ ...prev, isBotRunning: true, botUsername: data.username }));
+      } else {
+        alert(`❌ خطا در تست ربات: ${data.message}`);
+      }
+    } catch (err: any) {
+      alert(`❌ خطا در ارتباط با سرور: ${err.message}`);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   // Handle Save Settings
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -429,13 +456,17 @@ export default function App() {
   const handleTestAllPorts = async () => {
     setActionLoading('test_all');
     try {
-      const res = await fetch('/api/configs/test-all', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        showToast('بررسی صحت اتصال کل کانفیگ‌ها در پس‌زمینه آغاز شد. پورت‌ها یکی پس از دیگری تست خواهند شد.', 'success');
+      const [res1, res2] = await Promise.all([
+        fetch('/api/configs/test-all', { method: 'POST' }),
+        fetch('/api/proxies/test-all', { method: 'POST' })
+      ]);
+      const data1 = await res1.json();
+      const data2 = await res2.json();
+      if (data1.success || data2.success) {
+        showToast('بررسی اتصال پورت‌های کانفیگ‌ها و پروکسی‌ها در پس‌زمینه آغاز شد.', 'success');
       }
     } catch (err) {
-      showToast('خطا در آغاز فرآیند تست', 'error');
+      showToast('خطا در آغاز فرآیند تست اتصال', 'error');
     } finally {
       setActionLoading(null);
       fetchData(true);
@@ -1075,6 +1106,100 @@ export default function App() {
                       </button>
                     </div>
                   </div>
+
+                  {/* Visual Colored Testing Progress Bar Card */}
+                  {(() => {
+                    const totalItems = (stats.totalConfigs || 0) + (stats.totalProxies || 0);
+                    const totalWorking = (stats.workingConfigsCount || 0) + (stats.workingProxiesCount || 0);
+                    const totalFailed = (stats.failedConfigsCount || 0) + (stats.failedProxiesCount || 0);
+                    const totalChecking = (stats.checkingConfigsCount || 0) + (stats.checkingProxiesCount || 0);
+                    const totalUntested = (stats.untestedConfigsCount || 0) + (stats.untestedProxiesCount || 0);
+
+                    const workingPct = totalItems > 0 ? (totalWorking / totalItems) * 100 : 0;
+                    const failedPct = totalItems > 0 ? (totalFailed / totalItems) * 100 : 0;
+                    const checkingPct = totalItems > 0 ? (totalChecking / totalItems) * 100 : 0;
+                    const untestedPct = totalItems > 0 ? (totalUntested / totalItems) * 100 : 0;
+
+                    return (
+                      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                              <Sliders className="w-4 h-4 text-indigo-600" />
+                              <span>نوار پیشرفت وضعیت تست پورت و صف بررسی</span>
+                            </h3>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              تعداد تست‌نشده‌ها و در صف بررسی به‌صورت پویا با انجام تست‌ها کاهش می‌یابد.
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="px-3 py-1 bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold">
+                              مجموع کل: {totalItems} مورد
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Multi-Segmented Colorful Progress Bar */}
+                        <div className="w-full h-4 bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                          <div 
+                            style={{ width: `${workingPct}%` }} 
+                            className="bg-emerald-500 h-full transition-all duration-500" 
+                            title={`فعال: ${totalWorking}`}
+                          />
+                          <div 
+                            style={{ width: `${failedPct}%` }} 
+                            className="bg-rose-500 h-full transition-all duration-500" 
+                            title={`خراب: ${totalFailed}`}
+                          />
+                          <div 
+                            style={{ width: `${checkingPct}%` }} 
+                            className="bg-amber-500 h-full animate-pulse transition-all duration-500" 
+                            title={`در حال تست: ${totalChecking}`}
+                          />
+                          <div 
+                            style={{ width: `${untestedPct}%` }} 
+                            className="bg-slate-300 h-full transition-all duration-500" 
+                            title={`تست نشده: ${totalUntested}`}
+                          />
+                        </div>
+
+                        {/* Legend / Stats Breakdown Grid */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                          <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-medium text-emerald-600">فعال (Working)</p>
+                              <p className="text-lg font-extrabold text-emerald-700 mt-0.5">{totalWorking}</p>
+                            </div>
+                            <div className="w-3 h-3 rounded-full bg-emerald-500" />
+                          </div>
+
+                          <div className="bg-rose-50 border border-rose-100 rounded-xl p-3 flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-medium text-rose-600">خراب (Failed)</p>
+                              <p className="text-lg font-extrabold text-rose-700 mt-0.5">{totalFailed}</p>
+                            </div>
+                            <div className="w-3 h-3 rounded-full bg-rose-500" />
+                          </div>
+
+                          <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-medium text-amber-600">در حال تست (Checking)</p>
+                              <p className="text-lg font-extrabold text-amber-700 mt-0.5">{totalChecking}</p>
+                            </div>
+                            <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse" />
+                          </div>
+
+                          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-medium text-slate-500">تست نشده (Untested)</p>
+                              <p className="text-lg font-extrabold text-slate-700 mt-0.5">{totalUntested}</p>
+                            </div>
+                            <div className="w-3 h-3 rounded-full bg-slate-300" />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Split Section: Real-time logs & Users list */}
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -2155,24 +2280,45 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-4">
-                      <button
-                        type="submit"
-                        disabled={actionLoading === 'save_settings'}
-                        className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
-                      >
-                        {actionLoading === 'save_settings' ? (
-                          <>
-                            <RefreshCw className="w-4 h-4 animate-spin" />
-                            <span>در حال ذخیره و راه‌اندازی مجدد...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Check className="w-4 h-4" />
-                            <span>ذخیره تنظیمات ربات</span>
-                          </>
-                        )}
-                      </button>
+                    <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="submit"
+                          disabled={actionLoading === 'save_settings'}
+                          className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          {actionLoading === 'save_settings' ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              <span>در حال ذخیره...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Check className="w-4 h-4" />
+                              <span>ذخیره تنظیمات ربات</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleTestBot}
+                          disabled={actionLoading === 'test_bot' || !settings.botToken}
+                          className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          {actionLoading === 'test_bot' ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              <span>در حال تست اتصال...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Radio className="w-4 h-4 text-indigo-600" />
+                              <span>تست اتصال ربات</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
 
                       {settings.isBotRunning && (
                         <div className="text-xs text-emerald-600 font-semibold flex items-center gap-1.5">

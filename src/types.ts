@@ -122,9 +122,13 @@ export interface DashboardStats {
   totalConfigs: number;
   workingConfigsCount: number;
   failedConfigsCount: number;
+  checkingConfigsCount: number;
+  untestedConfigsCount: number;
   totalProxies: number;
   workingProxiesCount: number;
   failedProxiesCount: number;
+  checkingProxiesCount: number;
+  untestedProxiesCount: number;
   telegramChannelsCount: number;
   subsCount: number;
   extractedTodayCount: number;
