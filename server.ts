@@ -124,7 +124,9 @@ const DEFAULT_SETTINGS: SystemSettings = {
   postMonitoringEnabled: false,
   backupEnabled: false,
   backupIntervalHours: 24,
-  lastBackupAt: null
+  lastBackupAt: null,
+  botConnectionMode: 'polling',
+  publicUrl: ''
 };
 
 // --- Load/Save Database ---
@@ -2003,7 +2005,9 @@ async function getIpLocation(host: string): Promise<{ country: string; countryCo
       ip = ips[0];
     }
     
-    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,countryCode`);
+    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,countryCode`, {
+      signal: AbortSignal.timeout(3000)
+    });
     if (res.ok) {
       const data = await res.json();
       if (data && data.status === 'success') {
@@ -2047,13 +2051,15 @@ async function executeAutoPost(): Promise<boolean> {
     const workingConfigs = db.configs.filter(c => c.status === 'working');
     const availableConfigs = workingConfigs.length > 0 ? workingConfigs : db.configs.slice(0, 50);
     const shuffledConfigs = [...availableConfigs].sort(() => 0.5 - Math.random());
-    const selectedConfigs = shuffledConfigs.slice(0, Math.min(settings.configCount || 1, shuffledConfigs.length));
+    const configLimit = typeof settings.configCount === 'number' ? settings.configCount : 1;
+    const selectedConfigs = shuffledConfigs.slice(0, Math.min(configLimit, shuffledConfigs.length));
 
     // Get proxies
     const workingProxies = (db.proxies || []).filter(p => p.status === 'working');
     const availableProxies = workingProxies.length > 0 ? workingProxies : (db.proxies || []).slice(0, 50);
     const shuffledProxies = [...availableProxies].sort(() => 0.5 - Math.random());
-    const selectedProxies = shuffledProxies.slice(0, Math.min(settings.proxyCount || 1, shuffledProxies.length));
+    const proxyLimit = typeof settings.proxyCount === 'number' ? settings.proxyCount : 1;
+    const selectedProxies = shuffledProxies.slice(0, Math.min(proxyLimit, shuffledProxies.length));
 
     if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
       addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی فعالی در دیتابیس یافت نشد.');
@@ -4670,19 +4676,29 @@ async function handleBotUpdate(update: any) {
 /**
  * Stop Bot Polling
  */
+/**
+ * Stop Bot Polling / Webhook
+ */
 function stopBot() {
   pollingActive = false;
   if (botTimeoutRef) clearTimeout(botTimeoutRef);
   db.settings.isBotRunning = false;
   saveDatabase();
+  
+  if (db.settings.botConnectionMode === 'webhook' && db.settings.botToken) {
+    callTelegramApi('deleteWebhook', {})
+      .then(() => addLog('info', 'وب‌هوک تلگرام با موفقیت غیرفعال شد.'))
+      .catch(e => console.error('Error deleting webhook on stop:', e.message));
+  }
+  
   addLog('warn', 'ربات تلگرام متوقف شد.');
 }
 
 /**
- * Start Bot Polling
+ * Start Bot Polling or Webhook
  */
 async function startBot() {
-  if (pollingActive) return;
+  if (db.settings.botConnectionMode !== 'webhook' && pollingActive) return;
   const token = db.settings.botToken;
   if (!token) {
     addLog('error', 'خطا در فعال‌سازی ربات: توکن تعریف نشده است.');
@@ -4690,18 +4706,44 @@ async function startBot() {
   }
 
   try {
-    addLog('info', 'در حال اتصال به سرورهای تلگرام...');
+    addLog('info', 'در حال اتصال به سرورهای تلگرام و اعتبارسنجی توکن...');
     const username = await testBotConnection(token);
     await setBotCommands(token);
     db.settings.botUsername = username;
-    db.settings.isBotRunning = true;
-    pollingActive = true;
-    saveDatabase();
     
-    // Start asynchronous loop
-    runBotPolling();
-    
-    addLog('success', `ربات با موفقیت فعال شد و در حال شنود است: @${username}`);
+    if (db.settings.botConnectionMode === 'webhook') {
+      const pUrl = db.settings.publicUrl;
+      if (!pUrl) {
+        throw new Error('برای حالت وب‌هوک، وارد کردن آدرس دامنه عمومی در بخش تنظیمات الزامی است.');
+      }
+      
+      const cleanUrl = pUrl.trim().replace(/\/+$/, '').replace(/^https?:\/\//i, '');
+      const webhookUrl = `https://${cleanUrl}/api/telegram-webhook`;
+      
+      addLog('info', `در حال تنظیم وب‌هوک تلگرام روی آدرس: ${webhookUrl} ...`);
+      await callTelegramApi('setWebhook', { url: webhookUrl });
+      
+      db.settings.isBotRunning = true;
+      pollingActive = false;
+      saveDatabase();
+      addLog('success', `ربات با موفقیت در حالت وب‌هوک فعال شد: @${username}`);
+    } else {
+      // Delete any previous webhook
+      try {
+        addLog('info', 'حذف وب‌هوک‌های قبلی جهت شروع دریافت مکرر (Polling)...');
+        await callTelegramApi('deleteWebhook', { drop_pending_updates: true });
+      } catch (webhookErr: any) {
+        console.error('Error removing webhook before polling:', webhookErr.message);
+      }
+      
+      db.settings.isBotRunning = true;
+      pollingActive = true;
+      saveDatabase();
+      
+      // Start polling
+      runBotPolling();
+      addLog('success', `ربات با موفقیت در حالت Polling فعال شد و در حال شنود است: @${username}`);
+    }
   } catch (err: any) {
     db.settings.isBotRunning = false;
     pollingActive = false;
@@ -4787,7 +4829,7 @@ function setupIntervals() {
 
   // Watchdog to auto-recover if bot polling freezes or stops unexpectedly
   setInterval(() => {
-    if (db.settings.isBotRunning && db.settings.botToken) {
+    if (db.settings.isBotRunning && db.settings.botToken && db.settings.botConnectionMode !== 'webhook') {
       if (!pollingActive || (Date.now() - lastPollTimestamp > 35000)) {
         addLog('warn', 'بازراه‌اندازی خودکار مکانیزم شنود ربات (Watchdog)...');
         pollingActive = true;
@@ -4942,6 +4984,25 @@ async function startExpressServer() {
     }
   });
 
+  // API: Telegram Webhook Receiver
+  app.post('/api/telegram-webhook', async (req, res) => {
+    try {
+      if (!db.settings.isBotRunning) {
+        return res.status(200).send('Bot is stopped');
+      }
+      const update = req.body;
+      if (update) {
+        handleBotUpdate(update).catch(err => {
+          console.error('Webhook handleBotUpdate error:', err);
+        });
+      }
+      res.status(200).send('OK');
+    } catch (err: any) {
+      console.error('Telegram webhook processing error:', err);
+      res.status(500).send(err.message || 'Error');
+    }
+  });
+
   // API: Get Settings
   app.get('/api/settings', (req, res) => {
     res.json(db.settings);
@@ -4951,13 +5012,29 @@ async function startExpressServer() {
   app.post('/api/settings', async (req, res) => {
     try {
       const oldToken = db.settings.botToken;
-      const { adminId, botToken, branding, autoTest, autoExtractInterval, testBatchLimit, iranRelayProxy, postMonitoringEnabled, backupEnabled, backupIntervalHours } = req.body;
+      const oldMode = db.settings.botConnectionMode || 'polling';
+      const oldUrl = db.settings.publicUrl || '';
+      
+      const { 
+        adminId, 
+        botToken, 
+        branding, 
+        autoTest, 
+        autoExtractInterval, 
+        testBatchLimit, 
+        iranRelayProxy, 
+        postMonitoringEnabled, 
+        backupEnabled, 
+        backupIntervalHours,
+        botConnectionMode,
+        publicUrl
+      } = req.body;
       
       if (adminId !== undefined) {
         db.settings.adminId = adminId;
       }
       if (testBatchLimit !== undefined) {
-        db.settings.testBatchLimit = Number(testBatchLimit);
+        db.settings.testBatchLimit = Number(testBatchLimit) || 100;
       }
       if (iranRelayProxy !== undefined) {
         db.settings.iranRelayProxy = iranRelayProxy;
@@ -4971,6 +5048,14 @@ async function startExpressServer() {
       if (backupIntervalHours !== undefined) {
         db.settings.backupIntervalHours = Number(backupIntervalHours);
       }
+      if (botConnectionMode !== undefined) {
+        db.settings.botConnectionMode = botConnectionMode;
+      }
+      if (publicUrl !== undefined) {
+        let cleanUrl = (publicUrl || '').trim().replace(/\/+$/, '');
+        cleanUrl = cleanUrl.replace(/^https?:\/\//i, '');
+        db.settings.publicUrl = cleanUrl;
+      }
 
       db.settings.branding = branding || '@MyChannelConfigs';
       db.settings.autoTest = !!autoTest;
@@ -4979,6 +5064,12 @@ async function startExpressServer() {
       let reconnectNeeded = false;
       if (botToken !== undefined && botToken !== oldToken) {
         db.settings.botToken = botToken;
+        reconnectNeeded = true;
+      }
+      if (botConnectionMode !== undefined && botConnectionMode !== oldMode) {
+        reconnectNeeded = true;
+      }
+      if (publicUrl !== undefined && db.settings.publicUrl !== oldUrl) {
         reconnectNeeded = true;
       }
 

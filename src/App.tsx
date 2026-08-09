@@ -2129,9 +2129,11 @@ export default function App() {
                             onChange={(e) => setAutoPostForm(prev => ({ ...prev, configCount: Number(e.target.value) }))}
                             className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
                           >
-                            <option value="0">هیچکدام (بدون کانفیگ)</option>
-                            <option value="1">۱ کانفیگ برتر فعال</option>
-                            <option value="2">۲ کانفیگ برتر فعال</option>
+                            {Array.from({ length: 21 }).map((_, idx) => (
+                              <option key={idx} value={idx}>
+                                {idx === 0 ? 'هیچکدام (بدون کانفیگ)' : `${idx} کانفیگ برتر فعال`}
+                              </option>
+                            ))}
                           </select>
                         </div>
 
@@ -2143,9 +2145,11 @@ export default function App() {
                             onChange={(e) => setAutoPostForm(prev => ({ ...prev, proxyCount: Number(e.target.value) }))}
                             className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
                           >
-                            <option value="0">هیچکدام (بدون پروکسی)</option>
-                            <option value="1">۱ پروکسی برتر فعال</option>
-                            <option value="2">۲ پروکسی برتر فعال</option>
+                            {Array.from({ length: 21 }).map((_, idx) => (
+                              <option key={idx} value={idx}>
+                                {idx === 0 ? 'هیچکدام (بدون پروکسی)' : `${idx} پروکسی برتر فعال`}
+                              </option>
+                            ))}
                           </select>
                         </div>
                       </div>
@@ -2265,6 +2269,43 @@ export default function App() {
                         />
                       </div>
 
+                      {/* Connection Mode Selection */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-700">روش دریافت پیام‌ها (دریافت مکرر یا وب‌هوک)</label>
+                          <select
+                            value={settings.botConnectionMode || 'polling'}
+                            onChange={(e) => setSettings(prev => ({ ...prev, botConnectionMode: e.target.value as any }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                          >
+                            <option value="polling">دریافت مکرر (Polling - مناسب سیستم تست)</option>
+                            <option value="webhook">وب‌هوک (Webhook - مناسب کلودران و هاست دائمی)</option>
+                          </select>
+                        </div>
+
+                        {/* Public Domain URL (Only visible when Webhook is active) */}
+                        {settings.botConnectionMode === 'webhook' && (
+                          <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                              <span>آدرس دامنه عمومی سرور (بدون https)</span>
+                              <span className="text-[10px] text-indigo-600 font-semibold">مورد نیاز وب‌هوک</span>
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="مثال: my-app-123.run.app"
+                              value={settings.publicUrl || ''}
+                              onChange={(e) => setSettings(prev => ({ ...prev, publicUrl: e.target.value }))}
+                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-mono text-left focus:border-indigo-500 focus:outline-none"
+                              dir="ltr"
+                            />
+                            <p className="text-[10px] text-slate-400">
+                              آدرس دامنه‌ای که در بالای مرورگر خود برای این پنل مشاهده می‌کنید را بدون بخش https:// کپی و وارد نمایید.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
                       {/* Admin Chat ID Input */}
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
@@ -2349,8 +2390,14 @@ export default function App() {
                           min="10"
                           max="2000"
                           required
-                          value={settings.testBatchLimit || 100}
-                          onChange={(e) => setSettings(prev => ({ ...prev, testBatchLimit: Number(e.target.value) }))}
+                          value={settings.testBatchLimit === undefined || settings.testBatchLimit === null ? '' : settings.testBatchLimit}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSettings(prev => ({ 
+                              ...prev, 
+                              testBatchLimit: val === '' ? '' as any : Number(val) 
+                            }));
+                          }}
                           className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none text-left"
                           dir="ltr"
                         />

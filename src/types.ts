@@ -78,6 +78,8 @@ export interface SystemSettings {
   backupEnabled?: boolean;
   backupIntervalHours?: number;
   lastBackupAt?: string | null;
+  botConnectionMode?: 'polling' | 'webhook';
+  publicUrl?: string;
 }
 
 export interface ChannelPostConfig {
