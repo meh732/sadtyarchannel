@@ -1,0 +1,53 @@
+{
+  "log": {
+    "loglevel": "none"
+  },
+  "inbounds": [
+    {
+      "port": 17037,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vmess",
+      "settings": {
+        "vnext": [
+          {
+            "address": "104.17.22.20",
+            "port": 443,
+            "users": [
+              {
+                "id": "39425e1e-ac12-4c73-a13e-5280f4d8323e",
+                "alterId": 0,
+                "security": "auto"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "m3.v2rayfree1.xyz",
+          "allowInsecure": true
+        },
+        "wsSettings": {
+          "path": "/ray",
+          "headers": {
+            "Host": "m3.v2rayfree1.xyz"
+          }
+        }
+      }
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    }
+  ]
+}

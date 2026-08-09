@@ -998,7 +998,7 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
 
     const globalTimeout = setTimeout(() => {
       finish(false, 999);
-    }, 4500);
+    }, 12000);
 
     try {
       child = spawn(xrayPath, ['-config', configPath], { stdio: 'ignore' });
@@ -1010,9 +1010,9 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
     const curlTimer = setTimeout(() => {
       if (isFinished) return;
 
-      const curlCmd = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 3`;
+      const curlCmd = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 10`;
       
-      exec(curlCmd, { timeout: 3500 }, (error, stdout) => {
+      exec(curlCmd, { timeout: 10500 }, (error, stdout) => {
         if (isFinished) return;
 
         if (error || !stdout) {
@@ -1097,10 +1097,10 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
     } else {
       // Fallback if Xray core binary missing
       if (details.tls) {
-        protocolCheck = await checkTlsHandshake(details.host, details.port, details.sni, 2000);
+        protocolCheck = await checkTlsHandshake(details.host, details.port, details.sni, 5000);
       }
       if (!protocolCheck.working) {
-        protocolCheck = await checkPort(details.host, details.port, 2000);
+        protocolCheck = await checkPort(details.host, details.port, 5000);
       }
     }
 
@@ -1935,7 +1935,7 @@ async function testProxiesBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 25;
+  const CONCURRENCY = 15;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
@@ -1993,7 +1993,7 @@ async function testConfigsBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 25;
+  const CONCURRENCY = 15;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
