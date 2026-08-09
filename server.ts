@@ -4,6 +4,7 @@ import fs from 'fs';
 import net from 'net';
 import dns from 'dns';
 import tls from 'tls';
+import { spawn, exec } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { 
   ConfigItem, 
@@ -507,6 +508,353 @@ function parseFullConfigDetails(rawConfig: string): {
 }
 
 /**
+ * Builds a valid, full-featured Xray client JSON configuration for any protocol link
+ */
+function buildXrayConfig(rawConfig: string, localPort: number): { configJson: any; protocol: string } | null {
+  const trimmed = rawConfig.trim();
+  let outbound: any = null;
+  let protocol = 'unknown';
+
+  try {
+    if (trimmed.startsWith('vmess://')) {
+      protocol = 'vmess';
+      const base64Part = trimmed.substring(8).trim();
+      const decoded = safeBase64Decode(base64Part);
+      if (!decoded) return null;
+      const parsed = JSON.parse(decoded);
+      
+      const host = parsed.add || '';
+      const port = Number(parsed.port) || 0;
+      if (!host || !port) return null;
+
+      outbound = {
+        protocol: 'vmess',
+        settings: {
+          vnext: [
+            {
+              address: host,
+              port: port,
+              users: [
+                {
+                  id: parsed.id || '',
+                  alterId: Number(parsed.aid || 0),
+                  security: parsed.scy || 'auto'
+                }
+              ]
+            }
+          ]
+        },
+        streamSettings: {
+          network: parsed.net || 'tcp',
+          security: (parsed.tls === 'tls' || parsed.security === 'tls') ? 'tls' : 'none',
+          tlsSettings: (parsed.tls === 'tls' || parsed.security === 'tls') ? {
+            serverName: parsed.sni || parsed.host || host,
+            allowInsecure: true
+          } : undefined,
+          wsSettings: (parsed.net === 'ws') ? {
+            path: parsed.path || '/',
+            headers: {
+              Host: parsed.host || host
+            }
+          } : undefined,
+          grpcSettings: (parsed.net === 'grpc') ? {
+            serviceName: parsed.path || ''
+          } : undefined
+        }
+      };
+    } else if (trimmed.startsWith('vless://') || trimmed.startsWith('trojan://') || trimmed.startsWith('ss://')) {
+      const isVless = trimmed.startsWith('vless://');
+      const isTrojan = trimmed.startsWith('trojan://');
+      const isSS = trimmed.startsWith('ss://');
+      protocol = isVless ? 'vless' : (isTrojan ? 'trojan' : 'ss');
+
+      const hashIndex = trimmed.indexOf('#');
+      let urlPart = hashIndex !== -1 ? trimmed.substring(0, hashIndex) : trimmed;
+      
+      const doubleSlashIdx = urlPart.indexOf('://');
+      const cleanUrl = doubleSlashIdx !== -1 ? urlPart.substring(doubleSlashIdx + 3) : urlPart;
+      
+      const qIndex = cleanUrl.indexOf('?');
+      let queryStr = '';
+      let hostPortPart = cleanUrl;
+      if (qIndex !== -1) {
+        queryStr = cleanUrl.substring(qIndex + 1);
+        hostPortPart = cleanUrl.substring(0, qIndex);
+      }
+      
+      const params = new URLSearchParams(queryStr);
+      const sni = params.get('sni') || '';
+      const hostHeader = params.get('host') || '';
+      const path = params.get('path') || '';
+      const security = params.get('security') || '';
+      const pbk = params.get('pbk') || '';
+      const sid = params.get('sid') || '';
+      const fp = params.get('fp') || '';
+      const flow = params.get('flow') || '';
+      const type = params.get('type') || '';
+
+      const atIndex = hostPortPart.lastIndexOf('@');
+      let userInfo = '';
+      let serverPart = hostPortPart;
+      if (atIndex !== -1) {
+        userInfo = hostPortPart.substring(0, atIndex);
+        serverPart = hostPortPart.substring(atIndex + 1);
+      }
+
+      let host = serverPart;
+      let port = 0;
+      const colonIndex = serverPart.lastIndexOf(':');
+      if (colonIndex !== -1) {
+        host = serverPart.substring(0, colonIndex);
+        port = parseInt(serverPart.substring(colonIndex + 1), 10) || 0;
+      }
+
+      if (!host || !port) return null;
+
+      if (isVless) {
+        outbound = {
+          protocol: 'vless',
+          settings: {
+            vnext: [
+              {
+                address: host,
+                port: port,
+                users: [
+                  {
+                    id: userInfo,
+                    encryption: 'none',
+                    flow: flow || undefined
+                  }
+                ]
+              }
+            ]
+          },
+          streamSettings: {
+            network: type || 'tcp',
+            security: security || 'none',
+            tlsSettings: (security === 'tls') ? {
+              serverName: sni || host,
+              allowInsecure: true
+            } : undefined,
+            realitySettings: (security === 'reality') ? {
+              serverName: sni || host,
+              publicKey: pbk,
+              shortId: sid,
+              fingerprint: fp || 'chrome'
+            } : undefined,
+            wsSettings: (type === 'ws') ? {
+              path: path || '/',
+              headers: {
+                Host: hostHeader || host
+              }
+            } : undefined,
+            grpcSettings: (type === 'grpc') ? {
+              serviceName: path || ''
+            } : undefined
+          }
+        };
+      } else if (isTrojan) {
+        outbound = {
+          protocol: 'trojan',
+          settings: {
+            servers: [
+              {
+                address: host,
+                port: port,
+                password: userInfo
+              }
+            ]
+          },
+          streamSettings: {
+            network: type || 'tcp',
+            security: security || 'tls',
+            tlsSettings: {
+              serverName: sni || host,
+              allowInsecure: true
+            },
+            wsSettings: (type === 'ws') ? {
+              path: path || '/',
+              headers: {
+                Host: hostHeader || host
+              }
+            } : undefined,
+            grpcSettings: (type === 'grpc') ? {
+              serviceName: path || ''
+            } : undefined
+          }
+        };
+      } else if (isSS) {
+        let method = 'aes-256-gcm';
+        let password = userInfo;
+        
+        const decodedUser = safeBase64Decode(userInfo);
+        if (decodedUser && decodedUser.includes(':')) {
+          const parts = decodedUser.split(':');
+          method = parts[0];
+          password = parts.slice(1).join(':');
+        }
+
+        outbound = {
+          protocol: 'shadowsocks',
+          settings: {
+            servers: [
+              {
+                address: host,
+                port: port,
+                method: method,
+                password: password
+              }
+            ]
+          }
+        };
+      }
+    } else if (trimmed.startsWith('npv://')) {
+      protocol = 'npv';
+      const payload = trimmed.replace('npv://', '').split('#')[0];
+      const decoded = safeBase64Decode(payload);
+      if (!decoded) return null;
+      const json = JSON.parse(decoded);
+      
+      const host = json.host || json.v2rayHost || json.sshHost || json.address || '';
+      const port = Number(json.port || json.v2rayPort || json.sshPort) || 0;
+      if (!host || !port) return null;
+
+      const type = json.type || json.net || 'tcp';
+      const security = json.security || (json.tls ? 'tls' : 'none');
+
+      outbound = {
+        protocol: json.protocol || 'vmess',
+        settings: json.protocol === 'vless' ? {
+          vnext: [
+            {
+              address: host,
+              port: port,
+              users: [{ id: json.id || json.uuid || '', encryption: 'none' }]
+            }
+          ]
+        } : (json.protocol === 'trojan' ? {
+          servers: [{ address: host, port: port, password: json.password || json.id || '' }]
+        } : {
+          vnext: [
+            {
+              address: host,
+              port: port,
+              users: [{ id: json.id || json.uuid || '', alterId: Number(json.aid || 0), security: 'auto' }]
+            }
+          ]
+        }),
+        streamSettings: {
+          network: type,
+          security: security,
+          tlsSettings: (security === 'tls') ? {
+            serverName: json.sni || json.hostHeader || host,
+            allowInsecure: true
+          } : undefined,
+          wsSettings: (type === 'ws') ? {
+            path: json.path || '/',
+            headers: {
+              Host: json.hostHeader || host
+            }
+          } : undefined,
+          grpcSettings: (type === 'grpc') ? {
+            serviceName: json.path || ''
+          } : undefined
+        }
+      };
+    }
+  } catch (err) {
+    return null;
+  }
+
+  if (!outbound) return null;
+
+  const configJson = {
+    log: { loglevel: 'none' },
+    inbounds: [
+      {
+        port: localPort,
+        listen: '127.0.0.1',
+        protocol: 'socks',
+        settings: { udp: true }
+      }
+    ],
+    outbounds: [outbound, { protocol: 'freedom', tag: 'direct' }]
+  };
+
+  return { configJson, protocol };
+}
+
+/**
+ * Performs real-world client handshake verification of a configuration using Xray and curl SOCKS5
+ */
+function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; latency: number }> {
+  return new Promise((resolve) => {
+    const localPort = Math.floor(Math.random() * 10000) + 15000;
+    const result = buildXrayConfig(rawConfig, localPort);
+    if (!result) {
+      return resolve({ working: false, latency: 999 });
+    }
+
+    const { configJson } = result;
+    const configPath = path.join(process.cwd(), `bin/xray_config_${Date.now()}_${Math.floor(Math.random() * 10000)}.json`);
+    
+    try {
+      fs.writeFileSync(configPath, JSON.stringify(configJson, null, 2));
+    } catch (e) {
+      return resolve({ working: false, latency: 999 });
+    }
+
+    const xrayPath = path.join(process.cwd(), 'bin/xray');
+    if (!fs.existsSync(xrayPath)) {
+      try { fs.unlinkSync(configPath); } catch (e) {}
+      return resolve({ working: false, latency: 999 });
+    }
+
+    const child = spawn(xrayPath, ['-config', configPath], { stdio: 'ignore' });
+    
+    let isFinished = false;
+    const cleanup = () => {
+      if (isFinished) return;
+      isFinished = true;
+      try { child.kill('SIGKILL'); } catch (e) {}
+      try { fs.unlinkSync(configPath); } catch (e) {}
+    };
+
+    const globalTimeout = setTimeout(() => {
+      cleanup();
+      resolve({ working: false, latency: 999 });
+    }, 8000);
+
+    setTimeout(() => {
+      if (isFinished) return;
+
+      const curlCmd = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 4`;
+      
+      exec(curlCmd, (error, stdout) => {
+        clearTimeout(globalTimeout);
+        cleanup();
+
+        if (error) {
+          return resolve({ working: false, latency: 999 });
+        }
+
+        const output = stdout.trim();
+        const parts = output.split(':');
+        const httpCode = parseInt(parts[0], 10);
+        const timeStartTransfer = parseFloat(parts[1]) || 0;
+
+        if (httpCode === 204 || httpCode === 200 || httpCode === 302 || httpCode === 301) {
+          const latencyMs = Math.round(timeStartTransfer * 1000) || 50;
+          return resolve({ working: true, latency: latencyMs });
+        }
+
+        resolve({ working: false, latency: 999 });
+      });
+    }, 250);
+  });
+}
+
+/**
  * Checks if a TLS handshake can be successfully completed
  */
 function checkTlsHandshake(host: string, port: number, sni: string, timeout = 3000): Promise<{ working: boolean; latency: number }> {
@@ -560,18 +908,22 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // Step 1: Perform Local Connectivity & Verification
+    // Step 1: Perform Local Connectivity & Verification via REAL XRAY CORE CLIENT HANDSHAKE
     let localCheck: { working: boolean; latency: number } = { working: false, latency: 999 };
+    const xrayPath = path.join(process.cwd(), 'bin/xray');
     
-    if (details.tls) {
-      // Perform TLS handshake check (verifies host is alive, TLS port is active, and SNI domain negotiation works)
-      localCheck = await checkTlsHandshake(details.host, details.port, details.sni);
+    if (fs.existsSync(xrayPath)) {
+      localCheck = await checkConfigWithXray(rawConfig);
     } else {
-      // Fallback to standard TCP check
-      localCheck = await checkPort(details.host, details.port, 2500);
+      // Fallback if binary is not downloaded yet
+      if (details.tls) {
+        localCheck = await checkTlsHandshake(details.host, details.port, details.sni);
+      } else {
+        localCheck = await checkPort(details.host, details.port, 2500);
+      }
     }
 
-    // If local test fails (server is offline, port is closed, or TLS handshake fails), the config is completely dead.
+    // If local test fails (server is offline, port is closed, or credentials/config protocol properties are incorrect), the config is dead.
     if (!localCheck.working) {
       return { working: false, latency: 999 };
     }
@@ -649,7 +1001,7 @@ function checkPort(host: string, port: number, timeout = 2500): Promise<{ workin
  */
 async function checkPortFromIran(host: string, port: number): Promise<{ working: boolean; latency: number }> {
   try {
-    const checkUrl = `https://check-host.net/check-tcp?host=${encodeURIComponent(`${host}:${port}`)}&node=ir1.node.check-host.net&node=ir2.node.check-host.net&node=ir3.node.check-host.net&node=ir5.node.check-host.net&node=ir7.node.check-host.net`;
+    const checkUrl = `https://check-host.net/check-tcp?host=${encodeURIComponent(`${host}:${port}`)}&node=ir5.node.check-host.net&node=ir6.node.check-host.net&node=ir7.node.check-host.net&node=ir8.node.check-host.net&node=ir9.node.check-host.net`;
     const res = await fetch(checkUrl, {
       headers: { 'Accept': 'application/json' }
     });
@@ -675,7 +1027,13 @@ async function checkPortFromIran(host: string, port: number): Promise<{ working:
 
     // Fallback if no specific IR nodes found in the metadata
     if (irNodeKeys.length === 0) {
-      irNodeKeys.push('ir1.node.check-host.net', 'ir2.node.check-host.net', 'ir3.node.check-host.net', 'ir5.node.check-host.net', 'ir7.node.check-host.net');
+      irNodeKeys.push(
+        'ir5.node.check-host.net',
+        'ir6.node.check-host.net',
+        'ir7.node.check-host.net',
+        'ir8.node.check-host.net',
+        'ir9.node.check-host.net'
+      );
     }
 
     // Poll for results (up to 4 times with 2s delay)
@@ -1215,19 +1573,9 @@ async function executeAutoPost(): Promise<boolean> {
       }]);
     });
 
-    if (settings.adText && settings.adText.trim() !== '') {
-      let adUrl = 'https://t.me';
-      let adLabel = settings.adText;
-      if (settings.adText.includes('@')) {
-        const handle = settings.adText.match(/@[a-zA-Z0-9_]+/)?.[0]?.replace('@', '');
-        if (handle) {
-          adUrl = `https://t.me/${handle}`;
-          adLabel = `📢 عضویت در کانال اسپانسر: ${settings.adText}`;
-        }
-      } else if (settings.adText.startsWith('http')) {
-        adUrl = settings.adText;
-      }
-      inlineButtons.push([{ text: adLabel, url: adUrl, style: 'primary' }]);
+    const sponsorBtn = getSponsorChannelInlineButton();
+    if (sponsorBtn) {
+      inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url, style: 'primary' }]);
     }
 
     // Add bot advertisement button
@@ -1548,49 +1896,22 @@ async function sendBackupToAdmin(): Promise<boolean> {
  * Helper to get sponsor or branding telegram channel button.
  */
 function getSponsorChannelInlineButton() {
-  let url = '';
-  let label = '';
-
-  // 1. Check if there are active force join channels
+  // Check if there are active force join channels
   const activeFj = db.forceJoinChannels.find(c => c.enabled && c.username);
-  if (activeFj) {
-    const cleanUsername = activeFj.username.replace(/[^a-zA-Z0-9_]/g, '');
-    url = activeFj.inviteLink && (activeFj.inviteLink.startsWith('http://') || activeFj.inviteLink.startsWith('https://'))
-      ? activeFj.inviteLink
-      : (cleanUsername ? `https://t.me/${cleanUsername}` : '');
-    label = `📢 کانال رسمی ما: ${activeFj.title || 'کانال رسمی'}`;
-  } else {
-    // 2. Check branding for channel handle
-    const branding = db.settings.branding || '';
-    if (branding.includes('@')) {
-      const match = branding.match(/@[a-zA-Z0-9_]+/);
-      const cleanUsername = match ? match[0].replace('@', '') : '';
-      if (cleanUsername) {
-        url = `https://t.me/${cleanUsername}`;
-        label = `📢 عضویت در کانال ${branding}`;
-      }
-    }
-
-    // 3. Check autoPost.adText
-    if (!url) {
-      const adText = db.settings.autoPost?.adText || '';
-      if (adText.includes('@')) {
-        const match = adText.match(/@[a-zA-Z0-9_]+/);
-        const cleanUsername = match ? match[0].replace('@', '') : '';
-        if (cleanUsername) {
-          url = `https://t.me/${cleanUsername}`;
-          label = `📢 عضویت در کانال اسپانسر`;
-        }
-      } else if (adText.startsWith('http://') || adText.startsWith('https://')) {
-        url = adText;
-        label = `📢 عضویت در کانال اسپانسر`;
-      }
-    }
+  if (!activeFj) {
+    // If no active force join channels are added/configured, do not show any sponsor button.
+    return null;
   }
+
+  const cleanUsername = activeFj.username.replace(/[^a-zA-Z0-9_]/g, '');
+  const url = activeFj.inviteLink && (activeFj.inviteLink.startsWith('http://') || activeFj.inviteLink.startsWith('https://'))
+    ? activeFj.inviteLink
+    : (cleanUsername ? `https://t.me/${cleanUsername}` : '');
+  const label = `📢 کانال رسمی ما: ${activeFj.title || 'کانال رسمی'}`;
 
   // Ensure URL is non-empty and starts with http or https
   if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-    return { text: label || '📢 عضویت در کانال رسمی', url: url.trim() };
+    return { text: label, url: url.trim() };
   }
 
   return null;
