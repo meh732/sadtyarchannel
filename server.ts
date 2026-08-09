@@ -245,75 +245,10 @@ function applyBrandingToConfig(rawConfig: string, brandingText: string): string 
 
 /**
  * Converts a V2Ray (VMess, VLESS, Trojan, SS) config to NPV Tunnel (npv://) base64 format.
+ * Update: To prevent NapsternetV "Signature Invalid / Not Valid" errors, we write standard valid configurations with custom branding.
  */
 function convertV2rayToNpv(v2rayConfig: string, branding: string): string {
-  try {
-    const parsed = parseConfigHostPort(v2rayConfig);
-    if (!parsed.host || !parsed.port) {
-      return v2rayConfig; // return original if we can't parse
-    }
-    
-    // Construct NPV-compatible JSON structure
-    const npvJson: any = {
-      remarks: branding || parsed.remark || 'NPV Config',
-      v2rayHost: parsed.host,
-      v2rayPort: parsed.port,
-      host: parsed.host,
-      port: parsed.port,
-      address: parsed.host,
-      protocol: parsed.protocol === 'unknown' ? 'vless' : parsed.protocol,
-      security: 'tls', // default fallback
-      type: 'ws',      // default fallback
-      uuid: '00000000-0000-0000-0000-000000000000', // default dummy
-    };
-
-    // If it's vmess, let's try to extract deeper parameters
-    const trimmed = v2rayConfig.trim();
-    if (trimmed.startsWith('vmess://')) {
-      const base64Part = trimmed.substring(8).trim();
-      const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
-      const vmessJson = JSON.parse(decoded);
-      npvJson.v2rayHost = vmessJson.add || parsed.host;
-      npvJson.v2rayPort = Number(vmessJson.port) || parsed.port;
-      npvJson.host = vmessJson.add || parsed.host;
-      npvJson.port = Number(vmessJson.port) || parsed.port;
-      npvJson.address = vmessJson.add || parsed.host;
-      npvJson.remarks = branding || vmessJson.ps || parsed.remark;
-      // Copy other vmess parameters to npvJson
-      Object.assign(npvJson, {
-        uuid: vmessJson.id || npvJson.uuid,
-        network: vmessJson.net || 'tcp',
-        type: vmessJson.type || 'none',
-        security: vmessJson.tls === 'tls' ? 'tls' : 'none',
-        sni: vmessJson.sni || vmessJson.host || '',
-        path: vmessJson.path || '',
-        hostHeader: vmessJson.host || ''
-      });
-    } else if (trimmed.startsWith('vless://') || trimmed.startsWith('trojan://') || trimmed.startsWith('ss://')) {
-      // Parse parameters from query string
-      const urlPart = trimmed.split('#')[0];
-      const qIndex = urlPart.indexOf('?');
-      if (qIndex !== -1) {
-        const queryStr = urlPart.substring(qIndex + 1);
-        const params = new URLSearchParams(queryStr);
-        npvJson.security = params.get('security') || 'tls';
-        npvJson.type = params.get('type') || 'ws';
-        npvJson.sni = params.get('sni') || '';
-        npvJson.path = params.get('path') || '';
-        // Extract uuid or userinfo
-        const atIndex = urlPart.indexOf('@');
-        const pIndex = urlPart.indexOf('://');
-        if (pIndex !== -1 && atIndex !== -1) {
-          npvJson.uuid = urlPart.substring(pIndex + 3, atIndex);
-        }
-      }
-    }
-
-    const payload = Buffer.from(JSON.stringify(npvJson)).toString('base64');
-    return `npv://${payload}`;
-  } catch (e) {
-    return v2rayConfig; // Fallback
-  }
+  return applyBrandingToConfig(v2rayConfig, branding || 'NPV Config');
 }
 
 /**
