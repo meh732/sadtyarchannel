@@ -263,103 +263,73 @@ function applyBrandingToConfig(rawConfig: string, brandingText: string): string 
 }
 
 /**
- * Converts a V2Ray (VMess, VLESS, Trojan, SS) config to NPV Tunnel (npv://) base64 format.
- * Updates the configuration with custom branding and returns the complete npv:// base64 link.
+ * Converts a V2Ray (VMess, VLESS, Trojan, SS) config to a valid NapsternetV (.npvt) compatible file string.
+ * Updates the configuration with custom branding without corrupting the file structure or causing decryption errors.
  */
 function convertV2rayToNpv(v2rayConfig: string, branding: string): string {
   try {
-    const trimmed = v2rayConfig.trim();
-    const brandingName = branding || 'NPV Config';
+    const trimmed = (v2rayConfig || '').trim();
+    const brandingName = branding || 'NapsternetV Config';
 
-    // 1. If it's already an npv:// link, decode it, change remarks, and return raw base64 payload
-    if (trimmed.startsWith('npv://')) {
-      const base64Part = trimmed.replace('npv://', '').split('#')[0];
-      const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
-      const json = JSON.parse(decoded);
-      json.remarks = brandingName;
-      if (json.configName) json.configName = brandingName;
-      const encoded = Buffer.from(JSON.stringify(json)).toString('base64');
-      return encoded;
+    // 1. If it's already an NPVT encrypted string, return it intact
+    if (trimmed.startsWith('NPVT')) {
+      return trimmed;
     }
 
-    // 2. Parse from standard V2Ray URI and construct a compatible NPV JSON
-    const parsed = parseConfigHostPort(v2rayConfig);
-    if (!parsed.host || !parsed.port) {
-      // Fallback: If we can't parse, let's wrap the original string in a simple remarks wrapper or base64
-      const fallbackJson = {
-        remarks: brandingName,
-        v2rayHost: '',
-        v2rayPort: 0,
-        host: '',
-        port: 0,
-        address: '',
-        protocol: 'vless',
-        security: 'none',
-        type: 'none',
-        uuid: '00000000-0000-0000-0000-000000000000',
-        rawLink: trimmed
-      };
-      const encoded = Buffer.from(JSON.stringify(fallbackJson)).toString('base64');
-      return encoded;
+    // 2. If it's npv:// or npvt:// link, decode the payload if possible
+    if (trimmed.startsWith('npv://') || trimmed.startsWith('npvt://')) {
+      const payload = trimmed.replace(/^npvt?:\/\//i, '').split('#')[0];
+      try {
+        const decoded = Buffer.from(payload, 'base64').toString('utf8');
+        if (decoded.startsWith('vless://') || decoded.startsWith('vmess://') || decoded.startsWith('trojan://') || decoded.startsWith('ss://')) {
+          return convertV2rayToNpv(decoded, brandingName);
+        }
+        if (decoded.startsWith('{') && decoded.endsWith('}')) {
+          const json = JSON.parse(decoded);
+          const uri = parseJsonConfigToUri(json);
+          if (uri) return convertV2rayToNpv(uri, brandingName);
+        }
+      } catch (e) {}
     }
 
-    const npvJson: any = {
-      remarks: brandingName,
-      v2rayHost: parsed.host,
-      v2rayPort: parsed.port,
-      host: parsed.host,
-      port: parsed.port,
-      address: parsed.host,
-      protocol: parsed.protocol === 'unknown' ? 'vless' : parsed.protocol,
-      security: 'none',
-      type: 'tcp',
-      uuid: '00000000-0000-0000-0000-000000000000'
-    };
+    // 3. Handle standard V2Ray URIs: vless://, trojan://, ss://
+    if (trimmed.startsWith('vless://') || trimmed.startsWith('trojan://') || trimmed.startsWith('ss://')) {
+      const hashIndex = trimmed.indexOf('#');
+      const baseUri = hashIndex !== -1 ? trimmed.substring(0, hashIndex) : trimmed;
+      return `${baseUri}#${encodeURIComponent(brandingName)}`;
+    }
 
+    // 4. Handle VMess URIs
     if (trimmed.startsWith('vmess://')) {
-      const base64Part = trimmed.substring(8).trim();
-      const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
-      const vmessJson = JSON.parse(decoded);
-      npvJson.v2rayHost = vmessJson.add || parsed.host;
-      npvJson.v2rayPort = Number(vmessJson.port) || parsed.port;
-      npvJson.host = vmessJson.add || parsed.host;
-      npvJson.port = Number(vmessJson.port) || parsed.port;
-      npvJson.address = vmessJson.add || parsed.host;
-      npvJson.remarks = brandingName;
-      npvJson.uuid = vmessJson.id || '';
-      npvJson.type = vmessJson.net || 'tcp';
-      npvJson.security = vmessJson.tls === 'tls' ? 'tls' : 'none';
-      npvJson.sni = vmessJson.sni || vmessJson.host || '';
-      npvJson.path = vmessJson.path || '';
-      npvJson.hostHeader = vmessJson.host || '';
-    } else if (trimmed.startsWith('vless://') || trimmed.startsWith('trojan://') || trimmed.startsWith('ss://')) {
-      // Parse parameters from query string
-      const urlPart = trimmed.split('#')[0];
-      
-      // Extract UUID or UserInfo
-      const pIndex = urlPart.indexOf('://');
-      const atIndex = urlPart.indexOf('@');
-      if (pIndex !== -1 && atIndex !== -1) {
-        npvJson.uuid = urlPart.substring(pIndex + 3, atIndex);
-      }
-
-      const qIndex = urlPart.indexOf('?');
-      if (qIndex !== -1) {
-        const queryStr = urlPart.substring(qIndex + 1);
-        const params = new URLSearchParams(queryStr);
-        npvJson.security = params.get('security') || 'none';
-        npvJson.type = params.get('type') || params.get('network') || 'tcp';
-        npvJson.sni = params.get('sni') || '';
-        npvJson.path = params.get('path') || '';
-        npvJson.hostHeader = params.get('host') || '';
+      try {
+        const base64Part = trimmed.substring(8).trim();
+        const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
+        const vmessJson = JSON.parse(decoded);
+        vmessJson.ps = brandingName;
+        return `vmess://${Buffer.from(JSON.stringify(vmessJson)).toString('base64')}`;
+      } catch (e) {
+        return trimmed;
       }
     }
 
-    const encoded = Buffer.from(JSON.stringify(npvJson)).toString('base64');
-    return encoded;
+    // 5. Handle JSON formatted configs
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const json = JSON.parse(trimmed);
+        const uri = parseJsonConfigToUri(json);
+        if (uri) return convertV2rayToNpv(uri, brandingName);
+      } catch (e) {}
+    }
+
+    // 6. Fallback: Parse host/port and construct a standard VLESS URI
+    const parsed = parseConfigHostPort(trimmed);
+    if (parsed.host && parsed.port) {
+      return `vless://00000000-0000-0000-0000-000000000000@${parsed.host}:${parsed.port}?security=none&type=tcp#${encodeURIComponent(brandingName)}`;
+    }
+
+    return trimmed;
   } catch (e) {
-    // Return original encoded to base64 as a last resort
-    return Buffer.from(JSON.stringify({ remarks: branding || 'NPV Config', raw: v2rayConfig })).toString('base64');
+    return (v2rayConfig || '').trim();
   }
 }
 
@@ -2405,9 +2375,9 @@ async function sendNpvFile(chatId: string | number, configText: string, filename
     const formData = new FormData();
     formData.append('chat_id', String(chatId));
     
-    // Prepend NPVT file signature if it is not already present
-    const finalConfigText = configText.startsWith('NPVT') ? configText : `NPVT${configText}`;
-    const blob = new Blob([finalConfigText], { type: 'text/plain' });
+    // Clean content, preserving genuine NPVT signatures or clean V2Ray URIs
+    const cleanContent = (configText || '').trim();
+    const blob = new Blob([cleanContent], { type: 'text/plain' });
     formData.append('document', blob, filename);
     if (caption) {
       formData.append('caption', caption);
