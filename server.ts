@@ -73,7 +73,7 @@ const DEFAULT_SOURCES: SourceItem[] = [
     id: 'src-4',
     type: 'github',
     name: 'Yebekhe V2ray Mix Source',
-    urlOrHandle: 'https://raw.githubusercontent.com/yebekhe/TVC/main/v2ray/mix',
+    urlOrHandle: 'https://raw.githubusercontent.com/yebekhe/TVC/main/subscriptions/xray/normal/mix',
     enabled: true,
     extractedCount: 0,
     lastExtracted: null
@@ -82,7 +82,7 @@ const DEFAULT_SOURCES: SourceItem[] = [
     id: 'src-5',
     type: 'sub',
     name: 'BarryFar All Configs Sub',
-    urlOrHandle: 'https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/All_Configs_Sub.txt',
+    urlOrHandle: 'https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_Sub.txt',
     enabled: true,
     extractedCount: 0,
     lastExtracted: null
@@ -2055,7 +2055,9 @@ async function sendNpvFile(chatId: string | number, configText: string, filename
     const formData = new FormData();
     formData.append('chat_id', String(chatId));
     
-    const blob = new Blob([configText], { type: 'text/plain' });
+    // Prepend NPVT file signature if it is not already present
+    const finalConfigText = configText.startsWith('NPVT') ? configText : `NPVT${configText}`;
+    const blob = new Blob([finalConfigText], { type: 'text/plain' });
     formData.append('document', blob, filename);
     if (caption) {
       formData.append('caption', caption);
