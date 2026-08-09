@@ -228,7 +228,17 @@ function applyBrandingToConfig(rawConfig: string, brandingText: string): string 
       return `vmess://${encoded}`;
     }
 
-    if (trimmed.startsWith('vless://') || trimmed.startsWith('trojan://') || trimmed.startsWith('ss://') || trimmed.startsWith('npv://')) {
+    if (trimmed.startsWith('npv://')) {
+      const payload = trimmed.replace('npv://', '').split('#')[0];
+      const decoded = Buffer.from(payload, 'base64').toString('utf8');
+      const json = JSON.parse(decoded);
+      json.remarks = brandingText;
+      if (json.configName) json.configName = brandingText;
+      const encoded = Buffer.from(JSON.stringify(json)).toString('base64');
+      return `npv://${encoded}`;
+    }
+
+    if (trimmed.startsWith('vless://') || trimmed.startsWith('trojan://') || trimmed.startsWith('ss://')) {
       // Split by hash to update remarks
       const hashIndex = trimmed.lastIndexOf('#');
       if (hashIndex !== -1) {
@@ -245,10 +255,107 @@ function applyBrandingToConfig(rawConfig: string, brandingText: string): string 
 
 /**
  * Converts a V2Ray (VMess, VLESS, Trojan, SS) config to NPV Tunnel (npv://) base64 format.
- * Update: To prevent NapsternetV "Signature Invalid / Not Valid" errors, we write standard valid configurations with custom branding.
+ * Updates the configuration with custom branding and returns the complete npv:// base64 link.
  */
 function convertV2rayToNpv(v2rayConfig: string, branding: string): string {
-  return applyBrandingToConfig(v2rayConfig, branding || 'NPV Config');
+  try {
+    const trimmed = v2rayConfig.trim();
+    const brandingName = branding || 'NPV Config';
+
+    // 1. If it's already an npv:// link, decode it, change remarks, and return raw base64 payload with npv:// prefix
+    if (trimmed.startsWith('npv://')) {
+      const base64Part = trimmed.replace('npv://', '').split('#')[0];
+      const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
+      const json = JSON.parse(decoded);
+      json.remarks = brandingName;
+      if (json.configName) json.configName = brandingName;
+      const encoded = Buffer.from(JSON.stringify(json)).toString('base64');
+      return `npv://${encoded}`;
+    }
+
+    // 2. Parse from standard V2Ray URI and construct a compatible NPV JSON
+    const parsed = parseConfigHostPort(v2rayConfig);
+    if (!parsed.host || !parsed.port) {
+      // Fallback: If we can't parse, let's wrap the original string in a simple remarks wrapper or base64
+      const fallbackJson = {
+        remarks: brandingName,
+        v2rayHost: '',
+        v2rayPort: 0,
+        host: '',
+        port: 0,
+        address: '',
+        protocol: 'vless',
+        security: 'none',
+        type: 'none',
+        uuid: '00000000-0000-0000-0000-000000000000',
+        rawLink: trimmed
+      };
+      const encoded = Buffer.from(JSON.stringify(fallbackJson)).toString('base64');
+      return `npv://${encoded}`;
+    }
+
+    const npvJson: any = {
+      remarks: brandingName,
+      v2rayHost: parsed.host,
+      v2rayPort: parsed.port,
+      host: parsed.host,
+      port: parsed.port,
+      address: parsed.host,
+      protocol: parsed.protocol === 'unknown' ? 'vless' : parsed.protocol,
+      security: 'none',
+      type: 'tcp',
+      uuid: '00000000-0000-0000-0000-000000000000'
+    };
+
+    if (trimmed.startsWith('vmess://')) {
+      const base64Part = trimmed.substring(8).trim();
+      const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
+      const vmessJson = JSON.parse(decoded);
+      npvJson.v2rayHost = vmessJson.add || parsed.host;
+      npvJson.v2rayPort = Number(vmessJson.port) || parsed.port;
+      npvJson.host = vmessJson.add || parsed.host;
+      npvJson.port = Number(vmessJson.port) || parsed.port;
+      npvJson.address = vmessJson.add || parsed.host;
+      npvJson.remarks = brandingName;
+      npvJson.uuid = vmessJson.id || '';
+      npvJson.type = vmessJson.net || 'tcp';
+      npvJson.security = vmessJson.tls === 'tls' ? 'tls' : 'none';
+      npvJson.sni = vmessJson.sni || vmessJson.host || '';
+      npvJson.path = vmessJson.path || '';
+      npvJson.hostHeader = vmessJson.host || '';
+    } else if (trimmed.startsWith('vless://') || trimmed.startsWith('trojan://') || trimmed.startsWith('ss://')) {
+      // Parse parameters from query string
+      const urlPart = trimmed.split('#')[0];
+      
+      // Extract UUID or UserInfo
+      const pIndex = urlPart.indexOf('://');
+      const atIndex = urlPart.indexOf('@');
+      if (pIndex !== -1 && atIndex !== -1) {
+        npvJson.uuid = urlPart.substring(pIndex + 3, atIndex);
+      }
+
+      const qIndex = urlPart.indexOf('?');
+      if (qIndex !== -1) {
+        const queryStr = urlPart.substring(qIndex + 1);
+        const params = new URLSearchParams(queryStr);
+        npvJson.security = params.get('security') || 'none';
+        npvJson.type = params.get('type') || params.get('network') || 'tcp';
+        npvJson.sni = params.get('sni') || '';
+        npvJson.path = params.get('path') || '';
+        npvJson.hostHeader = params.get('host') || '';
+      }
+    }
+
+    const encoded = Buffer.from(JSON.stringify(npvJson)).toString('base64');
+    return `npv://${encoded}`;
+  } catch (e) {
+    // Return original prepended with npv:// if not there
+    if (v2rayConfig.trim().startsWith('npv://')) {
+      return v2rayConfig.trim();
+    }
+    const fallback = Buffer.from(JSON.stringify({ remarks: branding || 'NPV Config', raw: v2rayConfig })).toString('base64');
+    return `npv://${fallback}`;
+  }
 }
 
 /**
@@ -3512,9 +3619,23 @@ async function handleBotUpdate(update: any) {
       
       await answerCallback('در حال استخراج و ساخت کانفیگ...');
       
-      // Filter configurations
-      const available = db.configs.filter(c => c.status === 'working' && ['vmess', 'vless', 'trojan', 'ss'].includes(c.protocol));
-      const list = available.length > 0 ? available : db.configs.filter(c => ['vmess', 'vless', 'trojan', 'ss'].includes(c.protocol)).slice(0, 50);
+      // Smart filter: prioritize working configs of compatible protocols (including npv)
+      const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss', 'npv'];
+      let available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+      
+      // If we don't have enough working configs, append untested ones
+      if (available.length < qty) {
+        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+        available = [...available, ...untested];
+      }
+      
+      // If still empty, filter out failed ones
+      if (available.length === 0) {
+        available = db.configs.filter(c => allowedProtocols.includes(c.protocol) && c.status !== 'failed');
+      }
+      
+      // Final fallback to absolutely any configs of compatible protocols
+      const list = available.length > 0 ? available : db.configs.filter(c => allowedProtocols.includes(c.protocol)).slice(0, 50);
 
       if (list.length === 0) {
         await callTelegramApi('sendMessage', {
@@ -3557,10 +3678,24 @@ async function handleBotUpdate(update: any) {
           reply_markup: inlineKeyboard || getReplyKeyboard(userId)
         });
       } else {
-        msg = `🌀 <b>فایل‌های کانفیگ اختصاصی NPV Tunnel صادر شد</b>\n\n`;
+        msg = `🌀 <b>کانفیگ‌های اختصاصی NPV Tunnel صادر شد</b>\n\n`;
         msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
-        msg += `🔒 مخصوص کلاینت NapsternetV در گوشی‌های اندروید و آیفون\n\n`;
-        msg += `📥 فایل‌های با پسوند <b>.npv</b> در زیر برای شما ارسال شدند. کافیست آن‌ها را دانلود کرده و مستقیماً وارد نرم‌افزار کنید.`;
+        msg += `🔒 مخصوص کلاینت <b>NapsternetV</b> در گوشی‌های اندروید و آیفون\n`;
+        msg += `⚡️ اتصال: همراه اول، ایرانسل، مخابرات و رایتل\n`;
+        msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
+
+        selected.forEach((conf, idx) => {
+          const npvConfig = convertV2rayToNpv(conf.raw, db.settings.branding);
+          const latencyText = conf.latency ? `(پینگ: ${conf.latency}ms)` : '';
+          
+          msg += `⚡ <b>کانفیگ NPV شماره ${idx + 1}</b> [${conf.protocol.toUpperCase()}] ${latencyText}:\n`;
+          msg += `<code>${npvConfig}</code>\n\n`;
+        });
+
+        msg += `📍 <b>راهنمای سریع اتصال:</b>\n`;
+        msg += `۱. روی یکی از کدهای NPV متنی فوق ضربه بزنید تا کپی شود.\n`;
+        msg += `۲. برنامه NapsternetV را باز کرده و از منوی بالا گزینه <b>Import Config from Clipboard</b> را بزنید.\n\n`;
+        msg += `📥 همچنین فایل‌های با پسوند <b>.npv</b> در زیر برای شما ارسال شدند که می‌توانید مستقیماً دانلود و در نرم‌افزار ایمپورت کنید.`;
 
         const sponsorBtn = getSponsorChannelInlineButton();
         const inlineKeyboard = sponsorBtn ? {
@@ -3641,9 +3776,23 @@ async function handleBotUpdate(update: any) {
     if (callbackData === 'get_proxies') {
       await answerCallback('در حال آماده‌سازی پروکسی‌های فعال...');
       
-      const list = (db.proxies || []).filter(p => p.status === 'working');
-      const fallbackList = (db.proxies || []).slice(0, 30);
-      const available = list.length > 0 ? list : fallbackList;
+      let available = (db.proxies || []).filter(p => p.status === 'working');
+      
+      // If we have less than 4 working proxies, append untested ones
+      if (available.length < 4) {
+        const untested = (db.proxies || []).filter(p => p.status === 'untested');
+        available = [...available, ...untested];
+      }
+      
+      // If still empty, filter out failed ones
+      if (available.length === 0) {
+        available = (db.proxies || []).filter(p => p.status !== 'failed');
+      }
+      
+      // Final fallback to any proxies
+      if (available.length === 0) {
+        available = db.proxies || [];
+      }
 
       if (available.length === 0) {
         await callTelegramApi('sendMessage', {
@@ -3786,27 +3935,46 @@ function setupIntervals() {
     triggerBulkScrape();
   }, mins * 60 * 1000);
 
-  // Auto test interval (every 10 minutes test untested ones)
+  // Auto test interval (every 10 minutes test untested and stale working ones)
   testIntervalRef = setInterval(() => {
     if (db.settings.autoTest) {
+      // 1. Untested configs
       const untestedIds = db.configs
         .filter(c => c.status === 'untested')
-        .slice(0, 100)
+        .slice(0, 60)
         .map(c => c.id);
       
+      // 2. Stale working configs (checked more than 2 hours ago)
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const staleWorkingIds = db.configs
+        .filter(c => c.status === 'working' && (!c.lastChecked || c.lastChecked < twoHoursAgo))
+        .slice(0, 40)
+        .map(c => c.id);
+
+      const configsToTest = [...untestedIds, ...staleWorkingIds];
+
+      // 3. Untested proxies
       const untestedProxies = (db.proxies || [])
         .filter(p => p.status === 'untested')
-        .slice(0, 50)
+        .slice(0, 40)
         .map(p => p.id);
+
+      // 4. Stale working proxies
+      const staleWorkingProxies = (db.proxies || [])
+        .filter(p => p.status === 'working' && (!p.lastChecked || p.lastChecked < twoHoursAgo))
+        .slice(0, 20)
+        .map(p => p.id);
+
+      const proxiesToTest = [...untestedProxies, ...staleWorkingProxies];
       
-      if (untestedIds.length > 0) {
-        addLog('info', 'اجرای خودکار تست بر روی کانفیگ‌های جدید...');
-        testConfigsBatch(untestedIds);
+      if (configsToTest.length > 0) {
+        addLog('info', `اجرای خودکار تست بر روی ${untestedIds.length} کانفیگ جدید و ${staleWorkingIds.length} کانفیگ فعال قدیمی...`);
+        testConfigsBatch(configsToTest);
       }
 
-      if (untestedProxies.length > 0) {
-        addLog('info', 'اجرای خودکار تست بر روی پروکسی‌های جدید...');
-        testProxiesBatch(untestedProxies);
+      if (proxiesToTest.length > 0) {
+        addLog('info', `اجرای خودکار تست بر روی ${untestedProxies.length} پروکسی جدید و ${staleWorkingProxies.length} پروکسی فعال قدیمی...`);
+        testProxiesBatch(proxiesToTest);
       }
     }
   }, 10 * 60 * 1000);
