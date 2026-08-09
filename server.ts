@@ -2712,16 +2712,31 @@ const joinChecksCache: Record<number, { checkedAt: number; hasJoined: boolean }>
 /**
  * Sends request to Telegram Bot API
  */
+function sanitizeTelegramBody(obj: any): any {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeTelegramBody);
+  }
+  const clean: any = {};
+  for (const key of Object.keys(obj)) {
+    if (key === 'style') continue;
+    clean[key] = sanitizeTelegramBody(obj[key]);
+  }
+  return clean;
+}
+
 async function callTelegramApi(method: string, body: object): Promise<any> {
   const token = db.settings.botToken;
   if (!token) {
     throw new Error('Bot token is not configured');
   }
 
+  const sanitizedBody = sanitizeTelegramBody(body);
+
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(sanitizedBody),
     signal: AbortSignal.timeout(12000)
   });
 
@@ -5748,8 +5763,8 @@ async function startExpressServer() {
         enabled: !!enabled,
         targetChannel: targetChannel || '',
         postIntervalHours: Number(postIntervalHours) || 4,
-        configCount: Number(configCount) || 1,
-        proxyCount: Number(proxyCount) || 1,
+        configCount: typeof configCount !== 'undefined' && !isNaN(Number(configCount)) ? Number(configCount) : 1,
+        proxyCount: typeof proxyCount !== 'undefined' && !isNaN(Number(proxyCount)) ? Number(proxyCount) : 1,
         customText: customText || '',
         adText: adText || '',
         postFiles: !!postFiles,
