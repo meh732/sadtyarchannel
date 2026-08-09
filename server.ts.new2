@@ -4534,85 +4534,44 @@ async function handleBotUpdate(update: any) {
       return;
     }
 
-
-    if (callbackData === 'get_file_npvt' || callbackData === 'get_file_ovpn' || callbackData === 'get_file_txt') {
-      const fileExt = callbackData === 'get_file_npvt' ? 'npvt' : callbackData === 'get_file_ovpn' ? 'ovpn' : 'txt';
-      const label = fileExt === 'npvt' ? 'NapsternetV (.NPVT)' : fileExt === 'ovpn' ? 'OpenVPN (.OVPN)' : 'متنی (.TXT)';
-      
-      await answerCallback(`در حال بررسی فایل‌های ${fileExt.toUpperCase()}...`);
-      
-      const fileCount = db.npvFiles ? db.npvFiles.filter(f => f.filename.toLowerCase().endsWith(fileExt)).length : 0;
-
-      if (fileCount === 0) {
-        await callTelegramApi('sendMessage', {
-          chat_id: chatId,
-          text: `⚠️ <b>فایل ${label} در حال حاضر موجود نیست!</b>\n\nسیستم به صورت خودکار در حال بروزرسانی است. لطفا دقایقی دیگر امتحان کنید.`,
-          parse_mode: 'HTML',
-          reply_markup: getReplyKeyboard(userId)
-        });
-        return;
-      }
-
-      const qtyKeyboard = {
-        inline_keyboard: [
-          [
-            { text: '1️⃣ یک عدد', callback_data: `file_qty_${fileExt}_1`, style: 'success' },
-            { text: '2️⃣ دو عدد', callback_data: `file_qty_${fileExt}_2`, style: 'success' }
-          ],
-          [
-            { text: '3️⃣ سه عدد', callback_data: `file_qty_${fileExt}_3`, style: 'primary' },
-            { text: '5️⃣ پنج عدد', callback_data: `file_qty_${fileExt}_5`, style: 'primary' }
-          ],
-          [
-            { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }
-          ]
-        ]
-      };
-      
-      await callTelegramApi('sendMessage', {
-        chat_id: chatId,
-        text: `♻️ <b>دریافت فایل‌های ${label}</b>\n\nلطفاً تعداد فایل‌های مورد نیاز خود را انتخاب کنید:`,
-        parse_mode: 'HTML',
-        reply_markup: qtyKeyboard
-      });
-      return;
-    }
-
-    if (callbackData && callbackData.startsWith('v2ray_qty_')) {
+    if (callbackData && (callbackData.startsWith('v2ray_qty_') || callbackData.startsWith('npv_qty_'))) {
+      const isV2ray = callbackData.startsWith('v2ray_qty_');
       const qty = parseInt(callbackData.split('_')[2]) || 3;
       
       await answerCallback('در حال آماده‌سازی و تغییر نام کانفیگ...');
       
-      let list = [];
+      let list: ConfigItem[] = [];
 
-      const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss'];
-      let available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+      if (isV2ray) {
+        const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss'];
+        let available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
         
-      if (available.length < qty) {
-        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
-        if (untested.length > 0) {
-          const testIds = untested.slice(0, qty * 2).map(c => c.id);
-          testConfigsBatch(testIds).catch(console.error);
+        if (available.length < qty) {
+          const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+          if (untested.length > 0) {
+            const testIds = untested.slice(0, qty * 2).map(c => c.id);
+            testConfigsBatch(testIds).catch(console.error);
+          }
         }
-      }
 
-      if (available.length < qty) {
-        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
-        available = [...available, ...untested];
-      }
+        if (available.length < qty) {
+          const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+          available = [...available, ...untested];
+        }
         
-      if (available.length === 0) {
-        available = db.configs.filter(c => allowedProtocols.includes(c.protocol) && c.status !== 'failed');
-      }
+        if (available.length === 0) {
+          available = db.configs.filter(c => allowedProtocols.includes(c.protocol) && c.status !== 'failed');
+        }
         
-      list = available.length > 0 ? available : db.configs.filter(c => allowedProtocols.includes(c.protocol)).slice(0, 50);
+        list = available.length > 0 ? available : db.configs.filter(c => allowedProtocols.includes(c.protocol)).slice(0, 50);
 
-      if (list.length === 0) {
-        await callTelegramApi('sendMessage', {
-          chat_id: chatId,
-          text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده فعال در دیتابیس موجود نیست. سیستم هم‌اکنون در حال بررسی خودکار موارد جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
-        });
-        return;
+        if (list.length === 0) {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده فعال در دیتابیس موجود نیست. سیستم هم‌اکنون در حال بررسی خودکار موارد جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
+          });
+          return;
+        }
       }
 
       // Shuffle and pick requested quantity
@@ -4620,130 +4579,174 @@ async function handleBotUpdate(update: any) {
       const selected = shuffled.slice(0, qty);
       
       let msg = '';
-      msg = `📥 <b>کانفیگ‌های اختصاصی V2Ray (ویتوری)</b>\n`;
-      msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
-      msg += `⚡️ اتصال: همراه اول، ایرانسل، مخابرات و رایتل\n`;
-      msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
+      if (isV2ray) {
+        msg = `📥 <b>کانفیگ‌های اختصاصی V2Ray (ویتوری)</b>\n`;
+        msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
+        msg += `⚡️ اتصال: همراه اول، ایرانسل، مخابرات و رایتل\n`;
+        msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
 
-      selected.forEach((conf, idx) => {
-        const branded = applyBrandingToConfig(conf.raw, db.settings.branding);
-        const latencyText = conf.latency ? `(پینگ: ${conf.latency}ms)` : '';
+        selected.forEach((conf, idx) => {
+          const branded = applyBrandingToConfig(conf.raw, db.settings.branding);
+          const latencyText = conf.latency ? `(پینگ: ${conf.latency}ms)` : '';
           
-        msg += `⚡ <b>کانفیگ ${idx + 1}</b> [${conf.protocol.toUpperCase()}] ${latencyText}:\n`;
-        msg += `<code>${branded}</code>\n\n`;
-      });
+          msg += `⚡ <b>کانفیگ ${idx + 1}</b> [${conf.protocol.toUpperCase()}] ${latencyText}:\n`;
+          msg += `<code>${branded}</code>\n\n`;
+        });
 
-      if (selected.length > 1) {
-        const allBrandedCombined = selected
-          .map(conf => applyBrandingToConfig(conf.raw, db.settings.branding))
-          .join('\n');
-        msg += `📋 <b>کپی یکجای تمامی ${selected.length} کانفیگ با یک لمس:</b>\n`;
-        msg += `<code>${allBrandedCombined}</code>\n\n`;
+        if (selected.length > 1) {
+          const allBrandedCombined = selected
+            .map(conf => applyBrandingToConfig(conf.raw, db.settings.branding))
+            .join('\n');
+          msg += `📋 <b>کپی یکجای تمامی ${selected.length} کانفیگ با یک لمس:</b>\n`;
+          msg += `<code>${allBrandedCombined}</code>\n\n`;
+        }
+
+        msg += `📍 جهت کپی روی هر کانفیگ یا کادر کپی یکجا ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
+
+        const sponsorBtn = getSponsorChannelInlineButton();
+        const feedbackRows: any[][] = [];
+        if (selected.length > 0) {
+          const upRow = selected.slice(0, 5).map((conf, idx) => ({
+            text: `👍 ${idx + 1} فعال`,
+            callback_data: `fb_up_${conf.id}`
+          }));
+          const downRow = selected.slice(0, 5).map((conf, idx) => ({
+            text: `👎 ${idx + 1} خراب`,
+            callback_data: `fb_down_${conf.id}`
+          }));
+          feedbackRows.push(upRow);
+          feedbackRows.push(downRow);
+        }
+
+        const inlineKeyboard = {
+          inline_keyboard: [
+            ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : []),
+            ...feedbackRows
+          ]
+        };
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: msg,
+          parse_mode: 'HTML',
+          reply_markup: inlineKeyboard
+        });
+      } else {
+        msg = `🌀 <b>فایل‌های کانفیگ اختصاصی NPV Tunnel صادر شد</b>\n\n`;
+        msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
+        msg += `🔒 مخصوص کلاینت <b>NapsternetV</b> در گوشی‌های اندروید و آیفون\n`;
+        msg += `⚡️ اتصال: همراه اول، ایرانسل، مخابرات و رایتل\n`;
+        msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
+        
+        let npvSelection = [];
+        if (db.npvFiles && db.npvFiles.length > 0) {
+          const shuffledNpvs = [...db.npvFiles].sort(() => 0.5 - Math.random());
+          npvSelection = shuffledNpvs.slice(0, Math.min(qty, shuffledNpvs.length));
+        }
+
+        if (npvSelection.length === 0) {
+          msg += `❌ متأسفانه در حال حاضر فایل NapsternetV معتبری در آرشیو ربات وجود ندارد. لطفا بعدا تلاش کنید.`;
+        } else {
+          msg += `📥 تعداد ${npvSelection.length} فایل کانفیگ (NapsternetV) در زیر برای شما ارسال شدند. کافیست آن‌ها را دانلود کرده و مستقیماً در نرم‌افزار ایمپورت کنید.`;
+        }
+
+        const sponsorBtn = getSponsorChannelInlineButton();
+        const inlineKeyboard = sponsorBtn ? {
+          inline_keyboard: [[{ text: sponsorBtn.text, url: sponsorBtn.url }]]
+        } : undefined;
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: msg,
+          parse_mode: 'HTML',
+          reply_markup: inlineKeyboard || getReplyKeyboard(userId)
+        });
+
+        if (npvSelection.length > 0) {
+          for (let i = 0; i < npvSelection.length; i++) {
+            const npvFile = npvSelection[i];
+            
+            const cleanBranding = (db.settings.branding || 'NPV').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_');
+            let brandedFilename = npvFile.filename;
+            if (db.settings.branding) {
+              brandedFilename = brandedFilename.replace(/\.(npv(t)?|ovpn|txt)$/i, `_${cleanBranding}.$1`);
+            }
+            
+            const caption = `🌀 فایل کانفیگ NPV Tunnel شماره ${i + 1}\n🔒 مخصوص وارد کردن در نرم‌افزار NapsternetV\n🆔 ${db.settings.branding}`;
+            
+            try {
+              const formData = new FormData();
+              formData.append('chat_id', String(chatId));
+              const fileBuffer = Buffer.from(npvFile.content, 'base64');
+              const blob = new Blob([fileBuffer], { type: 'application/octet-stream' });
+              formData.append('document', blob, brandedFilename);
+              formData.append('caption', caption);
+              
+              if (inlineKeyboard) {
+                formData.append('reply_markup', JSON.stringify(inlineKeyboard));
+              }
+
+              await fetch(`https://api.telegram.org/bot${db.settings.botToken}/sendDocument`, {
+                method: 'POST',
+                body: formData
+              });
+            } catch (err) {
+              console.error('Failed to send genuine NPV file to user:', err);
+            }
+          }
+        }
       }
 
-      msg += `📍 جهت کپی روی هر کانفیگ یا کادر کپی یکجا ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
+      // Increment statistics
+      const idx = db.users.findIndex(u => u.chatId === chatId);
+      if (idx !== -1) db.users[idx].configsFetched += selected.length;
+      saveDatabase();
+      return;
+    }
 
-      const sponsorBtn = getSponsorChannelInlineButton();
-      const feedbackRows = [];
-      if (selected.length > 0) {
-        const upRow = selected.slice(0, 5).map((conf, idx) => ({
-          text: `👍 ${idx + 1} فعال`,
-          callback_data: `fb_up_${conf.id}`
-        }));
-        const downRow = selected.slice(0, 5).map((conf, idx) => ({
-          text: `👎 ${idx + 1} خراب`,
-          callback_data: `fb_down_${conf.id}`
-        }));
-        feedbackRows.push(upRow);
-        feedbackRows.push(downRow);
-      }
+    if (callbackData === 'get_net_status') {
+      await answerCallback('در حال محاسبه آمار سیستم...');
+      
+      const totalCount = db.configs.length;
+      const workingCount = db.configs.filter(c => c.status === 'working').length;
+      const failedCount = db.configs.filter(c => c.status === 'failed').length;
+      const untestedCount = db.configs.filter(c => c.status === 'untested').length;
 
-      const inlineKeyboard = {
-        inline_keyboard: [
-          ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : []),
-          ...feedbackRows
-        ]
-      };
+      let msg = `📊 **وضعیت لحظه‌ای شبکه و کانفیگ‌ها**\n\n`;
+      msg += `🟢 کانفیگ‌های فعال (تست شده در نت ایران): **${workingCount} مورد**\n`;
+      msg += `🔴 کانفیگ‌های نامناسب/مسدود: **${failedCount} مورد**\n`;
+      msg += `⏳ در انتظار بررسی پورت: **${untestedCount} مورد**\n`;
+      msg += `📦 کل آرشیو منابع: **${totalCount} کانفیگ**\n\n`;
+      msg += `💻 تمام کانفیگ‌ها قبل از ارائه، از نظر اتصال TCP و پاسخ‌دهی سرور چک می‌شوند تا اتصال پایداری را تجربه کنید.`;
 
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: msg,
-        parse_mode: 'HTML',
-        reply_markup: inlineKeyboard
+        parse_mode: 'Markdown',
+        reply_markup: getReplyKeyboard(userId)
       });
       return;
     }
 
-    if (callbackData && callbackData.startsWith('file_qty_')) {
-      const parts = callbackData.split('_');
-      const fileExt = parts[2];
-      const qty = parseInt(parts[3]) || 1;
-      const label = fileExt === 'npvt' ? 'NapsternetV (.NPVT)' : fileExt === 'ovpn' ? 'OpenVPN (.OVPN)' : 'متنی (.TXT)';
-
-      await answerCallback('در حال آماده‌سازی فایل‌ها...');
+    if (callbackData === 'get_help') {
+      await answerCallback('راهنما...');
       
-      let selection = [];
-      if (db.npvFiles && db.npvFiles.length > 0) {
-        const filtered = db.npvFiles.filter(f => f.filename.toLowerCase().endsWith(fileExt));
-        const shuffled = [...filtered].sort(() => 0.5 - Math.random());
-        selection = shuffled.slice(0, Math.min(qty, shuffled.length));
-      }
-
-      if (selection.length === 0) {
-        await callTelegramApi('sendMessage', {
-          chat_id: chatId,
-          text: `❌ متأسفانه در حال حاضر فایل ${label} معتبری در آرشیو ربات وجود ندارد. لطفا بعدا تلاش کنید.`,
-          reply_markup: getReplyKeyboard(userId)
-        });
-        return;
-      }
-      
-      let msg = `🌀 <b>فایل‌های اختصاصی ${label} صادر شد</b>\n\n`;
-      msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
-      msg += `⚡️ اتصال: همراه اول، ایرانسل، مخابرات و رایتل\n`;
-      msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
-      msg += `📥 تعداد ${selection.length} فایل در زیر برای شما ارسال شدند.`;
-
-      const sponsorBtn = getSponsorChannelInlineButton();
-      const inlineKeyboard = sponsorBtn ? {
-        inline_keyboard: [[{ text: sponsorBtn.text, url: sponsorBtn.url }]]
-      } : undefined;
+      let msg = `ℹ️ **راهنمای گام به گام اتصال به فیلترشکن**\n\n`;
+      msg += `1️⃣ **دانلود برنامه کلاینت:**\n`;
+      msg += `▫️ اندروید: نرم‌افزار **v2rayNG** یا **NapsternetV** از گوگل پلی\n`;
+      msg += `▫️ آیفون (iOS): نرم‌افزار **Streisand** یا **NapsternetV** یا **FoXray** از اپ استور\n`;
+      msg += `▫️ ویندوز: نرم‌افزار **v2rayN** یا **NekoBox**\n\n`;
+      msg += `2️⃣ **نحوه کپی و وارد کردن کانفیگ:**\n`;
+      msg += `▫️ روی کانفیگ ارسال شده در ربات ضربه بزنید تا کپی شود.\n`;
+      msg += `▫️ وارد برنامه v2rayNG شوید، علامت + را در بالای صفحه بزنید و دکمه "Import config from Clipboard" را انتخاب کنید.\n\n`;
+      msg += `3️⃣ **اتصال نهایی:**\n`;
+      msg += `▫️ روی کانفیگ اضافه شده بزنید تا انتخاب شود (سبز رنگ شود) و سپس دکمه دایره شکل اتصال در پایین را بفشارید.`;
 
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: msg,
-        parse_mode: 'HTML',
-        reply_markup: inlineKeyboard || getReplyKeyboard(userId)
+        reply_markup: getReplyKeyboard(userId)
       });
-
-      for (let i = 0; i < selection.length; i++) {
-        const file = selection[i];
-          
-        const cleanBranding = (db.settings.branding || 'VPN').replace(/[^a-zA-Z0-9_؀-ۿ]/g, '_');
-        let brandedFilename = file.filename;
-        if (db.settings.branding) {
-          brandedFilename = brandedFilename.replace(/\.(npv(t)?|ovpn|txt)$/i, `_${cleanBranding}.$1`);
-        }
-          
-        const caption = `🌀 فایل کانفیگ ${label} شماره ${i + 1}\n🆔 ${db.settings.branding}`;
-          
-        try {
-          const formData = new FormData();
-          formData.append('chat_id', String(chatId));
-          const fileBuffer = Buffer.from(file.content, 'base64');
-          const blob = new Blob([fileBuffer], { type: 'application/octet-stream' });
-          formData.append('document', blob, brandedFilename);
-          formData.append('caption', caption);
-            
-          if (inlineKeyboard) {
-            formData.append('reply_markup', JSON.stringify(inlineKeyboard));
-          }
-            
-          await callTelegramApi('sendDocument', formData);
-        } catch (err) {
-          console.error('Error sending file to user:', err);
-        }
-      }
       return;
     }
 
