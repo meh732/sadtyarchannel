@@ -1519,8 +1519,8 @@ async function sendBackupToAdmin(): Promise<boolean> {
     formData.append('chat_id', adminId);
     
     const filename = `db_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-    const file = new File([content], filename, { type: 'application/json' });
-    formData.append('document', file);
+    const blob = new Blob([content], { type: 'application/json' });
+    formData.append('document', blob, filename);
     formData.append('caption', `📦 **نسخه پشتیبان خودکار دیتابیس ربات**\n\n🕒 زمان: **${new Date().toLocaleString('fa-IR')}**\n💾 حجم فایل: **${(content.length / 1024).toFixed(2)} کیلوبایت**`);
 
     const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
@@ -1554,35 +1554,43 @@ function getSponsorChannelInlineButton() {
   // 1. Check if there are active force join channels
   const activeFj = db.forceJoinChannels.find(c => c.enabled && c.username);
   if (activeFj) {
-    url = activeFj.inviteLink || `https://t.me/${activeFj.username.replace('@', '')}`;
-    label = `📢 کانال رسمی ما: ${activeFj.title}`;
-    return { text: label, url };
-  }
+    const cleanUsername = activeFj.username.replace(/[^a-zA-Z0-9_]/g, '');
+    url = activeFj.inviteLink && (activeFj.inviteLink.startsWith('http://') || activeFj.inviteLink.startsWith('https://'))
+      ? activeFj.inviteLink
+      : (cleanUsername ? `https://t.me/${cleanUsername}` : '');
+    label = `📢 کانال رسمی ما: ${activeFj.title || 'کانال رسمی'}`;
+  } else {
+    // 2. Check branding for channel handle
+    const branding = db.settings.branding || '';
+    if (branding.includes('@')) {
+      const match = branding.match(/@[a-zA-Z0-9_]+/);
+      const cleanUsername = match ? match[0].replace('@', '') : '';
+      if (cleanUsername) {
+        url = `https://t.me/${cleanUsername}`;
+        label = `📢 عضویت در کانال ${branding}`;
+      }
+    }
 
-  // 2. Check branding for channel handle
-  const branding = db.settings.branding || '';
-  if (branding.includes('@')) {
-    const handle = branding.match(/@[a-zA-Z0-9_]+/)?.[0]?.replace('@', '');
-    if (handle) {
-      url = `https://t.me/${handle}`;
-      label = `📢 عضویت در کانال ${branding}`;
-      return { text: label, url };
+    // 3. Check autoPost.adText
+    if (!url) {
+      const adText = db.settings.autoPost?.adText || '';
+      if (adText.includes('@')) {
+        const match = adText.match(/@[a-zA-Z0-9_]+/);
+        const cleanUsername = match ? match[0].replace('@', '') : '';
+        if (cleanUsername) {
+          url = `https://t.me/${cleanUsername}`;
+          label = `📢 عضویت در کانال اسپانسر`;
+        }
+      } else if (adText.startsWith('http://') || adText.startsWith('https://')) {
+        url = adText;
+        label = `📢 عضویت در کانال اسپانسر`;
+      }
     }
   }
 
-  // 3. Check autoPost.adText
-  const adText = db.settings.autoPost?.adText || '';
-  if (adText.includes('@')) {
-    const handle = adText.match(/@[a-zA-Z0-9_]+/)?.[0]?.replace('@', '');
-    if (handle) {
-      url = `https://t.me/${handle}`;
-      label = `📢 عضویت در کانال اسپانسر`;
-      return { text: label, url };
-    }
-  } else if (adText.startsWith('http://') || adText.startsWith('https://')) {
-    url = adText;
-    label = `📢 عضویت در کانال اسپانسر`;
-    return { text: label, url };
+  // Ensure URL is non-empty and starts with http or https
+  if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+    return { text: label || '📢 عضویت در کانال رسمی', url: url.trim() };
   }
 
   return null;
@@ -1598,8 +1606,8 @@ async function sendNpvFile(chatId: string | number, configText: string, filename
     const formData = new FormData();
     formData.append('chat_id', String(chatId));
     
-    const file = new File([configText], filename, { type: 'text/plain' });
-    formData.append('document', file);
+    const blob = new Blob([configText], { type: 'text/plain' });
+    formData.append('document', blob, filename);
     if (caption) {
       formData.append('caption', caption);
     }
@@ -3281,11 +3289,16 @@ async function handleBotUpdate(update: any) {
 
         msg += `📍 جهت کپی روی کانفیگ‌ها ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
 
+        const sponsorBtn = getSponsorChannelInlineButton();
+        const inlineKeyboard = sponsorBtn ? {
+          inline_keyboard: [[{ text: sponsorBtn.text, url: sponsorBtn.url }]]
+        } : undefined;
+
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
           text: msg,
           parse_mode: 'HTML',
-          reply_markup: getReplyKeyboard(userId)
+          reply_markup: inlineKeyboard || getReplyKeyboard(userId)
         });
       } else {
         msg = `🌀 <b>فایل‌های کانفیگ اختصاصی NPV Tunnel صادر شد</b>\n\n`;
@@ -3312,7 +3325,7 @@ async function handleBotUpdate(update: any) {
           const cleanBranding = (db.settings.branding || 'NPV').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_');
           const filename = `${cleanBranding}_Config_${i + 1}.npv`;
           const caption = `🌀 فایل کانفیگ NPV Tunnel شماره ${i + 1}\n🔒 مخصوص وارد کردن در نرم‌افزار NapsternetV`;
-          await sendNpvFile(chatId, npvConfig, filename, caption);
+          await sendNpvFile(chatId, npvConfig, filename, caption, inlineKeyboard);
         }
       }
 
@@ -3388,12 +3401,21 @@ async function handleBotUpdate(update: any) {
       const shuffled = [...available].sort(() => 0.5 - Math.random());
       const selected = shuffled.slice(0, 4);
 
-      let msg = `🔌 **پروکسی‌های پرسرعت و تست‌شده تلگرام**\n\n`;
+       let msg = `🔌 **پروکسی‌های پرسرعت و تست‌شده تلگرام**\n\n`;
       msg += `✨ اتصال آسان و امن بدون نیاز به فیلترشکن اضافه!\n`;
       msg += `🏷️ برندینگ: \`${db.settings.branding}\`\n\n`;
       msg += `👇 برای اتصال به هر پروکسی، روی یکی از دکمه‌های شیشه‌ای زیر کلیک کنید:`;
 
       const proxyButtons: any[] = [];
+      
+      const sponsorBtn = getSponsorChannelInlineButton();
+      if (sponsorBtn) {
+        proxyButtons.push([{
+          text: sponsorBtn.text,
+          url: sponsorBtn.url
+        }]);
+      }
+
       for (let i = 0; i < selected.length; i++) {
         const p = selected[i];
         const loc = await getIpLocation(p.server);
