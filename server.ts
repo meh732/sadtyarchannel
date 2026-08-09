@@ -1031,23 +1031,41 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // Step 1: Fast direct socket connection check
-    if (details.tls) {
-      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 1800);
-      if (tlsCheck.working) return tlsCheck;
-    }
-
-    const portCheck = await checkPort(details.host, details.port, 1800);
-    if (portCheck.working) return portCheck;
-
-    // Step 2: If local Xray binary is present, test via Xray
+    let protocolCheck = { working: false, latency: 999 };
     const xrayPath = path.join(process.cwd(), 'bin/xray');
+
+    // Tier 1: Real end-to-end handshake & proxy test via Xray core if available
     if (fs.existsSync(xrayPath)) {
-      const xrayCheck = await checkConfigWithXray(rawConfig);
-      if (xrayCheck.working) return xrayCheck;
+      protocolCheck = await checkConfigWithXray(rawConfig);
+    } else {
+      // Fallback if Xray core binary missing
+      if (details.tls) {
+        protocolCheck = await checkTlsHandshake(details.host, details.port, details.sni, 2000);
+      }
+      if (!protocolCheck.working) {
+        protocolCheck = await checkPort(details.host, details.port, 2000);
+      }
     }
 
-    return { working: false, latency: 999 };
+    // If protocol / proxy handshake failed, mark as DEAD immediately
+    if (!protocolCheck.working) {
+      return { working: false, latency: 999 };
+    }
+
+    // Tier 2: Check reachability from inside Iran via check-host API nodes
+    const iranCheck = await checkPortFromIran(details.host, details.port);
+    
+    // If Iran nodes explicitly confirmed connection failed (and not rate limited), mark as blocked in Iran!
+    if (!iranCheck.working && !iranCheck.rateLimited) {
+      return { working: false, latency: 999 };
+    }
+
+    // Combine latencies appropriately
+    const finalLatency = (iranCheck.working && iranCheck.latency < 999) 
+      ? Math.max(protocolCheck.latency, iranCheck.latency) 
+      : protocolCheck.latency;
+
+    return { working: true, latency: finalLatency };
   } catch (err) {
     return { working: false, latency: 999 };
   }
@@ -4233,7 +4251,15 @@ async function handleBotUpdate(update: any) {
           msg += `<code>${branded}</code>\n\n`;
         });
 
-        msg += `📍 جهت کپی روی کانفیگ‌ها ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
+        if (selected.length > 1) {
+          const allBrandedCombined = selected
+            .map(conf => applyBrandingToConfig(conf.raw, db.settings.branding))
+            .join('\n');
+          msg += `📋 <b>کپی یکجای تمامی ${selected.length} کانفیگ با یک لمس:</b>\n`;
+          msg += `<code>${allBrandedCombined}</code>\n\n`;
+        }
+
+        msg += `📍 جهت کپی روی هر کانفیگ یا کادر کپی یکجا ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
 
         const sponsorBtn = getSponsorChannelInlineButton();
         const inlineKeyboard = sponsorBtn ? {
