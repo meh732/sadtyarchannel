@@ -1631,6 +1631,11 @@ async function handleBotUpdate(update: any) {
       callbackQueryId = update.callback_query.id;
       username = update.callback_query.from.username || null;
       firstName = update.callback_query.from.first_name || 'کاربر';
+      
+      // Clear any pending text-input state unless they clicked a button that is part of a state flow (e.g., default link)
+      if (adminStates[chatId] && callbackData !== 'admin_fj_default_link') {
+        delete adminStates[chatId];
+      }
     }
 
     if (!chatId) return;
@@ -1791,7 +1796,7 @@ async function handleBotUpdate(update: any) {
       }
 
       // 1. Scene State Inputs
-      if (adminStates[chatId]) {
+      if (adminStates[chatId] && update.message) {
         const state = adminStates[chatId];
         
         if (messageText === 'لغو' || messageText === '/cancel') {
