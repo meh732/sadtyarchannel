@@ -13,6 +13,10 @@ export interface ConfigItem {
   lastChecked: string | null;
   isNpv?: boolean;
   createdAt?: string;
+  reports?: {
+    up: number;
+    down: number;
+  };
 }
 
 export interface ProxyItem {
@@ -68,6 +72,7 @@ export interface SystemSettings {
   autoTest: boolean;
   testBatchLimit?: number; // Batch limit for config testing (default: 100)
   autoExtractInterval: number; // in minutes
+  iranRelayProxy?: string; // Optional SOCKS5/HTTP relay proxy in Iran for 100% accurate Iran-net testing (e.g. socks5://185.x.x.x:1080)
   autoPost: AutoPostSettings;
   postMonitoringEnabled?: boolean;
   backupEnabled?: boolean;

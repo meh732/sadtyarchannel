@@ -29,12 +29,21 @@ function generateId(): string {
 }
 
 // --- Local Data Store Structure ---
+export interface NpvFileItem {
+  id: string;
+  filename: string;
+  content: string;
+  status: 'working' | 'failed' | 'untested' | 'checking';
+  createdAt: string;
+}
+
 interface DatabaseSchema {
   settings: SystemSettings;
   sources: SourceItem[];
   forceJoinChannels: ForceJoinChannel[];
   configs: ConfigItem[];
   proxies: ProxyItem[];
+  npvFiles?: NpvFileItem[];
   users: BotUser[];
   logs: BotLog[];
   postedMessages?: ChannelPost[];
@@ -110,6 +119,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   autoTest: true,
   testBatchLimit: 100,
   autoExtractInterval: 30, // minutes
+  iranRelayProxy: '',
   autoPost: DEFAULT_AUTO_POST,
   postMonitoringEnabled: false,
   backupEnabled: false,
@@ -132,6 +142,7 @@ let db: DatabaseSchema = {
   ],
   configs: [],
   proxies: [],
+  npvFiles: [],
   users: [],
   logs: [],
   postedMessages: []
@@ -158,6 +169,7 @@ function loadDatabase() {
         forceJoinChannels: Array.isArray(loaded.forceJoinChannels) ? loaded.forceJoinChannels : [],
         configs: Array.isArray(loaded.configs) ? loaded.configs : [],
         proxies: Array.isArray(loaded.proxies) ? loaded.proxies : [],
+        npvFiles: Array.isArray(loaded.npvFiles) ? loaded.npvFiles : [],
         users: Array.isArray(loaded.users) ? loaded.users : [],
         logs: Array.isArray(loaded.logs) ? loaded.logs : [],
         postedMessages: Array.isArray(loaded.postedMessages) ? loaded.postedMessages : []
@@ -820,6 +832,49 @@ function buildXrayConfig(rawConfig: string, localPort: number): { configJson: an
 
   if (!outbound) return null;
 
+  const outbounds: any[] = [outbound, { protocol: 'freedom', tag: 'direct' }];
+
+  if (db.settings.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
+    const relayUri = db.settings.iranRelayProxy.trim();
+    try {
+      const isSocks = relayUri.startsWith('socks5://') || relayUri.startsWith('socks://');
+      const cleanRelay = relayUri.replace(/^(socks5?|http):\/\//i, '');
+      let auth = '';
+      let hostPort = cleanRelay;
+      if (cleanRelay.includes('@')) {
+        [auth, hostPort] = cleanRelay.split('@');
+      }
+      const [rHost, rPortStr] = hostPort.split(':');
+      const rPort = parseInt(rPortStr, 10);
+      
+      if (rHost && rPort) {
+        let user = '', pass = '';
+        if (auth.includes(':')) {
+          [user, pass] = auth.split(':');
+        }
+        
+        const relayOutbound: any = {
+          tag: 'iran_relay',
+          protocol: isSocks ? 'socks' : 'http',
+          settings: {
+            servers: [
+              {
+                address: rHost,
+                port: rPort,
+                users: (user || pass) ? [{ user: user || '', pass: pass || '' }] : undefined
+              }
+            ]
+          }
+        };
+
+        (outbound as any).proxySettings = { tag: 'iran_relay' };
+        outbounds.push(relayOutbound);
+      }
+    } catch (e) {
+      // ignore parse errors
+    }
+  }
+
   const configJson = {
     log: { loglevel: 'none' },
     inbounds: [
@@ -830,7 +885,7 @@ function buildXrayConfig(rawConfig: string, localPort: number): { configJson: an
         settings: { udp: true }
       }
     ],
-    outbounds: [outbound, { protocol: 'freedom', tag: 'direct' }]
+    outbounds
   };
 
   return { configJson, protocol };
@@ -1053,7 +1108,7 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
     }
 
     // Tier 2: Check reachability from inside Iran via check-host API nodes
-    const iranCheck = await checkPortFromIran(details.host, details.port);
+    const iranCheck = await checkPortFromIran(details.host, details.port, details.sni);
     
     // If Iran nodes explicitly confirmed connection failed (and not rate limited), mark as blocked in Iran!
     if (!iranCheck.working && !iranCheck.rateLimited) {
@@ -1112,9 +1167,13 @@ function checkPort(host: string, port: number, timeout = 1800): Promise<{ workin
 /**
  * Robust port check from inside Iran utilizing check-host.net API
  */
-async function checkPortFromIran(host: string, port: number): Promise<{ working: boolean; latency: number; rateLimited?: boolean }> {
+async function checkPortFromIran(host: string, port: number, sni?: string): Promise<{ working: boolean; latency: number; rateLimited?: boolean }> {
   try {
-    const checkUrl = `https://check-host.net/check-tcp?host=${encodeURIComponent(`${host}:${port}`)}&node=ir5.node.check-host.net&node=ir6.node.check-host.net&node=ir7.node.check-host.net&node=ir8.node.check-host.net&node=ir9.node.check-host.net`;
+    const isStandardWebPort = port === 443 || port === 80;
+    const targetQuery = (sni && isStandardWebPort) 
+      ? `check-http?host=https://${sni}`
+      : `check-tcp?host=${encodeURIComponent(`${host}:${port}`)}`;
+    const checkUrl = `https://check-host.net/${targetQuery}&node=ir5.node.check-host.net&node=ir6.node.check-host.net&node=ir7.node.check-host.net&node=ir8.node.check-host.net&node=ir9.node.check-host.net`;
     const res = await fetch(checkUrl, {
       headers: { 'Accept': 'application/json' },
       signal: AbortSignal.timeout(5000)
@@ -2063,6 +2122,41 @@ async function executeAutoPost(): Promise<boolean> {
       disable_notification: !!settings.silentMode
     });
 
+    // Try to post an NPV file alongside the configs
+    if (db.npvFiles && db.npvFiles.length > 0) {
+      // Get a recent npv file
+      const npvFile = db.npvFiles[Math.floor(Math.random() * Math.min(db.npvFiles.length, 10))];
+      if (npvFile) {
+        try {
+          const formData = new FormData();
+          formData.append('chat_id', channelHandle);
+          const fileBuffer = Buffer.from(npvFile.content, 'base64');
+          const blob = new Blob([fileBuffer], { type: 'application/octet-stream' });
+          
+          let brandedFilename = npvFile.filename;
+          if (db.settings.branding) {
+            const cleanBranding = db.settings.branding.replace('@', '');
+            brandedFilename = brandedFilename.replace(/\.npv(t)?$/i, `_${cleanBranding}.npv$1`);
+          }
+          
+          formData.append('document', blob, brandedFilename);
+          const caption = `🌐 **فایل پیکربندی اختصاصی NapsternetV**\n\nجهت استفاده، این فایل را در نرم‌افزار ایمپورت کنید.\n\n🆔 ${db.settings.branding}`;
+          formData.append('caption', caption);
+          
+          if (inlineButtons.length > 0) {
+            formData.append('reply_markup', JSON.stringify({ inline_keyboard: inlineButtons }));
+          }
+
+          await fetch(`https://api.telegram.org/bot${db.settings.botToken}/sendDocument`, {
+            method: 'POST',
+            body: formData
+          });
+        } catch (err) {
+          console.error('Failed to send auto-post NPV file:', err);
+        }
+      }
+    }
+
     // Add to posted messages
     const postConfigs = selectedConfigs.map((c, idx) => ({
       id: c.id,
@@ -2395,7 +2489,8 @@ async function sendNpvFile(chatId: string | number, configText: string, filename
     
     // Clean content, preserving genuine NPVT signatures or clean V2Ray URIs
     const cleanContent = (configText || '').trim();
-    const blob = new Blob([cleanContent], { type: 'text/plain' });
+    const finalContent = cleanContent.startsWith('NPVT') ? cleanContent : `NPVT${cleanContent}`;
+    const blob = new Blob([finalContent], { type: 'text/plain' });
     formData.append('document', blob, filename);
     if (caption) {
       formData.append('caption', caption);
@@ -2766,6 +2861,33 @@ async function handleBotUpdate(update: any) {
       }
     };
 
+    // --- User Feedback Handler (Crowdsourced Telemetry from Iran Net) ---
+    if (callbackData && (callbackData.startsWith('fb_up_') || callbackData.startsWith('fb_down_'))) {
+      const isUp = callbackData.startsWith('fb_up_');
+      const confId = callbackData.replace(/^(fb_up_|fb_down_)/, '');
+      const config = db.configs.find(c => c.id === confId);
+
+      if (config) {
+        if (!config.reports) config.reports = { up: 0, down: 0 };
+        if (isUp) {
+          config.reports.up += 1;
+          await answerCallback('✅ با تشکر! بازخورد شما درباره فعال بودن کانفیگ ثبت شد.');
+        } else {
+          config.reports.down += 1;
+          await answerCallback('⚠️ گزارش قطعی شما ثبت شد. با تکرار گزارش کاربران، این کانفیگ غیرفعال می‌شود.');
+          
+          if (config.reports.down >= 2) {
+            config.status = 'failed';
+            addLog('warn', `کانفیگ [${config.remark || config.server}] بر اساس گزارش قطعی کاربران در شبکه ایران غیرفعال شد.`);
+          }
+        }
+        saveDatabase();
+      } else {
+        await answerCallback('اطلاعات کانفیگ یافت نشد.');
+      }
+      return;
+    }
+
     // --- Telegram Channel Posts & Document Attachment Scraper ---
     const channelPost = update.channel_post;
     if (channelPost) {
@@ -2788,12 +2910,30 @@ async function handleBotUpdate(update: any) {
             const fileInfo = await callTelegramApi('getFile', { file_id: cDoc.file_id });
             if (fileInfo?.file_path) {
               const fRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${fileInfo.file_path}`);
-              const fContent = await fRes.text();
-              const fExtracted = extractConfigsFromText(fContent, `پست کانال (${cDoc.file_name})`);
+              const arrayBuffer = await fRes.arrayBuffer();
+            const fContentText = Buffer.from(arrayBuffer).toString('utf-8');
+              
+              const isNpvFormat = cDoc.file_name.endsWith('.npvt') || cDoc.file_name.endsWith('.npv');
+              if (isNpvFormat) {
+                const fContentBase64 = Buffer.from(arrayBuffer).toString('base64');
+              if (!db.npvFiles) db.npvFiles = [];
+                db.npvFiles.unshift({
+                  id: Date.now().toString() + Math.floor(Math.random() * 1000),
+                  filename: cDoc.file_name,
+                  content: fContentBase64,
+                  status: 'untested',
+                  createdAt: new Date().toISOString()
+                });
+                addLog('success', `فایل ${cDoc.file_name} جهت تست و ارسال خودکار ذخیره شد.`);
+              }
+              
+              const fExtracted = extractConfigsFromText(fContentText, `پست کانال (${cDoc.file_name})`);
               if (fExtracted.length > 0) {
                 db.configs.unshift(...fExtracted);
                 saveDatabase();
-                addLog('success', `تعداد ${fExtracted.length} کانفیگ با موفقیت از فایل NPVT ارسالی در کانال (${cDoc.file_name}) استخراج شد.`);
+                addLog('success', `تعداد ${fExtracted.length} کانفیگ با موفقیت از فایل ارسالی در کانال (${cDoc.file_name}) استخراج شد.`);
+              } else if (isNpvFormat) {
+                saveDatabase();
               }
             }
           } catch (e: any) {
@@ -2811,16 +2951,37 @@ async function handleBotUpdate(update: any) {
           const fileInfo = await callTelegramApi('getFile', { file_id: uDoc.file_id });
           if (fileInfo?.file_path) {
             const fRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${fileInfo.file_path}`);
-            const fContent = await fRes.text();
-            const fExtracted = extractConfigsFromText(fContent, `فایل ارسالی (${uDoc.file_name})`);
+            const arrayBuffer = await fRes.arrayBuffer();
+            const fContentText = Buffer.from(arrayBuffer).toString('utf-8');
+            
+            const isNpvFormat = uDoc.file_name.endsWith('.npvt') || uDoc.file_name.endsWith('.npv');
+            if (isNpvFormat) {
+              const fContentBase64 = Buffer.from(arrayBuffer).toString('base64');
+              if (!db.npvFiles) db.npvFiles = [];
+              db.npvFiles.unshift({
+                id: Date.now().toString() + Math.floor(Math.random() * 1000),
+                filename: uDoc.file_name,
+                content: fContentBase64,
+                status: 'untested',
+                createdAt: new Date().toISOString()
+              });
+              saveDatabase();
+            }
+
+            const fExtracted = extractConfigsFromText(fContentText, `فایل ارسالی (${uDoc.file_name})`);
             if (fExtracted.length > 0) {
               db.configs.unshift(...fExtracted);
               saveDatabase();
-              addLog('success', `تعداد ${fExtracted.length} کانفیگ از فایل NPVT ارسالی (${uDoc.file_name}) استخراج گردید.`);
+              addLog('success', `تعداد ${fExtracted.length} کانفیگ از فایل ارسالی (${uDoc.file_name}) استخراج گردید.`);
               await callTelegramApi('sendMessage', {
                 chat_id: chatId,
-                text: `✅ **تعداد ${fExtracted.length} کانفیگ جدید با موفقیت از فایل ${uDoc.file_name} استخراج و ذخیره شد!**`,
+                text: `✅ **تعداد ${fExtracted.length} کانفیگ جدید با موفقیت از فایل ${uDoc.file_name} استخراج و ذخیره شد!**\n${isNpvFormat ? 'ضمناً این فایل جهت ارسال در کانال نیز ذخیره گردید.' : ''}`,
                 parse_mode: 'Markdown'
+              });
+            } else if (isNpvFormat) {
+              await callTelegramApi('sendMessage', {
+                chat_id: chatId,
+                text: `✅ فایل ${uDoc.file_name} دریافت و در سیستم ذخیره شد. (هیچ کانفیگ متنی مستقیمی جهت تست پینگ داخل آن یافت نشد).`
               });
             } else {
               await callTelegramApi('sendMessage', {
@@ -4262,15 +4423,32 @@ async function handleBotUpdate(update: any) {
         msg += `📍 جهت کپی روی هر کانفیگ یا کادر کپی یکجا ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
 
         const sponsorBtn = getSponsorChannelInlineButton();
-        const inlineKeyboard = sponsorBtn ? {
-          inline_keyboard: [[{ text: sponsorBtn.text, url: sponsorBtn.url }]]
-        } : undefined;
+        const feedbackRows: any[][] = [];
+        if (selected.length > 0) {
+          const upRow = selected.slice(0, 5).map((conf, idx) => ({
+            text: `👍 ${idx + 1} فعال`,
+            callback_data: `fb_up_${conf.id}`
+          }));
+          const downRow = selected.slice(0, 5).map((conf, idx) => ({
+            text: `👎 ${idx + 1} خراب`,
+            callback_data: `fb_down_${conf.id}`
+          }));
+          feedbackRows.push(upRow);
+          feedbackRows.push(downRow);
+        }
+
+        const inlineKeyboard = {
+          inline_keyboard: [
+            ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : []),
+            ...feedbackRows
+          ]
+        };
 
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
           text: msg,
           parse_mode: 'HTML',
-          reply_markup: inlineKeyboard || getReplyKeyboard(userId)
+          reply_markup: inlineKeyboard
         });
       } else {
         msg = `🌀 <b>فایل‌های کانفیگ اختصاصی NPV Tunnel صادر شد</b>\n\n`;
@@ -4278,7 +4456,18 @@ async function handleBotUpdate(update: any) {
         msg += `🔒 مخصوص کلاینت <b>NapsternetV</b> در گوشی‌های اندروید و آیفون\n`;
         msg += `⚡️ اتصال: همراه اول، ایرانسل، مخابرات و رایتل\n`;
         msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
-        msg += `📥 فایل‌های کانفیگ با پسوند <b>.npvt</b> در زیر برای شما ارسال شدند. کافیست آن‌ها را دانلود کرده و مستقیماً در نرم‌افزار NapsternetV ایمپورت کنید (از بخش Configs دکمه مثبت بالا را زده و گزینه Import npvt config file یا Import npv config file را انتخاب کنید).`;
+        
+        let npvSelection = [];
+        if (db.npvFiles && db.npvFiles.length > 0) {
+          const shuffledNpvs = [...db.npvFiles].sort(() => 0.5 - Math.random());
+          npvSelection = shuffledNpvs.slice(0, Math.min(qty, shuffledNpvs.length));
+        }
+
+        if (npvSelection.length === 0) {
+          msg += `❌ متأسفانه در حال حاضر فایل NapsternetV معتبری در آرشیو ربات وجود ندارد. لطفا بعدا تلاش کنید.`;
+        } else {
+          msg += `📥 تعداد ${npvSelection.length} فایل کانفیگ (NapsternetV) در زیر برای شما ارسال شدند. کافیست آن‌ها را دانلود کرده و مستقیماً در نرم‌افزار ایمپورت کنید.`;
+        }
 
         const sponsorBtn = getSponsorChannelInlineButton();
         const inlineKeyboard = sponsorBtn ? {
@@ -4292,15 +4481,38 @@ async function handleBotUpdate(update: any) {
           reply_markup: inlineKeyboard || getReplyKeyboard(userId)
         });
 
-        // Send actual .npvt files!
-        for (let i = 0; i < selected.length; i++) {
-          const conf = selected[i];
-          const npvConfig = convertV2rayToNpv(conf.raw, db.settings.branding);
-          const cleanBranding = (db.settings.branding || 'NPV').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_');
-          const filename = `${cleanBranding}_Config_${i + 1}.npvt`;
-          const latencyText = conf.latency ? `\n⚡ پینگ: ${conf.latency}ms` : '';
-          const caption = `🌀 فایل کانفیگ NPV Tunnel شماره ${i + 1} [${conf.protocol.toUpperCase()}]${latencyText}\n🔒 مخصوص وارد کردن در نرم‌افزار NapsternetV`;
-          await sendNpvFile(chatId, npvConfig, filename, caption, inlineKeyboard);
+        if (npvSelection.length > 0) {
+          for (let i = 0; i < npvSelection.length; i++) {
+            const npvFile = npvSelection[i];
+            
+            const cleanBranding = (db.settings.branding || 'NPV').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_');
+            let brandedFilename = npvFile.filename;
+            if (db.settings.branding) {
+              brandedFilename = brandedFilename.replace(/\.npv(t)?$/i, `_${cleanBranding}.npv$1`);
+            }
+            
+            const caption = `🌀 فایل کانفیگ NPV Tunnel شماره ${i + 1}\n🔒 مخصوص وارد کردن در نرم‌افزار NapsternetV\n🆔 ${db.settings.branding}`;
+            
+            try {
+              const formData = new FormData();
+              formData.append('chat_id', String(chatId));
+              const fileBuffer = Buffer.from(npvFile.content, 'base64');
+              const blob = new Blob([fileBuffer], { type: 'application/octet-stream' });
+              formData.append('document', blob, brandedFilename);
+              formData.append('caption', caption);
+              
+              if (inlineKeyboard) {
+                formData.append('reply_markup', JSON.stringify(inlineKeyboard));
+              }
+
+              await fetch(`https://api.telegram.org/bot${db.settings.botToken}/sendDocument`, {
+                method: 'POST',
+                body: formData
+              });
+            } catch (err) {
+              console.error('Failed to send genuine NPV file to user:', err);
+            }
+          }
         }
       }
 

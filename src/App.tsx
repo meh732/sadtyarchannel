@@ -2303,6 +2303,25 @@ export default function App() {
                         </p>
                       </div>
 
+                      {/* Iran Relay Proxy Input */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                          <span>پروکسی/واسط تست از داخل ایران (Iran Relay Proxy - اختیاری)</span>
+                          <span className="text-[10px] text-emerald-600 font-semibold">تست ۱۰۰٪ واقعی از داخل نت ایران</span>
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="مثال: socks5://user:pass@185.x.x.x:1080 یا http://185.x.x.x:3128"
+                          value={settings.iranRelayProxy || ''}
+                          onChange={(e) => setSettings(prev => ({ ...prev, iranRelayProxy: e.target.value }))}
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-mono text-left focus:border-indigo-500 focus:outline-none"
+                          dir="ltr"
+                        />
+                        <p className="text-[10px] text-slate-400">
+                          در صورت وارد کردن آدرس SOCKS5 یا HTTP پروکسی/سرور داخل ایران، تمام تست‌های دست‌تکانی Xray از مسیر این پروکسی و دقیقاً از داخل ایران صورت می‌گیرد.
+                        </p>
+                      </div>
+
                       {/* Interval Input */}
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
