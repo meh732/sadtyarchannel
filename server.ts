@@ -193,11 +193,34 @@ function loadDatabase() {
   }
 }
 
-function saveDatabase() {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
-  } catch (err) {
-    console.error('Failed to save database:', err);
+let saveTimer: NodeJS.Timeout | null = null;
+let savePending = false;
+
+function saveDatabase(immediate = false) {
+  if (immediate) {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    savePending = false;
+    try {
+      fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
+    } catch (err) {
+      console.error('Failed to save database immediately:', err);
+    }
+    return;
+  }
+
+  savePending = true;
+  if (!saveTimer) {
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      if (savePending) {
+        savePending = false;
+        try {
+          fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
+        } catch (err) {
+          console.error('Failed to save database:', err);
+        }
+      }
+    }, 400);
   }
 }
 
@@ -1088,27 +1111,31 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // Tier 1: Direct TCP socket / TLS handshake check for high reliability & fast latency test
+    // Tier 1: Fast direct TCP socket / TLS handshake check
     let handCheck = { working: false, latency: 999 };
     if (details.tls) {
-      handCheck = await checkTlsHandshake(details.host, details.port, details.sni, 2500);
+      handCheck = await checkTlsHandshake(details.host, details.port, details.sni, 2000);
     }
     if (!handCheck.working) {
-      handCheck = await checkPort(details.host, details.port, 2500);
+      handCheck = await checkPort(details.host, details.port, 2000);
     }
 
-    let isWorking = handCheck.working;
+    // If direct TCP socket / TLS handshake failed, the server is unreachable. Skip Xray to save CPU & resources!
+    if (!handCheck.working) {
+      return { working: false, latency: 999 };
+    }
+
+    let isWorking = true;
     let finalLatency = handCheck.latency;
 
-    // Tier 2: Real end-to-end handshake & proxy test via Xray core if available
+    // Tier 2: Real end-to-end proxy verification via Xray core if available
     const xrayPath = path.join(process.cwd(), 'bin/xray');
     if (fs.existsSync(xrayPath)) {
       const xrayCheck = await checkConfigWithXray(rawConfig);
       if (xrayCheck.working) {
-        isWorking = true;
-        if (xrayCheck.latency < finalLatency || finalLatency === 999) {
-          finalLatency = xrayCheck.latency;
-        }
+        finalLatency = xrayCheck.latency;
+      } else {
+        isWorking = false;
       }
     }
 
@@ -1929,7 +1956,7 @@ async function testProxiesBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 15;
+  const CONCURRENCY = 10;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
@@ -1954,7 +1981,7 @@ async function testProxiesBatch(ids: string[]) {
     }));
 
     saveDatabase();
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 25));
   }
 
   // Final sanity cleanup for any proxy still in 'checking' status in this batch
@@ -1965,7 +1992,7 @@ async function testProxiesBatch(ids: string[]) {
     }
   }
 
-  saveDatabase();
+  saveDatabase(true);
   addLog('success', `پایان تست اتصال پورت پروکسی: تعداد ${workingCount} فعال و ${failedCount} غیرفعال شناسایی شدند.`);
 }
 
@@ -1987,7 +2014,7 @@ async function testConfigsBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 15;
+  const CONCURRENCY = 10;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
@@ -1996,7 +2023,7 @@ async function testConfigsBatch(ids: string[]) {
 
       const checkResult = await withHardTimeout(
         () => checkConfigFully(config.raw),
-        20000,
+        10000,
         { working: false, latency: 999 }
       );
       
@@ -2013,7 +2040,7 @@ async function testConfigsBatch(ids: string[]) {
     }));
 
     saveDatabase();
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 25));
   }
 
   // Final sanity cleanup for any config still in 'checking' status in this batch
@@ -2024,7 +2051,7 @@ async function testConfigsBatch(ids: string[]) {
     }
   }
 
-  saveDatabase();
+  saveDatabase(true);
   addLog('success', `پایان تست اتصال پورت: تعداد ${workingCount} فعال و ${failedCount} غیرفعال شناسایی شدند.`);
 }
 
@@ -2084,6 +2111,13 @@ function getFlagEmoji(countryCode: string): string {
   return String.fromCodePoint(...codePoints);
 }
 
+function escapeHtml(str: string): string {
+  return (str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 // --- Auto-Posting Logic ---
 async function executeAutoPost(): Promise<boolean> {
   const settings = db.settings.autoPost;
@@ -2100,51 +2134,74 @@ async function executeAutoPost(): Promise<boolean> {
     addLog('info', `در حال آماده‌سازی و ارسال پست خودکار به کانال ${settings.targetChannel}...`);
 
     // Get configs
-    const workingConfigs = db.configs.filter(c => c.status === 'working');
-    const availableConfigs = workingConfigs;
+    const configLimit = (typeof settings.configCount === 'number' && settings.configCount >= 0) ? settings.configCount : 1;
+    let availableConfigs = db.configs.filter(c => c.status === 'working');
+    if (availableConfigs.length < configLimit) {
+      const untested = db.configs.filter(c => c.status === 'untested');
+      availableConfigs = [...availableConfigs, ...untested];
+    }
+    if (availableConfigs.length < configLimit) {
+      const otherConfigs = db.configs.filter(c => c.status !== 'working' && c.status !== 'untested');
+      availableConfigs = [...availableConfigs, ...otherConfigs];
+    }
     const shuffledConfigs = [...availableConfigs].sort(() => 0.5 - Math.random());
-    const configLimit = typeof settings.configCount === 'number' ? settings.configCount : 1;
-    const selectedConfigs = shuffledConfigs.slice(0, Math.min(configLimit, shuffledConfigs.length));
+    const selectedConfigs = configLimit === 0 ? [] : shuffledConfigs.slice(0, Math.min(configLimit, shuffledConfigs.length));
 
     // Get proxies
-    const workingProxies = (db.proxies || []).filter(p => p.status === 'working');
-    const availableProxies = workingProxies;
+    const proxyLimit = (typeof settings.proxyCount === 'number' && settings.proxyCount >= 0) ? settings.proxyCount : 1;
+    let availableProxies = (db.proxies || []).filter(p => p.status === 'working');
+    if (availableProxies.length < proxyLimit) {
+      const untestedProxies = (db.proxies || []).filter(p => p.status === 'untested');
+      availableProxies = [...availableProxies, ...untestedProxies];
+    }
+    if (availableProxies.length < proxyLimit) {
+      const otherProxies = (db.proxies || []).filter(p => p.status !== 'working' && p.status !== 'untested');
+      availableProxies = [...availableProxies, ...otherProxies];
+    }
     const shuffledProxies = [...availableProxies].sort(() => 0.5 - Math.random());
-    const proxyLimit = typeof settings.proxyCount === 'number' ? settings.proxyCount : 1;
-    const selectedProxies = shuffledProxies.slice(0, Math.min(proxyLimit, shuffledProxies.length));
+    const selectedProxies = proxyLimit === 0 ? [] : shuffledProxies.slice(0, Math.min(proxyLimit, shuffledProxies.length));
 
     if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
-      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی سالمی در دیتابیس یافت نشد (باید وضعیت آنها فعال/سالم باشد).');
+      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی در دیتابیس یافت نشد.');
       return false;
     }
 
-    let text = `${settings.customText || '💎 کانفیگ‌ها و پروکسی‌های جدید تقدیم به شما:'}\n\n`;
-  
-    // Append configs
-    for (let i = 0; i < selectedConfigs.length; i++) {
-      const conf = selectedConfigs[i];
-      const loc = await getIpLocation(conf.server);
-      const flag = getFlagEmoji(loc.countryCode);
-      const pingText = conf.latency ? `پینگ: ${conf.latency}ms` : 'پورت: فعال';
-      
-      text += `🟢 **کانفیگ شماره ${i + 1}** [${conf.protocol.toUpperCase()}]\n`;
-      text += `🔹 ${pingText} | لوکیشن: ${loc.country} ${flag}\n`;
-      const brandedRaw = applyBrandingToConfig(conf.raw, db.settings.branding);
-      text += `\`${brandedRaw}\`\n\n`;
+    let text = `🚀 <b>${escapeHtml(settings.customText || '💎 کانفیگ‌ها و پروکسی‌های جدید تقدیم به شما:')}</b>\n\n`;
+
+    if (selectedConfigs.length > 0) {
+      text += `📥 <b>پک ${selectedConfigs.length} کانفیگ جدید V2Ray:</b>\n`;
+      if (selectedConfigs.length <= 5) {
+        for (let i = 0; i < selectedConfigs.length; i++) {
+          const conf = selectedConfigs[i];
+          const loc = await getIpLocation(conf.server);
+          const flag = getFlagEmoji(loc.countryCode);
+          const pingText = conf.latency ? `پینگ: ${conf.latency}ms` : 'فعال 🟢';
+          text += `🔹 کانفیگ ${i + 1} [${conf.protocol.toUpperCase()}] | ${pingText} | ${loc.country} ${flag}\n`;
+        }
+      }
+
+      const allBrandedCombined = selectedConfigs
+        .map(conf => applyBrandingToConfig(conf.raw, db.settings.branding))
+        .join('\n');
+
+      text += `\n📋 <b>کپی یکجای تمامی ${selectedConfigs.length} کانفیگ (جهت ایمپورت روی کادر زیر لمس کنید):</b>\n`;
+      text += `<blockquote expandable><code>${escapeHtml(allBrandedCombined)}</code></blockquote>\n\n`;
     }
 
     // Append proxies
     if (selectedProxies.length > 0) {
-      text += `🔌 **لیست پروکسی‌های جدید تلگرام:**\n`;
+      text += `🔌 <b>لیست پروکسی‌های جدید تلگرام:</b>\n`;
       for (let i = 0; i < selectedProxies.length; i++) {
         const proxy = selectedProxies[i];
         const loc = await getIpLocation(proxy.server);
         const flag = getFlagEmoji(loc.countryCode);
-        const pingText = proxy.latency ? `پینگ: ${proxy.latency}ms` : 'پورت: فعال';
-        text += `🔹 پروکسی ${proxy.type.toUpperCase()} | ${pingText} | کشور: ${loc.country} ${flag}\n`;
+        const pingText = proxy.latency ? `پینگ: ${proxy.latency}ms` : 'فعال 🟢';
+        text += `🔹 پروکسی ${proxy.type.toUpperCase()} | ${pingText} | ${loc.country} ${flag}\n`;
       }
-      text += `\n👇 برای اتصال، روی دکمه‌های شیشه‌ای زیر ضربه بزنید:\n`;
+      text += `\n👇 برای اتصال به پروکسی‌ها، روی دکمه‌های شیشه‌ای زیر کلیک کنید:\n`;
     }
+
+    text += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
 
     const inlineButtons: any[] = [];
     selectedProxies.forEach((p, idx) => {
@@ -2175,7 +2232,7 @@ async function executeAutoPost(): Promise<boolean> {
     const sentMsg = await callTelegramApi('sendMessage', {
       chat_id: channelHandle,
       text: text,
-      parse_mode: 'Markdown',
+      parse_mode: 'HTML',
       reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
       disable_notification: !!settings.silentMode
     });
@@ -2199,8 +2256,9 @@ async function executeAutoPost(): Promise<boolean> {
           
           formData.append('document', blob, brandedFilename);
           const fileType = npvFile.filename.endsWith('.ovpn') ? 'OpenVPN' : 'NapsternetV';
-          const caption = `🌐 **فایل پیکربندی اختصاصی ${fileType}**\n\nجهت استفاده، این فایل را در نرم‌افزار ایمپورت کنید.\n\n🆔 ${db.settings.branding || ''}`;
+          const caption = `🌐 <b>فایل پیکربندی اختصاصی ${fileType}</b>\n\nجهت استفاده، این فایل را در نرم‌افزار ایمپورت کنید.\n\n🆔 ${escapeHtml(db.settings.branding || '')}`;
           formData.append('caption', caption);
+          formData.append('parse_mode', 'HTML');
           
           if (inlineButtons.length > 0) {
             formData.append('reply_markup', JSON.stringify({ inline_keyboard: inlineButtons }));
@@ -2217,8 +2275,7 @@ async function executeAutoPost(): Promise<boolean> {
           console.error('Failed to send auto-post NPV file:', err);
         }
       }
-
-        }
+    }
 
     // Add to posted messages
     const postConfigs = selectedConfigs.map((c, idx) => ({
@@ -2266,33 +2323,40 @@ async function executeAutoPost(): Promise<boolean> {
 // --- Dynamic Post Monitoring & Text Regeneration ---
 async function generatePostText(post: ChannelPost): Promise<string> {
   const ap = db.settings.autoPost;
-  let text = `${ap.customText || '💎 کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده ما تقدیم به شما:'}\n\n`;
+  let text = `🚀 <b>${escapeHtml(ap.customText || '💎 کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده ما تقدیم به شما:')}</b>\n\n`;
   
-  for (let i = 0; i < post.configs.length; i++) {
-    const conf = post.configs[i];
-    // Find latest live status from db
-    const dbConf = db.configs.find(c => c.id === conf.id || c.raw === conf.raw);
-    const status = dbConf ? dbConf.status : 'failed';
-    const latency = dbConf ? dbConf.latency : null;
-    
-    const loc = await getIpLocation(conf.server);
-    const flag = getFlagEmoji(loc.countryCode);
-    
-    if (status === 'working') {
-      const pingText = latency ? `پینگ: ${latency}ms` : 'پورت: فعال';
-      text += `🟢 **کانفیگ شماره ${conf.index}** [${conf.protocol.toUpperCase()}]\n`;
-      text += `🔹 ${pingText} | لوکیشن: ${loc.country} ${flag}\n`;
-    } else {
-      text += `🔴 **کانفیگ شماره ${conf.index}** [${conf.protocol.toUpperCase()}] (غیرفعال ❌)\n`;
-      text += `🔹 لوکیشن: ${loc.country} ${flag}\n`;
+  if (post.configs && post.configs.length > 0) {
+    text += `📥 <b>پک ${post.configs.length} کانفیگ V2Ray:</b>\n`;
+    if (post.configs.length <= 5) {
+      for (let i = 0; i < post.configs.length; i++) {
+        const conf = post.configs[i];
+        const dbConf = db.configs.find(c => c.id === conf.id || c.raw === conf.raw);
+        const status = dbConf ? dbConf.status : 'failed';
+        const latency = dbConf ? dbConf.latency : null;
+        
+        const loc = await getIpLocation(conf.server);
+        const flag = getFlagEmoji(loc.countryCode);
+        
+        if (status === 'working') {
+          const pingText = latency ? `پینگ: ${latency}ms` : 'فعال 🟢';
+          text += `🟢 کانفیگ ${conf.index} [${conf.protocol.toUpperCase()}] | ${pingText} | ${loc.country} ${flag}\n`;
+        } else {
+          text += `🔴 کانفیگ ${conf.index} [${conf.protocol.toUpperCase()}] | (غیرفعال ❌) | ${loc.country} ${flag}\n`;
+        }
+      }
     }
-    const brandedRaw = applyBrandingToConfig(conf.raw, db.settings.branding);
-    text += `\`${brandedRaw}\`\n\n`;
+
+    const allBrandedCombined = post.configs
+      .map(conf => applyBrandingToConfig(conf.raw, db.settings.branding))
+      .join('\n');
+
+    text += `\n📋 <b>کپی یکجای تمامی ${post.configs.length} کانفیگ (جهت ایمپورت روی کادر زیر لمس کنید):</b>\n`;
+    text += `<blockquote expandable><code>${escapeHtml(allBrandedCombined)}</code></blockquote>\n\n`;
   }
 
   // Proxies
   if (post.proxies && post.proxies.length > 0) {
-    text += `🔌 **لیست پروکسی‌های جدید تلگرام:**\n`;
+    text += `🔌 <b>لیست پروکسی‌های جدید تلگرام:</b>\n`;
     for (let i = 0; i < post.proxies.length; i++) {
       const p = post.proxies[i];
       const dbProxy = db.proxies.find(pr => pr.id === p.id || pr.raw === p.raw);
@@ -2303,14 +2367,16 @@ async function generatePostText(post: ChannelPost): Promise<string> {
       const flag = getFlagEmoji(loc.countryCode);
 
       if (status === 'working') {
-        const pingText = latency ? `پینگ: ${latency}ms` : 'پورت: فعال';
-        text += `🔹 پروکسی ${p.type.toUpperCase()} | ${pingText} | کشور: ${loc.country} ${flag}\n`;
+        const pingText = latency ? `پینگ: ${latency}ms` : 'فعال 🟢';
+        text += `🟢 پروکسی ${p.type.toUpperCase()} | ${pingText} | ${loc.country} ${flag}\n`;
       } else {
-        text += `🔹 پروکسی ${p.type.toUpperCase()} | (غیرفعال ❌) | کشور: ${loc.country} ${flag}\n`;
+        text += `🔴 پروکسی ${p.type.toUpperCase()} | (غیرفعال ❌) | ${loc.country} ${flag}\n`;
       }
     }
-    text += `\n👇 برای اتصال، روی دکمه‌های شیشه‌ای زیر ضربه بزنید:\n`;
+    text += `\n👇 برای اتصال، روی دکمه‌های شیشه‌ای زیر کلیک کنید:\n`;
   }
+
+  text += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
 
   return text;
 }
@@ -2389,7 +2455,7 @@ async function monitorChannelPosts() {
           chat_id: channelHandle,
           message_id: post.messageId,
           text: newText,
-          parse_mode: 'Markdown',
+          parse_mode: 'HTML',
           reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined
         });
       } catch (err: any) {
@@ -2706,7 +2772,11 @@ function getReplyKeyboard(userId: string | number) {
 
   const keyboard: any[][] = [
     [
-      { text: '📥 دریافت کانفیگ ویتوری ⚡', style: 'success' }
+      { text: '🔥 دریافت یکجای ۵۰ کانفیگ ⭐', style: 'success' },
+      { text: '⚡️ دریافت یکجای ۱۵ کانفیگ', style: 'success' }
+    ],
+    [
+      { text: '📥 دریافت کانفیگ ویتوری ⚡', style: 'primary' }
     ],
     [
       { text: '🌀 فایل .NPVT', style: 'success' },
@@ -2960,7 +3030,11 @@ async function handleBotUpdate(update: any) {
     }
 
     // --- Map persistent custom keyboard buttons to standard commands/callbacks ---
-    if (cleanMsg.includes('دریافت کانفیگ ویتوری') || cleanMsg.includes('ویتوری')) {
+    if (cleanMsg.includes('۵۰ کانفیگ') || cleanMsg.includes('پک ۵۰')) {
+      callbackData = 'v2ray_qty_50';
+    } else if (cleanMsg.includes('۱۵ کانفیگ') || cleanMsg.includes('پک ۱۵') || cleanMsg.includes('15 کانفیگ')) {
+      callbackData = 'v2ray_qty_15';
+    } else if (cleanMsg.includes('دریافت کانفیگ ویتوری') || cleanMsg.includes('ویتوری')) {
       callbackData = 'get_v2ray_configs';
     } else if (cleanMsg.includes('.NPVT')) {
       callbackData = 'get_file_npvt';
@@ -3014,21 +3088,27 @@ async function handleBotUpdate(update: any) {
       if (cached && (Date.now() - cached.checkedAt < 30000) && cached.hasJoined) {
         userHasJoinedAll = true;
       } else {
-        for (const channel of requiredChannels) {
-          try {
+        const checkResults = await Promise.allSettled(
+          requiredChannels.map(async (channel) => {
             const handle = channel.username.startsWith('@') ? channel.username : `@${channel.username}`;
-            const member = await callTelegramApi('getChatMember', {
-              chat_id: handle,
-              user_id: userId
-            });
+            const member = await withHardTimeout(
+              () => callTelegramApi('getChatMember', { chat_id: handle, user_id: userId }),
+              3000,
+              null
+            );
             const validStatus = ['creator', 'administrator', 'member'];
-            if (!member || !validStatus.includes(member.status)) {
+            return {
+              channel,
+              joined: member && validStatus.includes(member.status)
+            };
+          })
+        );
+        for (const res of checkResults) {
+          if (res.status === 'fulfilled') {
+            if (!res.value.joined) {
               userHasJoinedAll = false;
-              notJoinedList.push(channel);
+              notJoinedList.push(res.value.channel);
             }
-          } catch (e) {
-            // If bot is not admin, it might throw error. In that case, bypass or log
-            console.error(`Force join check error for ${channel.username}:`, e);
           }
         }
         joinChecksCache[userId] = {
@@ -3039,7 +3119,7 @@ async function handleBotUpdate(update: any) {
     }
 
     // --- Callback query response wrapper ---
-    const answerCallback = async (text: string, showAlert = false) => {
+    const answerCallback = async (text: string = '', showAlert = false) => {
       if (callbackQueryId) {
         try {
           await callTelegramApi('answerCallbackQuery', {
@@ -4237,21 +4317,83 @@ async function handleBotUpdate(update: any) {
       }
 
       if (callbackData === 'admin_ap_conf_count') {
-        let count = (db.settings.autoPost.configCount || 0) + 1;
-        if (count > 2) count = 0;
+        const confKeyboard = [
+          [
+            { text: '1 عدد', callback_data: 'admin_ap_set_conf_1' },
+            { text: '2 عدد', callback_data: 'admin_ap_set_conf_2' },
+            { text: '3 عدد', callback_data: 'admin_ap_set_conf_3' }
+          ],
+          [
+            { text: '5 عدد', callback_data: 'admin_ap_set_conf_5' },
+            { text: '10 عدد', callback_data: 'admin_ap_set_conf_10' },
+            { text: '15 عدد', callback_data: 'admin_ap_set_conf_15' }
+          ],
+          [
+            { text: '20 عدد', callback_data: 'admin_ap_set_conf_20' },
+            { text: '30 عدد', callback_data: 'admin_ap_set_conf_30' },
+            { text: '50 عدد', callback_data: 'admin_ap_set_conf_50' }
+          ],
+          [
+            { text: '0 (بدون کانفیگ)', callback_data: 'admin_ap_set_conf_0' }
+          ],
+          [
+            { text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }
+          ]
+        ];
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: '📦 **انتخاب تعداد کانفیگ V2Ray جهت ارسال در پست خودکار کانال:**',
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: confKeyboard }
+        });
+        await answerCallback();
+        return;
+      }
+
+      if (callbackData.startsWith('admin_ap_set_conf_')) {
+        const count = parseInt(callbackData.replace('admin_ap_set_conf_', '')) || 0;
         db.settings.autoPost.configCount = count;
         saveDatabase();
-        await answerCallback(`تعداد کانفیگ: ${count} عدد`);
+        await answerCallback(`تعداد کانفیگ به ${count} عدد تغییر یافت.`);
         await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
         return;
       }
 
       if (callbackData === 'admin_ap_proxy_count') {
-        let count = (db.settings.autoPost.proxyCount || 0) + 1;
-        if (count > 2) count = 0;
+        const proxyKeyboard = [
+          [
+            { text: '1 عدد', callback_data: 'admin_ap_set_proxy_1' },
+            { text: '2 عدد', callback_data: 'admin_ap_set_proxy_2' },
+            { text: '3 عدد', callback_data: 'admin_ap_set_proxy_3' }
+          ],
+          [
+            { text: '5 عدد', callback_data: 'admin_ap_set_proxy_5' },
+            { text: '10 عدد', callback_data: 'admin_ap_set_proxy_10' },
+            { text: '15 عدد', callback_data: 'admin_ap_set_proxy_15' }
+          ],
+          [
+            { text: '20 عدد', callback_data: 'admin_ap_set_proxy_20' },
+            { text: '0 (بدون پروکسی)', callback_data: 'admin_ap_set_proxy_0' }
+          ],
+          [
+            { text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }
+          ]
+        ];
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: '🔌 **انتخاب تعداد پروکسی تلگرام جهت ارسال در پست خودکار کانال:**',
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: proxyKeyboard }
+        });
+        await answerCallback();
+        return;
+      }
+
+      if (callbackData.startsWith('admin_ap_set_proxy_')) {
+        const count = parseInt(callbackData.replace('admin_ap_set_proxy_', '')) || 0;
         db.settings.autoPost.proxyCount = count;
         saveDatabase();
-        await answerCallback(`تعداد پروکسی: ${count} عدد`);
+        await answerCallback(`تعداد پروکسی به ${count} عدد تغییر یافت.`);
         await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
         return;
       }
@@ -4470,7 +4612,10 @@ async function handleBotUpdate(update: any) {
     const startKeyboard = {
       inline_keyboard: [
         [
-          { text: '📥 دریافت کانفیگ V2Ray (ویتوری)', callback_data: 'get_v2ray_configs', style: 'success' }
+          { text: '🔥 🚀 دریافت یکجای ۵۰ کانفیگ (توصیه ویژه ⭐)', callback_data: 'v2ray_qty_50', style: 'success' }
+        ],
+        [
+          { text: '📥 انتخاب تعداد دلخواه کانفیگ V2Ray', callback_data: 'get_v2ray_configs', style: 'primary' }
         ],
         [
           { text: '🌀 فایل NPVT', callback_data: 'get_file_npvt', style: 'success' },
@@ -4506,12 +4651,17 @@ async function handleBotUpdate(update: any) {
       const qtyKeyboard = {
         inline_keyboard: [
           [
-            { text: '1️⃣ یک عدد', callback_data: 'v2ray_qty_1', style: 'success' },
-            { text: '2️⃣ دو عدد', callback_data: 'v2ray_qty_2', style: 'success' }
+            { text: '🔥 🚀 دریافت یکجای ۵۰ کانفیگ (توصیه شده ⭐)', callback_data: 'v2ray_qty_50', style: 'success' }
           ],
           [
-            { text: '3️⃣ سه عدد', callback_data: 'v2ray_qty_3', style: 'primary' },
-            { text: '5️⃣ پنج عدد', callback_data: 'v2ray_qty_5', style: 'primary' }
+            { text: '⚡️ دریافت پک ۳۰ تایی', callback_data: 'v2ray_qty_30', style: 'success' },
+            { text: '⚡️ دریافت پک ۱۵ تایی', callback_data: 'v2ray_qty_15', style: 'success' }
+          ],
+          [
+            { text: '🔟 ۱۰ عدد', callback_data: 'v2ray_qty_10', style: 'primary' },
+            { text: '5️⃣ ۵ عدد', callback_data: 'v2ray_qty_5', style: 'primary' },
+            { text: '3️⃣ ۳ عدد', callback_data: 'v2ray_qty_3', style: 'primary' },
+            { text: '1️⃣ ۱ عدد', callback_data: 'v2ray_qty_1', style: 'primary' }
           ],
           [
             { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }
@@ -4519,9 +4669,14 @@ async function handleBotUpdate(update: any) {
         ]
       };
       
+      const explText = `📥 **دریافت کانفیگ‌های V2Ray (ویتوری)**\n\n` +
+        `💡 **توصیه بسیار مهم جهت اتصال ۱۰۰٪ سالم:**\n` +
+        `با توجه به اختلاف فیلترینگ در اپراتورهای مختلف (همراه اول، ایرانسل، مخابرات، رایتل و...) و متغیر بودن تست‌ها، **حتماً گزینه‌های پک ۱۵، ۳۰ یا ۵۰ کانفیگی (توصیه شده ⭐)** را انتخاب کنید تا با ایمپورت یکجای کانفیگ‌ها در برنامه، بیشترین شانس اتصال پرسرعت و بدون قطعی را داشته باشید!\n\n` +
+        `لطفاً تعداد کانفیگ‌های درخواستی را انتخاب کنید:`;
+
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
-        text: '📥 **دریافت کانفیگ‌های V2Ray (ویتوری)**\n\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید تا برای اپراتورهای همراه اول، ایرانسل و مخابرات بهترین‌ها ارسال گردند:',
+        text: explText,
         parse_mode: 'Markdown',
         reply_markup: qtyKeyboard
       });
@@ -4612,19 +4767,66 @@ async function handleBotUpdate(update: any) {
       // Shuffle and pick requested quantity
       const shuffled = [...list].sort(() => 0.5 - Math.random());
       const selected = shuffled.slice(0, qty);
+
+      // Handle large batch packs (e.g. 10, 15, 30, 50) cleanly with expandable quotes
+      if (selected.length > 5) {
+        let intro = `🚀 <b>پک اختصاصی ${selected.length} تایی کانفیگ‌های V2Ray (پیشنهاد ویژه ⭐)</b>\n\n`;
+        intro += `🔔 تعداد کانفیگ‌ها: <b>${selected.length} عدد</b>\n`;
+        intro += `⚡️ پشتیبانی کامل: همراه اول، ایرانسل، مخابرات و رایتل\n`;
+        intro += `🏷️ برندینگ انحصاری: <code>${escapeHtml(db.settings.branding)}</code>\n\n`;
+        intro += `💡 <b>چرا استفاده از این پک ${selected.length}تایی برتر است؟</b>\n`;
+        intro += `با توجه به تفاوت‌های شبکه اپراتورها و فیلترینگ منطقه‌ای، تمام کانفیگ‌ها در کادر خلاصه‌شده آکاردئونی زیک قرار داده شده‌اند تا پیام طولانی نشود.\n\n`;
+        intro += `👇 <b>جهت کپی، کافیست روی کادر زیر لمس کنید:</b>`;
+
+        const sponsorBtn = getSponsorChannelInlineButton();
+        const inlineKeyboard = sponsorBtn ? {
+          inline_keyboard: [[{ text: sponsorBtn.text, url: sponsorBtn.url }]]
+        } : undefined;
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: intro,
+          parse_mode: 'HTML',
+          reply_markup: inlineKeyboard
+        });
+
+        // Split into chunks of 15 configs so each fits nicely inside a expandable quote
+        const CHUNK_SIZE = 15;
+        for (let i = 0; i < selected.length; i += CHUNK_SIZE) {
+          const chunk = selected.slice(i, i + CHUNK_SIZE);
+          const chunkNum = Math.floor(i / CHUNK_SIZE) + 1;
+          const totalChunks = Math.ceil(selected.length / CHUNK_SIZE);
+
+          const combinedBranded = chunk
+            .map(conf => applyBrandingToConfig(conf.raw, db.settings.branding))
+            .join('\n');
+
+          let chunkMsg = `📋 <b>بخش ${chunkNum} از ${totalChunks} (کانفیگ‌های ${i + 1} تا ${i + chunk.length}):</b>\n`;
+          chunkMsg += `<blockquote expandable><code>${escapeHtml(combinedBranded)}</code></blockquote>\n\n`;
+          chunkMsg += `📍 جهت کپی یکجای این بخش روی کادر فوق لمس کنید و در برنامه Import from clipboard نمائید.`;
+
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: chunkMsg,
+            parse_mode: 'HTML'
+          });
+          await new Promise(r => setTimeout(r, 100));
+        }
+        return;
+      }
       
       let msg = '';
       msg = `📥 <b>کانفیگ‌های اختصاصی V2Ray (ویتوری)</b>\n`;
       msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
       msg += `⚡️ اتصال: همراه اول، ایرانسل، مخابرات و رایتل\n`;
-      msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
+      msg += `🏷️ برندینگ انحصاری: <code>${escapeHtml(db.settings.branding)}</code>\n\n`;
 
       selected.forEach((conf, idx) => {
         const branded = applyBrandingToConfig(conf.raw, db.settings.branding);
         const latencyText = conf.latency ? `(پینگ: ${conf.latency}ms)` : '';
           
         msg += `⚡ <b>کانفیگ ${idx + 1}</b> [${conf.protocol.toUpperCase()}] ${latencyText}:\n`;
-        msg += `<code>${branded}</code>\n\n`;
+        msg += `<code>${escapeHtml(branded)}</code>\n\n`;
       });
 
       if (selected.length > 1) {
@@ -4632,10 +4834,10 @@ async function handleBotUpdate(update: any) {
           .map(conf => applyBrandingToConfig(conf.raw, db.settings.branding))
           .join('\n');
         msg += `📋 <b>کپی یکجای تمامی ${selected.length} کانفیگ با یک لمس:</b>\n`;
-        msg += `<code>${allBrandedCombined}</code>\n\n`;
+        msg += `<blockquote expandable><code>${escapeHtml(allBrandedCombined)}</code></blockquote>\n\n`;
       }
 
-      msg += `📍 جهت کپی روی هر کانفیگ یا کادر کپی یکجا ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
+      msg += `📍 جهت کپی روی هر کانفیگ یا کادر کپی یکجا ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${escapeHtml(db.settings.branding)}`;
 
       const sponsorBtn = getSponsorChannelInlineButton();
       const feedbackRows = [];

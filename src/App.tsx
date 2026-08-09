@@ -2300,7 +2300,7 @@ export default function App() {
                             onChange={(e) => setAutoPostForm(prev => ({ ...prev, configCount: Number(e.target.value) }))}
                             className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
                           >
-                            {Array.from({ length: 21 }).map((_, idx) => (
+                            {Array.from({ length: 51 }).map((_, idx) => (
                               <option key={idx} value={idx}>
                                 {idx === 0 ? 'هیچکدام (بدون کانفیگ)' : `${idx} کانفیگ برتر فعال`}
                               </option>
