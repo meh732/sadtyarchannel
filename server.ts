@@ -2509,7 +2509,8 @@ async function callTelegramApi(method: string, body: object): Promise<any> {
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(12000)
   });
 
   const data = await response.json();
@@ -2533,7 +2534,8 @@ async function setBotCommands(token: string) {
           { command: 'admin', description: '⚙️ ورود به پنل مدیریت (ادمین)' },
           { command: 'help', description: 'ℹ️ راهنمای گام به گام اتصال' }
         ]
-      })
+      }),
+      signal: AbortSignal.timeout(10000)
     });
     const data = await response.json();
     if (data.ok) {
@@ -2587,7 +2589,9 @@ function getReplyKeyboard(userId: string | number) {
  */
 async function testBotConnection(token: string): Promise<string> {
   try {
-    const response = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const response = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
+      signal: AbortSignal.timeout(10000)
+    });
     const data = await response.json();
     if (data.ok && data.result) {
       return data.result.username || 'unknown_bot';
@@ -2598,11 +2602,15 @@ async function testBotConnection(token: string): Promise<string> {
   }
 }
 
+let lastPollTimestamp = Date.now();
+
 /**
  * Core Bot Polling Loop
  */
 async function runBotPolling() {
   if (!pollingActive) return;
+  lastPollTimestamp = Date.now();
+
   const token = db.settings.botToken;
   if (!token) {
     db.settings.isBotRunning = false;
@@ -2613,7 +2621,9 @@ async function runBotPolling() {
 
   try {
     const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${botOffset}&timeout=10`;
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(20000)
+    });
     if (!response.ok) {
       throw new Error(`Telegram API responded with status ${response.status}`);
     }
@@ -2621,19 +2631,22 @@ async function runBotPolling() {
     const data = await response.json();
     if (data.ok && Array.isArray(data.result)) {
       for (const update of data.result) {
-        botOffset = update.update_id + 1;
-        await handleBotUpdate(update);
+        if (update.update_id >= botOffset) {
+          botOffset = update.update_id + 1;
+        }
+        // Non-blocking update execution so one request doesn't freeze the bot for everyone
+        handleBotUpdate(update).catch(err => {
+          console.error('Error handling bot update:', err.message || err);
+        });
       }
     }
   } catch (err: any) {
-    console.error('Bot polling error:', err);
-    // Silent sleep on network timeout, wait 5s to avoid tight loop
-    await new Promise(r => setTimeout(r, 5000));
-  }
-
-  // Continue polling if still active
-  if (pollingActive) {
-    botTimeoutRef = setTimeout(runBotPolling, 200);
+    console.error('Bot polling error:', err.message || err);
+    await new Promise(r => setTimeout(r, 3000));
+  } finally {
+    if (pollingActive) {
+      botTimeoutRef = setTimeout(runBotPolling, 200);
+    }
   }
 }
 
@@ -4165,8 +4178,7 @@ async function handleBotUpdate(update: any) {
           const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
           if (untested.length > 0) {
             const testIds = untested.slice(0, qty * 2).map(c => c.id);
-            await testConfigsBatch(testIds);
-            available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+            testConfigsBatch(testIds).catch(console.error);
           }
         }
 
@@ -4216,8 +4228,7 @@ async function handleBotUpdate(update: any) {
           const untested = npvConfigs.filter(c => c.status === 'untested');
           if (untested.length > 0) {
             const testIds = untested.slice(0, qty * 3).map(c => c.id);
-            await testConfigsBatch(testIds);
-            available = npvConfigs.filter(c => c.status === 'working');
+            testConfigsBatch(testIds).catch(console.error);
           }
         }
 
@@ -4565,6 +4576,18 @@ function setupIntervals() {
   backupIntervalRef = setInterval(() => {
     checkAndTriggerBackup();
   }, 15 * 60 * 1000);
+
+  // Watchdog to auto-recover if bot polling freezes or stops unexpectedly
+  setInterval(() => {
+    if (db.settings.isBotRunning && db.settings.botToken) {
+      if (!pollingActive || (Date.now() - lastPollTimestamp > 35000)) {
+        addLog('warn', 'بازراه‌اندازی خودکار مکانیزم شنود ربات (Watchdog)...');
+        pollingActive = true;
+        if (botTimeoutRef) clearTimeout(botTimeoutRef);
+        runBotPolling().catch(err => console.error('Watchdog restart error:', err));
+      }
+    }
+  }, 15000);
 
   // Set up auto post interval
   setupAutoPostInterval();
