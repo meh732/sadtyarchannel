@@ -113,6 +113,19 @@ prompt_credentials() {
             echo -e "${RED}Invalid Bot Token format. Example: 123456789:ABCDefGhIJKlmNoPQRsTUVwxyZ${NC}"
         fi
     done
+
+    # Prompt for Web Panel Port
+    while true; do
+        read -p "Enter Web Panel Port [Default: 3000]: " web_port
+        if [ -z "$web_port" ]; then
+            web_port="3000"
+            break
+        elif [[ "$web_port" =~ ^[0-9]+$ ]] && [ "$web_port" -ge 1 ] && [ "$web_port" -le 65535 ]; then
+            break
+        else
+            echo -e "${RED}Invalid Port. Please enter a valid number between 1 and 65535.${NC}"
+        fi
+    done
     echo ""
 }
 
@@ -156,6 +169,7 @@ install_bot() {
 NODE_ENV=production
 ADMIN_ID="${admin_id}"
 BOT_TOKEN="${bot_token}"
+PORT="${web_port}"
 EOF
 
     # Install packages and build
@@ -194,7 +208,7 @@ EOF
     echo -e "Admin ID:      ${CYAN}${admin_id}${NC}"
     echo -e "Bot Service:   ${GREEN}Active & Auto-start Enabled${NC}"
     echo -e "Directory:     ${YELLOW}${INSTALL_DIR}${NC}"
-    echo -e "Web Panel:     ${CYAN}http://localhost:3000${NC}"
+    echo -e "Web Panel:     ${CYAN}http://localhost:${web_port}${NC}"
     echo -e "=================================================================="
     echo -e "Send ${GREEN}/admin${NC} inside your Telegram Bot to manage features!"
     echo -e "=================================================================="
@@ -277,9 +291,14 @@ configure_credentials() {
     # Read current env
     current_admin=$(grep -oP 'ADMIN_ID="\K[^"]+' "$INSTALL_DIR/.env")
     current_token=$(grep -oP 'BOT_TOKEN="\K[^"]+' "$INSTALL_DIR/.env")
+    current_port=$(grep -oP 'PORT="\K[^"]+' "$INSTALL_DIR/.env")
+    if [ -z "$current_port" ]; then
+        current_port="3000"
+    fi
 
     echo -e "Current Admin ID:  ${CYAN}$current_admin${NC}"
-    echo -e "Current Bot Token: ${CYAN}$current_token${NC}\n"
+    echo -e "Current Bot Token: ${CYAN}$current_token${NC}"
+    echo -e "Current Port:      ${CYAN}$current_port${NC}\n"
 
     # Prompt new values
     prompt_credentials
@@ -289,6 +308,7 @@ configure_credentials() {
 NODE_ENV=production
 ADMIN_ID="${admin_id}"
 BOT_TOKEN="${bot_token}"
+PORT="${web_port}"
 EOF
 
     echo -e "${BLUE}Restarting bot service to apply changes...${NC}"
