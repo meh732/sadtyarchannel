@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import net from 'net';
 import dns from 'dns';
+import tls from 'tls';
 import { createServer as createViteServer } from 'vite';
 import { 
   ConfigItem, 
@@ -399,6 +400,219 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
   }
 
   return result;
+}
+
+/**
+ * Decodes base64 string safely
+ */
+function safeBase64Decode(str: string): string {
+  try {
+    return Buffer.from(str, 'base64').toString('utf8');
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * Parses full configuration details from raw config links (vless, vmess, trojan, ss, npv)
+ */
+function parseFullConfigDetails(rawConfig: string): {
+  host: string;
+  port: number;
+  sni: string;
+  hostHeader: string;
+  path: string;
+  tls: boolean;
+  protocol: string;
+} {
+  const result = { host: '', port: 0, sni: '', hostHeader: '', path: '', tls: false, protocol: 'unknown' };
+  if (!rawConfig) return result;
+  const trimmed = rawConfig.trim();
+
+  try {
+    if (trimmed.startsWith('vmess://')) {
+      result.protocol = 'vmess';
+      const base64Part = trimmed.substring(8).trim();
+      const decoded = safeBase64Decode(base64Part);
+      if (decoded) {
+        const parsed = JSON.parse(decoded);
+        result.host = parsed.add || '';
+        result.port = Number(parsed.port) || 0;
+        result.sni = parsed.sni || '';
+        result.hostHeader = parsed.host || '';
+        result.path = parsed.path || '';
+        result.tls = (parsed.tls === 'tls' || parsed.security === 'tls');
+      }
+      return result;
+    }
+
+    if (trimmed.startsWith('vless://') || trimmed.startsWith('trojan://') || trimmed.startsWith('ss://')) {
+      result.protocol = trimmed.startsWith('vless://') ? 'vless' : (trimmed.startsWith('trojan://') ? 'trojan' : 'ss');
+      
+      const hashIndex = trimmed.indexOf('#');
+      let urlPart = hashIndex !== -1 ? trimmed.substring(0, hashIndex) : trimmed;
+      
+      const doubleSlashIdx = urlPart.indexOf('://');
+      const cleanUrl = doubleSlashIdx !== -1 ? urlPart.substring(doubleSlashIdx + 3) : urlPart;
+      
+      const qIndex = cleanUrl.indexOf('?');
+      if (qIndex !== -1) {
+        const queryStr = cleanUrl.substring(qIndex + 1);
+        const params = new URLSearchParams(queryStr);
+        result.sni = params.get('sni') || '';
+        result.hostHeader = params.get('host') || '';
+        result.path = params.get('path') || '';
+        const security = params.get('security') || '';
+        result.tls = (security === 'tls' || security === 'xtls' || security === 'reality');
+      }
+      
+      const atIndex = cleanUrl.lastIndexOf('@');
+      let hostPortPart = atIndex !== -1 ? cleanUrl.substring(atIndex + 1) : cleanUrl;
+      if (qIndex !== -1) {
+        hostPortPart = hostPortPart.substring(0, hostPortPart.indexOf('?'));
+      }
+      
+      const colonIndex = hostPortPart.lastIndexOf(':');
+      if (colonIndex !== -1) {
+        result.host = hostPortPart.substring(0, colonIndex);
+        result.port = parseInt(hostPortPart.substring(colonIndex + 1), 10) || 0;
+      }
+      
+      if (trimmed.startsWith('trojan://')) {
+        result.tls = true;
+      }
+      return result;
+    }
+
+    if (trimmed.startsWith('npv://')) {
+      result.protocol = 'npv';
+      const payload = trimmed.replace('npv://', '').split('#')[0];
+      const decoded = safeBase64Decode(payload);
+      if (decoded) {
+        const json = JSON.parse(decoded);
+        result.host = json.host || json.v2rayHost || json.sshHost || json.address || '';
+        result.port = Number(json.port || json.v2rayPort || json.sshPort) || 0;
+        result.sni = json.sni || '';
+        result.hostHeader = json.hostHeader || '';
+        result.path = json.path || '';
+        result.tls = json.security === 'tls' || json.tls === true;
+      }
+      return result;
+    }
+  } catch (e) {
+    // Silent fail
+  }
+
+  return result;
+}
+
+/**
+ * Checks if a TLS handshake can be successfully completed
+ */
+function checkTlsHandshake(host: string, port: number, sni: string, timeout = 3000): Promise<{ working: boolean; latency: number }> {
+  return new Promise((resolve) => {
+    if (!host || !port) {
+      return resolve({ working: false, latency: 999 });
+    }
+
+    const start = Date.now();
+    let resolved = false;
+
+    const socket = tls.connect({
+      host: host,
+      port: port,
+      servername: sni || host,
+      rejectUnauthorized: false,
+      timeout: timeout
+    }, () => {
+      if (!resolved) {
+        resolved = true;
+        socket.destroy();
+        resolve({ working: true, latency: Date.now() - start });
+      }
+    });
+
+    socket.on('error', () => {
+      if (!resolved) {
+        resolved = true;
+        socket.destroy();
+        resolve({ working: false, latency: 999 });
+      }
+    });
+
+    socket.on('timeout', () => {
+      if (!resolved) {
+        resolved = true;
+        socket.destroy();
+        resolve({ working: false, latency: 999 });
+      }
+    });
+  });
+}
+
+/**
+ * Performs complete, robust verification of a configuration
+ */
+async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
+  try {
+    const details = parseFullConfigDetails(rawConfig);
+    if (!details.host || !details.port) {
+      return { working: false, latency: 999 };
+    }
+
+    // Step 1: Perform Local Connectivity & Verification
+    let localCheck: { working: boolean; latency: number } = { working: false, latency: 999 };
+    
+    if (details.tls) {
+      // Perform TLS handshake check (verifies host is alive, TLS port is active, and SNI domain negotiation works)
+      localCheck = await checkTlsHandshake(details.host, details.port, details.sni);
+    } else {
+      // Fallback to standard TCP check
+      localCheck = await checkPort(details.host, details.port, 2500);
+    }
+
+    // If local test fails (server is offline, port is closed, or TLS handshake fails), the config is completely dead.
+    if (!localCheck.working) {
+      return { working: false, latency: 999 };
+    }
+
+    // Step 2: Iran Accessibility & Blocking Check
+    // First, check the host IP/domain from Iran
+    let iranHostCheck = { working: false, latency: 999 };
+    try {
+      iranHostCheck = await checkPortFromIran(details.host, details.port);
+    } catch (e) {
+      // Fallback if Iran check-host fails or rate-limits
+      iranHostCheck = localCheck;
+    }
+
+    // If the host is blocked in Iran, it's not working for Iran users
+    if (!iranHostCheck.working) {
+      return { working: false, latency: 999 };
+    }
+
+    // Step 3: If SNI is a separate domain and different from host, check SNI port/accessibility from Iran too
+    if (details.sni && details.sni !== details.host && !net.isIP(details.sni)) {
+      try {
+        const iranSniCheck = await checkPortFromIran(details.sni, details.port);
+        if (!iranSniCheck.working) {
+          // If the SNI domain itself is blocked in Iran, the config won't connect
+          return { working: false, latency: 999 };
+        }
+      } catch (e) {
+        // Ignore check-host lookup failures on SNI to avoid false-negatives
+      }
+    }
+
+    // Return the latency from Iran Node if successful, otherwise local check latency
+    return { 
+      working: true, 
+      latency: iranHostCheck.latency !== 999 ? iranHostCheck.latency : localCheck.latency 
+    };
+
+  } catch (err) {
+    return { working: false, latency: 999 };
+  }
 }
 
 // --- Connection Port Tester ---
@@ -857,7 +1071,7 @@ async function testConfigsBatch(ids: string[]) {
     // Save checking status
     saveDatabase();
 
-    const checkResult = await checkPortFull(config.server, config.port);
+    const checkResult = await checkConfigFully(config.raw);
     
     // Refresh connection to DB object in case it was modified
     const currentConfig = db.configs.find(c => c.id === id);
@@ -1304,9 +1518,9 @@ async function sendBackupToAdmin(): Promise<boolean> {
     const formData = new FormData();
     formData.append('chat_id', adminId);
     
-    const blob = new Blob([content], { type: 'application/json' });
     const filename = `db_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-    formData.append('document', blob, filename);
+    const file = new File([content], filename, { type: 'application/json' });
+    formData.append('document', file);
     formData.append('caption', `📦 **نسخه پشتیبان خودکار دیتابیس ربات**\n\n🕒 زمان: **${new Date().toLocaleString('fa-IR')}**\n💾 حجم فایل: **${(content.length / 1024).toFixed(2)} کیلوبایت**`);
 
     const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
@@ -1384,8 +1598,8 @@ async function sendNpvFile(chatId: string | number, configText: string, filename
     const formData = new FormData();
     formData.append('chat_id', String(chatId));
     
-    const blob = new Blob([configText], { type: 'text/plain' });
-    formData.append('document', blob, filename);
+    const file = new File([configText], filename, { type: 'text/plain' });
+    formData.append('document', file);
     if (caption) {
       formData.append('caption', caption);
     }
@@ -1398,9 +1612,16 @@ async function sendNpvFile(chatId: string | number, configText: string, filename
       body: formData
     });
     const resData = await res.json();
+    if (!resData.ok) {
+      console.error('Error sending NPV file to Telegram:', resData);
+      addLog('error', `خطا در ارسال فایل NPV به کاربر: ${resData.description || JSON.stringify(resData)}`);
+    } else {
+      addLog('success', `فایل NPV ${filename} با موفقیت برای کاربر ${chatId} ارسال گردید.`);
+    }
     return !!resData.ok;
-  } catch (e) {
+  } catch (e: any) {
     console.error('Error sending NPV file:', e);
+    addLog('error', `خطای سیستم در ارسال فایل NPV: ${e.message || e}`);
     return false;
   }
 }
