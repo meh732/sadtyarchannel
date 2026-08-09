@@ -162,6 +162,14 @@ function loadDatabase() {
         logs: Array.isArray(loaded.logs) ? loaded.logs : [],
         postedMessages: Array.isArray(loaded.postedMessages) ? loaded.postedMessages : []
       };
+
+      // Reset any stuck 'checking' items on database load
+      for (const c of db.configs) {
+        if (c.status === 'checking') c.status = 'untested';
+      }
+      for (const p of db.proxies) {
+        if (p.status === 'checking') p.status = 'untested';
+      }
     } else {
       saveDatabase();
     }
@@ -858,6 +866,64 @@ function buildXrayConfig(rawConfig: string, localPort: number): { configJson: an
   return { configJson, protocol };
 }
 
+function withHardTimeout<T>(fn: () => Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let completed = false;
+    const timer = setTimeout(() => {
+      if (!completed) {
+        completed = true;
+        resolve(fallback);
+      }
+    }, ms);
+
+    try {
+      fn().then(
+        val => {
+          if (!completed) {
+            completed = true;
+            clearTimeout(timer);
+            resolve(val);
+          }
+        },
+        () => {
+          if (!completed) {
+            completed = true;
+            clearTimeout(timer);
+            resolve(fallback);
+          }
+        }
+      );
+    } catch (e) {
+      if (!completed) {
+        completed = true;
+        clearTimeout(timer);
+        resolve(fallback);
+      }
+    }
+  });
+}
+
+function cleanupCheckingStates() {
+  let changed = false;
+  if (db.configs) {
+    for (const c of db.configs) {
+      if (c.status === 'checking') {
+        c.status = 'untested';
+        changed = true;
+      }
+    }
+  }
+  if (db.proxies) {
+    for (const p of db.proxies) {
+      if (p.status === 'checking') {
+        p.status = 'untested';
+        changed = true;
+      }
+    }
+  }
+  if (changed) saveDatabase();
+}
+
 /**
  * Performs real-world client handshake verification of a configuration using Xray and curl SOCKS5
  */
@@ -884,32 +950,46 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
       return resolve({ working: false, latency: 999 });
     }
 
-    const child = spawn(xrayPath, ['-config', configPath], { stdio: 'ignore' });
-    
     let isFinished = false;
+    let child: any = null;
+
     const cleanup = () => {
       if (isFinished) return;
       isFinished = true;
-      try { child.kill('SIGKILL'); } catch (e) {}
+      clearTimeout(globalTimeout);
+      clearTimeout(curlTimer);
+      if (child) {
+        try { child.kill('SIGKILL'); } catch (e) {}
+      }
       try { fs.unlinkSync(configPath); } catch (e) {}
     };
 
-    const globalTimeout = setTimeout(() => {
+    const finish = (working: boolean, latency = 999) => {
       cleanup();
-      resolve({ working: false, latency: 999 });
-    }, 8000);
+      resolve({ working, latency });
+    };
 
-    setTimeout(() => {
+    const globalTimeout = setTimeout(() => {
+      finish(false, 999);
+    }, 4500);
+
+    try {
+      child = spawn(xrayPath, ['-config', configPath], { stdio: 'ignore' });
+      child.on('error', () => finish(false, 999));
+    } catch (e) {
+      return finish(false, 999);
+    }
+
+    const curlTimer = setTimeout(() => {
       if (isFinished) return;
 
-      const curlCmd = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 4`;
+      const curlCmd = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 3`;
       
-      exec(curlCmd, (error, stdout) => {
-        clearTimeout(globalTimeout);
-        cleanup();
+      exec(curlCmd, { timeout: 3500 }, (error, stdout) => {
+        if (isFinished) return;
 
-        if (error) {
-          return resolve({ working: false, latency: 999 });
+        if (error || !stdout) {
+          return finish(false, 999);
         }
 
         const output = stdout.trim();
@@ -919,10 +999,10 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
 
         if (httpCode === 204 || httpCode === 200 || httpCode === 302 || httpCode === 301) {
           const latencyMs = Math.round(timeStartTransfer * 1000) || 50;
-          return resolve({ working: true, latency: latencyMs });
+          return finish(true, latencyMs);
         }
 
-        resolve({ working: false, latency: 999 });
+        finish(false, 999);
       });
     }, 250);
   });
@@ -931,7 +1011,7 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
 /**
  * Checks if a TLS handshake can be successfully completed
  */
-function checkTlsHandshake(host: string, port: number, sni: string, timeout = 3000): Promise<{ working: boolean; latency: number }> {
+function checkTlsHandshake(host: string, port: number, sni: string, timeout = 1800): Promise<{ working: boolean; latency: number }> {
   return new Promise((resolve) => {
     if (!host || !port) {
       return resolve({ working: false, latency: 999 });
@@ -940,35 +1020,34 @@ function checkTlsHandshake(host: string, port: number, sni: string, timeout = 30
     const start = Date.now();
     let resolved = false;
 
-    const socket = tls.connect({
-      host: host,
-      port: port,
-      servername: sni || host,
-      rejectUnauthorized: false,
-      timeout: timeout
-    }, () => {
-      if (!resolved) {
-        resolved = true;
-        socket.destroy();
-        resolve({ working: true, latency: Date.now() - start });
-      }
-    });
+    const finish = (working: boolean) => {
+      if (resolved) return;
+      resolved = true;
+      try { if (socket) socket.destroy(); } catch (e) {}
+      clearTimeout(timer);
+      const latency = Date.now() - start;
+      resolve({ working, latency: working ? latency : 999 });
+    };
 
-    socket.on('error', () => {
-      if (!resolved) {
-        resolved = true;
-        socket.destroy();
-        resolve({ working: false, latency: 999 });
-      }
-    });
+    const timer = setTimeout(() => finish(false), timeout + 300);
 
-    socket.on('timeout', () => {
-      if (!resolved) {
-        resolved = true;
-        socket.destroy();
-        resolve({ working: false, latency: 999 });
-      }
-    });
+    let socket: tls.TLSSocket | null = null;
+    try {
+      socket = tls.connect({
+        host: host,
+        port: port,
+        servername: sni || host,
+        rejectUnauthorized: false,
+        timeout: timeout
+      }, () => finish(true));
+
+      socket.on('error', () => finish(false));
+      socket.on('timeout', () => finish(false));
+      socket.on('close', () => finish(false));
+      socket.on('end', () => finish(false));
+    } catch (e) {
+      finish(false);
+    }
   });
 }
 
@@ -1005,31 +1084,40 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
 }
 
 // --- Connection Port Tester ---
-function checkPort(host: string, port: number, timeout = 2500): Promise<{ working: boolean; latency: number }> {
+function checkPort(host: string, port: number, timeout = 1800): Promise<{ working: boolean; latency: number }> {
   return new Promise((resolve) => {
     if (!host || !port) {
       return resolve({ working: false, latency: 999 });
     }
 
     const start = Date.now();
-    const socket = new net.Socket();
     let resolved = false;
-
-    socket.setTimeout(timeout);
 
     const finish = (working: boolean) => {
       if (resolved) return;
       resolved = true;
-      socket.destroy();
+      try { socket.destroy(); } catch (e) {}
+      clearTimeout(timer);
       const latency = Date.now() - start;
       resolve({ working, latency: working ? latency : 999 });
     };
 
+    const timer = setTimeout(() => finish(false), timeout + 300);
+
+    const socket = new net.Socket();
+    socket.setTimeout(timeout);
+
     socket.on('connect', () => finish(true));
     socket.on('error', () => finish(false));
     socket.on('timeout', () => finish(false));
+    socket.on('close', () => finish(false));
+    socket.on('end', () => finish(false));
 
-    socket.connect(port, host);
+    try {
+      socket.connect(port, host);
+    } catch (e) {
+      finish(false);
+    }
   });
 }
 
@@ -1743,11 +1831,15 @@ async function testProxiesBatch(ids: string[]) {
   const CONCURRENCY = 25;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
-    await Promise.all(chunk.map(async (id) => {
+    await Promise.allSettled(chunk.map(async (id) => {
       const proxy = db.proxies.find(p => p.id === id);
       if (!proxy) return;
 
-      const checkResult = await checkPortFull(proxy.server, proxy.port);
+      const checkResult = await withHardTimeout(
+        () => checkPortFull(proxy.server, proxy.port),
+        2500,
+        { working: false, latency: 999 }
+      );
       
       const currentProxy = db.proxies.find(p => p.id === id);
       if (currentProxy) {
@@ -1762,6 +1854,14 @@ async function testProxiesBatch(ids: string[]) {
 
     saveDatabase();
     await new Promise(r => setTimeout(r, 50));
+  }
+
+  // Final sanity cleanup for any proxy still in 'checking' status in this batch
+  for (const id of ids) {
+    const p = db.proxies.find(item => item.id === id);
+    if (p && p.status === 'checking') {
+      p.status = 'failed';
+    }
   }
 
   saveDatabase();
@@ -1789,11 +1889,15 @@ async function testConfigsBatch(ids: string[]) {
   const CONCURRENCY = 25;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
-    await Promise.all(chunk.map(async (id) => {
+    await Promise.allSettled(chunk.map(async (id) => {
       const config = db.configs.find(c => c.id === id);
       if (!config) return;
 
-      const checkResult = await checkConfigFully(config.raw);
+      const checkResult = await withHardTimeout(
+        () => checkConfigFully(config.raw),
+        4000,
+        { working: false, latency: 999 }
+      );
       
       // Refresh connection to DB object in case it was modified
       const currentConfig = db.configs.find(c => c.id === id);
@@ -1809,6 +1913,14 @@ async function testConfigsBatch(ids: string[]) {
 
     saveDatabase();
     await new Promise(r => setTimeout(r, 50));
+  }
+
+  // Final sanity cleanup for any config still in 'checking' status in this batch
+  for (const id of ids) {
+    const c = db.configs.find(item => item.id === id);
+    if (c && c.status === 'checking') {
+      c.status = 'failed';
+    }
   }
 
   saveDatabase();
