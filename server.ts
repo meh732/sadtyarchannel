@@ -4951,11 +4951,27 @@ async function startExpressServer() {
   app.post('/api/settings', async (req, res) => {
     try {
       const oldToken = db.settings.botToken;
-      const { adminId, botToken, branding, autoTest, autoExtractInterval } = req.body;
+      const { adminId, botToken, branding, autoTest, autoExtractInterval, testBatchLimit, iranRelayProxy, postMonitoringEnabled, backupEnabled, backupIntervalHours } = req.body;
       
       if (adminId !== undefined) {
         db.settings.adminId = adminId;
       }
+      if (testBatchLimit !== undefined) {
+        db.settings.testBatchLimit = Number(testBatchLimit);
+      }
+      if (iranRelayProxy !== undefined) {
+        db.settings.iranRelayProxy = iranRelayProxy;
+      }
+      if (postMonitoringEnabled !== undefined) {
+        db.settings.postMonitoringEnabled = !!postMonitoringEnabled;
+      }
+      if (backupEnabled !== undefined) {
+        db.settings.backupEnabled = !!backupEnabled;
+      }
+      if (backupIntervalHours !== undefined) {
+        db.settings.backupIntervalHours = Number(backupIntervalHours);
+      }
+
       db.settings.branding = branding || '@MyChannelConfigs';
       db.settings.autoTest = !!autoTest;
       db.settings.autoExtractInterval = Number(autoExtractInterval) || 30;
