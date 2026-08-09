@@ -1782,21 +1782,33 @@ async function scrapeSource(source: SourceItem): Promise<number> {
         const handle = source.urlOrHandle.replace(/^@/, '').trim();
         const msgLinkRegex = new RegExp(`href="(https?:\\/\\/t\\.me\\/(?:s\\/)?${handle}\\/(\\d+))"`, 'gi');
         const matches = Array.from(text.matchAll(msgLinkRegex));
-        const postUrls: string[] = [];
-        
+        const postData: {url: string, msgId: string}[] = [];
         for (const m of matches) {
-          if (m[1]) postUrls.push(m[1].replace('t.me/', 't.me/s/'));
+          if (m[1] && m[2]) {
+            postData.push({ url: m[1].replace('t.me/', 't.me/s/'), msgId: m[2] });
+          }
         }
         
-        const uniquePostUrls = Array.from(new Set(postUrls)).slice(-20);
-        if (uniquePostUrls.length > 0) {
+        const uniquePosts: typeof postData = [];
+        const seenUrls = new Set();
+        for (const pd of postData) {
+          if (!seenUrls.has(pd.url)) {
+            seenUrls.add(pd.url);
+            uniquePosts.push(pd);
+          }
+        }
+        
+        const finalPosts = uniquePosts.slice(-20);
+        if (finalPosts.length > 0) {
           const postResults = await Promise.allSettled(
-            uniquePostUrls.map(pUrl => fetch(pUrl, {
+            finalPosts.map(pData => fetch(pData.url, {
               headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36' }
             }).then(r => r.text()))
           );
 
-          for (const res of postResults) {
+          for (let i = 0; i < postResults.length; i++) {
+            const res = postResults[i];
+            const pData = finalPosts[i];
             if (res.status === 'fulfilled') {
               const pText = res.value;
 
@@ -1811,6 +1823,52 @@ async function scrapeSource(source: SourceItem): Promise<number> {
 
               const hasNpvDoc = pText.toLowerCase().includes('.npvt') || pText.toLowerCase().includes('.npv') || pText.includes('NPVT') || pText.toLowerCase().includes('napsternet');
               const srcLabel = hasNpvDoc ? `${source.name} (.npvt)` : source.name;
+              
+              if (hasNpvDoc && db.settings.adminId && db.settings.botToken) {
+                try {
+                  const fwRes = await callTelegramApi('forwardMessage', {
+                    chat_id: db.settings.adminId,
+                    from_chat_id: `@${handle}`,
+                    message_id: Number(pData.msgId),
+                    disable_notification: true
+                  });
+                  
+                  if (fwRes && fwRes.document) {
+                    const cDoc = fwRes.document;
+                    const isVpnFormat = cDoc.file_name && (cDoc.file_name.endsWith('.npvt') || cDoc.file_name.endsWith('.npv') || cDoc.file_name.endsWith('.ovpn') || cDoc.file_name.endsWith('.txt'));
+                    if (isVpnFormat) {
+                      const fileInfo = await callTelegramApi('getFile', { file_id: cDoc.file_id });
+                      if (fileInfo && fileInfo.file_path) {
+                        const fRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${fileInfo.file_path}`);
+                        const arrayBuffer = await fRes.arrayBuffer();
+                        const fContentBase64 = Buffer.from(arrayBuffer).toString('base64');
+                        if (!db.npvFiles) db.npvFiles = [];
+                        
+                        if (!db.npvFiles.some(f => f.filename === cDoc.file_name && f.content === fContentBase64)) {
+                          db.npvFiles.unshift({
+                            id: Date.now().toString() + Math.floor(Math.random() * 1000),
+                            filename: cDoc.file_name,
+                            content: fContentBase64,
+                            status: 'untested',
+                            createdAt: new Date().toISOString()
+                          });
+                          addLog('success', `فایل ${cDoc.file_name} از کانال @${handle} استخراج و ذخیره شد.`);
+                        }
+                      }
+                    }
+                  }
+                  
+                  // Instantly delete the forwarded message so it doesn't spam the admin
+                  if (fwRes && fwRes.message_id) {
+                    await callTelegramApi('deleteMessage', {
+                      chat_id: db.settings.adminId,
+                      message_id: fwRes.message_id
+                    }).catch(() => {});
+                  }
+                } catch (fwErr) {
+                  console.error('Failed to forward/extract document from channel:', fwErr);
+                }
+              }
               
               const pConfigs = extractConfigsFromText(pText, srcLabel);
               const pProxies = extractProxiesFromText(pText, srcLabel);
