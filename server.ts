@@ -2710,19 +2710,60 @@ let botTimeoutRef: NodeJS.Timeout | null = null;
 const joinChecksCache: Record<number, { checkedAt: number; hasJoined: boolean }> = {};
 
 /**
+ * Checks if a user is a member of a given channel without crashing on bot permission issues
+ */
+async function checkUserChannelMember(channelUsername: string, userId: number): Promise<boolean> {
+  try {
+    const handle = channelUsername.startsWith('@') ? channelUsername : `@${channelUsername}`;
+    const token = db.settings.botToken;
+    if (!token) return true;
+
+    const res = await fetch(`https://api.telegram.org/bot${token}/getChatMember?chat_id=${encodeURIComponent(handle)}&user_id=${userId}`, {
+      signal: AbortSignal.timeout(5000)
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      console.warn(`Force join check returned not ok for ${handle}: ${data.description}`);
+      // If error is due to bot NOT being admin in that channel or channel not found/accessible, skip blocking
+      if (data.description && (
+        data.description.includes('CHAT_ADMIN_REQUIRED') ||
+        data.description.includes('chat not found') ||
+        data.description.includes('bot is not a member') ||
+        data.description.includes('bot was kicked') ||
+        data.description.includes('CHANNEL_INVALID')
+      )) {
+        return true;
+      }
+      return false; // User not found or not participant
+    }
+    const validStatuses = ['creator', 'administrator', 'member'];
+    return Boolean(data.result && validStatuses.includes(data.result.status));
+  } catch (err: any) {
+    console.error(`Force join check error for ${channelUsername}:`, err.message || err);
+    return false; // Require join if error or timeout
+  }
+}
+
+/**
  * Sends request to Telegram Bot API
  */
-async function callTelegramApi(method: string, body: object): Promise<any> {
+async function callTelegramApi(method: string, body: object | FormData): Promise<any> {
   const token = db.settings.botToken;
   if (!token) {
     throw new Error('Bot token is not configured');
   }
 
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+  const headers: Record<string, string> = {};
+  if (!isFormData) {
+    headers['Content-Type'] = 'application/json';
+  }
+
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(12000)
+    headers,
+    body: isFormData ? (body as any) : JSON.stringify(body),
+    signal: AbortSignal.timeout(15000)
   });
 
   const data = await response.json();
@@ -3030,25 +3071,37 @@ async function handleBotUpdate(update: any) {
     }
 
     // --- Map persistent custom keyboard buttons to standard commands/callbacks ---
-    if (cleanMsg.includes('۵۰ کانفیگ') || cleanMsg.includes('پک ۵۰')) {
+    const lowerMsg = cleanMsg.toLowerCase();
+    if (lowerMsg.startsWith('/start') || cleanMsg === 'شروع' || cleanMsg === 'شروع مجدد' || cleanMsg === 'بروزرسانی' || cleanMsg === 'منوی اصلی' || cleanMsg === 'شروع دوباره' || cleanMsg === 'رفرش') {
+      messageText = '/start';
+    } else if (cleanMsg.includes('۵۰ کانفیگ') || cleanMsg.includes('پک ۵۰') || cleanMsg.includes('50 کانفیگ') || lowerMsg === '/50') {
       callbackData = 'v2ray_qty_50';
-    } else if (cleanMsg.includes('۱۵ کانفیگ') || cleanMsg.includes('پک ۱۵') || cleanMsg.includes('15 کانفیگ')) {
+      messageText = '';
+    } else if (cleanMsg.includes('۱۵ کانفیگ') || cleanMsg.includes('پک ۱۵') || cleanMsg.includes('15 کانفیگ') || lowerMsg === '/15') {
       callbackData = 'v2ray_qty_15';
-    } else if (cleanMsg.includes('دریافت کانفیگ ویتوری') || cleanMsg.includes('ویتوری')) {
+      messageText = '';
+    } else if (cleanMsg.includes('دریافت کانفیگ') || cleanMsg.includes('ویتوری') || lowerMsg.startsWith('/v2ray') || lowerMsg.startsWith('/config')) {
       callbackData = 'get_v2ray_configs';
-    } else if (cleanMsg.includes('.NPVT')) {
+      messageText = '';
+    } else if (cleanMsg.toUpperCase().includes('NPVT') || lowerMsg.startsWith('/npvt')) {
       callbackData = 'get_file_npvt';
-    } else if (cleanMsg.includes('.OVPN')) {
+      messageText = '';
+    } else if (cleanMsg.toUpperCase().includes('OVPN') || lowerMsg.startsWith('/ovpn')) {
       callbackData = 'get_file_ovpn';
-    } else if (cleanMsg.includes('.TXT')) {
+      messageText = '';
+    } else if (cleanMsg.toUpperCase().includes('TXT') || lowerMsg.startsWith('/txt')) {
       callbackData = 'get_file_txt';
-    } else if (cleanMsg.includes('دریافت پروکسی') || cleanMsg.includes('پروکسی')) {
+      messageText = '';
+    } else if (cleanMsg.includes('پروکسی') || lowerMsg.startsWith('/proxy') || lowerMsg.startsWith('/proxies')) {
       callbackData = 'get_proxies';
-    } else if (cleanMsg.includes('وضعیت شبکه') || cleanMsg.includes('وضعیت اتصال')) {
+      messageText = '';
+    } else if (cleanMsg.includes('وضعیت') || cleanMsg.includes('شبکه') || cleanMsg.includes('پینگ') || lowerMsg.startsWith('/status') || lowerMsg.startsWith('/net') || lowerMsg.startsWith('/ping')) {
       callbackData = 'get_net_status';
-    } else if (cleanMsg.includes('راهنمای اتصال') || cleanMsg.includes('راهنما')) {
+      messageText = '';
+    } else if (cleanMsg.includes('راهنما') || cleanMsg.includes('کمک') || lowerMsg.startsWith('/help') || lowerMsg.startsWith('/guide')) {
       callbackData = 'get_help';
-    } else if (cleanMsg.includes('ورود به پنل مدیریت') || cleanMsg.includes('پنل مدیریت')) {
+      messageText = '';
+    } else if (cleanMsg.includes('پنل مدیریت') || lowerMsg.startsWith('/admin')) {
       messageText = '/admin';
     }
 
@@ -3090,16 +3143,10 @@ async function handleBotUpdate(update: any) {
       } else {
         const checkResults = await Promise.allSettled(
           requiredChannels.map(async (channel) => {
-            const handle = channel.username.startsWith('@') ? channel.username : `@${channel.username}`;
-            const member = await withHardTimeout(
-              () => callTelegramApi('getChatMember', { chat_id: handle, user_id: userId }),
-              3000,
-              null
-            );
-            const validStatus = ['creator', 'administrator', 'member'];
+            const isJoined = await checkUserChannelMember(channel.username, userId);
             return {
               channel,
-              joined: member && validStatus.includes(member.status)
+              joined: isJoined
             };
           })
         );
@@ -4514,25 +4561,16 @@ async function handleBotUpdate(update: any) {
       if (callbackData === 'check_join_status') {
         // Clear cache and re-evaluate
         delete joinChecksCache[userId];
-        await answerCallback('در حال بررسی مجدد عضویت...');
+        await answerCallback('⏳ در حال بررسی مجدد عضویت شما در کانال‌ها...');
 
-        // Perform instant live check
+        // Perform instant live check for each required channel
         let hasJoinedNow = true;
         const freshNotJoined: ForceJoinChannel[] = [];
         for (const channel of requiredChannels) {
-          try {
-            const handle = channel.username.startsWith('@') ? channel.username : `@${channel.username}`;
-            const member = await callTelegramApi('getChatMember', {
-              chat_id: handle,
-              user_id: userId
-            });
-            const validStatus = ['creator', 'administrator', 'member'];
-            if (!member || !validStatus.includes(member.status)) {
-              hasJoinedNow = false;
-              freshNotJoined.push(channel);
-            }
-          } catch (e) {
-            console.error(`Force join check error for ${channel.username}:`, e);
+          const isJoined = await checkUserChannelMember(channel.username, userId);
+          if (!isJoined) {
+            hasJoinedNow = false;
+            freshNotJoined.push(channel);
           }
         }
 
@@ -4542,10 +4580,12 @@ async function handleBotUpdate(update: any) {
         };
 
         if (hasJoinedNow) {
+          await answerCallback('🎉 عضویت شما تایید شد!', true);
+
           await callTelegramApi('sendMessage', {
             chat_id: chatId,
-            text: `🎉 **عضویت شما با موفقیت تایید شد!**\n\nهم‌اکنون ربات برای شما فعال گردیده است. خوش آمدید! ❤️`,
-            parse_mode: 'Markdown'
+            text: `🎉 <b>عضویت شما با موفقیت تایید شد!</b>\n\nربات برای شما فعال گردید. خوش آمدید! ❤️`,
+            parse_mode: 'HTML'
           });
 
           await handleBotUpdate({
@@ -4556,51 +4596,60 @@ async function handleBotUpdate(update: any) {
             }
           });
         } else {
-          // Send notification that they haven't joined yet
-          await callTelegramApi('sendMessage', {
-            chat_id: chatId,
-            text: `⚠️ **عدم عضویت کامل**\n\nشما هنوز عضو کانال‌های زیر نشده‌اید. لطفاً ابتدا عضو شده و مجدداً تلاش کنید.`,
-            parse_mode: 'Markdown'
-          });
+          await answerCallback('❌ شما هنوز عضو تمام کانال‌ها نشده‌اید!', true);
 
-          let msg = `⚠️ **عضویت اجباری**\n\nکاربر گرامی **${firstName}**، برای استفاده از ربات و دریافت کانفیگ‌های رایگان و پرسرعت، ابتدا باید در کانال‌های اسپانسر ما عضو شوید:\n\n`;
+          const safeFirstName = escapeHtml(firstName);
+          let msg = `⚠️ <b>عدم تکمیل عضویت در کانال‌ها</b>\n\n` +
+            `کاربر گرامی <b>${safeFirstName}</b>، شما هنوز در کانال(های) زیر عضو نشده‌اید. لطفاً ابتدا عضو شده و سپس دکمه تایید را بزنید:\n\n`;
+
           const keyboard: any[] = [];
           freshNotJoined.forEach((ch, idx) => {
-            msg += `${idx + 1}️⃣ کانال ${ch.title} (${ch.username})\n`;
+            const safeTitle = escapeHtml(ch.title || ch.username);
+            const safeUsername = escapeHtml(ch.username);
+            msg += `${idx + 1}️⃣ کانال <b>${safeTitle}</b> (${safeUsername})\n`;
             const url = ch.inviteLink || `https://t.me/${ch.username.replace('@', '')}`;
             keyboard.push([{ text: `📢 عضویت در کانال ${ch.title}`, url, style: 'primary' }]);
           });
-          msg += `\nپس از عضویت در تمامی کانال‌ها، دکمه **تایید عضویت ✅** را در زیر فشار دهید تا ربات برای شما فعال شود.`;
+
+          msg += `\nپس از عضویت در تمامی کانال‌ها، دکمه <b>تایید عضویت ✅</b> را فشار دهید.`;
           keyboard.push([{ text: '✅ تایید عضویت (بررسی مجدد)', callback_data: 'check_join_status', style: 'success' }]);
 
           await callTelegramApi('sendMessage', {
             chat_id: chatId,
             text: msg,
-            parse_mode: 'Markdown',
+            parse_mode: 'HTML',
             reply_markup: { inline_keyboard: keyboard }
           });
         }
         return;
       }
 
+      // If user clicked any other inline button while blocked
+      if (callbackQueryId) {
+        await answerCallback('⚠️ جهت استفاده از ربات، ابتدا در کانال‌های زیر عضو شده و دکمه تایید عضویت را بزنید.', true);
+      }
+
       // Present join channels message
-      let msg = `⚠️ **عضویت اجباری**\n\nکاربر گرامی **${firstName}**، برای استفاده از ربات و دریافت کانفیگ‌های رایگان و پرسرعت، ابتدا باید در کانال‌های اسپانسر ما عضو شوید:\n\n`;
-      
+      const safeFirstName = escapeHtml(firstName);
+      let msg = `⚠️ <b>عضویت اجباری در کانال‌های اسپانسر</b>\n\n` +
+        `کاربر گرامی <b>${safeFirstName}</b>، برای استفاده از خدمات ربات و دریافت کانفیگ‌های رایگان و پرسرعت، ابتدا باید در کانال‌های زیر عضو شوید:\n\n`;
+
       const keyboard: any[] = [];
       notJoinedList.forEach((ch, idx) => {
-        msg += `${idx + 1}️⃣ کانال ${ch.title} (${ch.username})\n`;
+        const safeTitle = escapeHtml(ch.title || ch.username);
+        const safeUsername = escapeHtml(ch.username);
+        msg += `${idx + 1}️⃣ کانال <b>${safeTitle}</b> (${safeUsername})\n`;
         const url = ch.inviteLink || `https://t.me/${ch.username.replace('@', '')}`;
         keyboard.push([{ text: `📢 عضویت در کانال ${ch.title}`, url, style: 'primary' }]);
       });
-      
-      msg += `\nپس از عضویت در تمامی کانال‌ها، دکمه **تایید عضویت ✅** را در زیر فشار دهید تا ربات برای شما فعال شود.`;
-      
+
+      msg += `\nپس از عضویت در تمامی کانال‌ها، دکمه <b>تایید عضویت ✅</b> را در زیر فشار دهید تا ربات برای شما فعال شود.`;
       keyboard.push([{ text: '✅ تایید عضویت (بررسی مجدد)', callback_data: 'check_join_status', style: 'success' }]);
 
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: msg,
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
         reply_markup: { inline_keyboard: keyboard }
       });
       return;
@@ -4609,8 +4658,23 @@ async function handleBotUpdate(update: any) {
     // --- Action Handlers ---
 
     // Handle button selections or commands
-    const startKeyboard = {
-      inline_keyboard: [
+    if (messageText === '/start' || callbackData === 'back_to_main' || callbackData === 'start_refresh' || callbackData === 'start') {
+      if (callbackData) {
+        await answerCallback('🔄 منوی اصلی و ربات بروزرسانی شد');
+      }
+
+      const workingConfigsCount = db.configs.filter(c => c.status === 'working').length;
+      const workingProxiesCount = (db.proxies || []).filter(p => p.status === 'working').length;
+
+      const welcome = `سلام **${escapeHtml(firstName)}** عزیز! 🌹\n` +
+        `به ربات بزرگ استخراج و پخش کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده خوش آمدید.\n\n` +
+        `📊 **وضعیت لحظه‌ای دیتابیس ربات:**\n` +
+        `🟢 تعداد کانفیگ‌های فعال V2Ray: **${workingConfigsCount} عدد**\n` +
+        `🚀 تعداد پروکسی‌های فعال تلگرام: **${workingProxiesCount} عدد**\n\n` +
+        `💡 سیستم به صورت ۲۴ ساعته منابع معتبر را پایش کرده و پورت‌ها را از داخل شبکه ایران تست می‌کند.\n\n` +
+        `جهت دریافت کانفیگ و پروکسی، از گزینه‌های زیر استفاده کنید:`;
+
+      const startInlineKeyboard: any[][] = [
         [
           { text: '🔥 🚀 دریافت یکجای ۵۰ کانفیگ (توصیه ویژه ⭐)', callback_data: 'v2ray_qty_50', style: 'success' }
         ],
@@ -4624,23 +4688,78 @@ async function handleBotUpdate(update: any) {
         ],
         [
           { text: '🔌 دریافت پروکسی جدید تلگرام', callback_data: 'get_proxies', style: 'primary' },
-          { text: '📊 وضعیت اتصال و تست نت ایران', callback_data: 'get_net_status', style: 'primary' }
+          { text: '📊 وضعیت شبکه و پینگ نت 🟢', callback_data: 'get_net_status', style: 'primary' }
         ],
         [
-          { text: 'ℹ️ راهنمای اتصال آسان', callback_data: 'get_help' }
-        ],
-        [
-          { text: '⭐ عضویت در کانال‌های ما', url: requiredChannels[0]?.inviteLink || 'https://t.me', style: 'primary' }
+          { text: 'ℹ️ راهنمای اتصال آسان 📚', callback_data: 'get_help' },
+          { text: '🔄 بروزرسانی ربات ⚡', callback_data: 'start_refresh' }
         ]
-      ]
-    };
+      ];
 
-    if (messageText === '/start') {
-      const welcome = `سلام ${firstName} عزیز! 🌹\nبه ربات بزرگ استخراج و پخش کانفیگ‌ها و پروکسی‌های کاملاً تست شده و پرسرعت خوش آمدید.\n\nمن هر چند دقیقه کانال‌ها و منابع معتبر را جستجو می‌کنم، پورت‌های آن‌ها را در داخل نت ایران تست می‌کنم و فقط موارد فعال را ارائه می‌دهم.\n\nاز دکمه‌های منوی لمسی در زیر کادر پیام جهت دسترسی آسان استفاده کنید:`;
+      if (requiredChannels.length > 0 && requiredChannels[0]?.username) {
+        const url = requiredChannels[0].inviteLink || `https://t.me/${requiredChannels[0].username.replace('@', '')}`;
+        startInlineKeyboard.push([{ text: '⭐ کانال رسمی پشتیبانی و اخبار', url, style: 'primary' }]);
+      }
+
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: welcome,
+        parse_mode: 'Markdown',
         reply_markup: getReplyKeyboard(userId)
+      });
+
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: '👇 **منوی دسترسی سریع و میانبرها:**',
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: startInlineKeyboard }
+      });
+      return;
+    }
+
+    if (callbackData === 'get_help') {
+      await answerCallback('راهنمای اتصال');
+      const helpText = `📚 **راهنمای گام به گام اتصال به فیلترشکن:**\n\n` +
+        `1️⃣ **برنامه V2Ray (ویتوری / v2rayNG / Shadowrocket / Streisand):**\n` +
+        `• کانفیگ‌های متنی را کپی کنید.\n` +
+        `• وارد برنامه شده و گزینه‌ **Import from Clipboard** را بزنید.\n` +
+        `• سپس روی دکمه اتصال کلیک کنید.\n\n` +
+        `2️⃣ **برنامه‌های NapsternetV / OpenVPN:**\n` +
+        `• فایل‌های .NPVT یا .OVPN را دانلود کرده و در برنامه مربوطه ایمپورت نمایید.\n\n` +
+        `3️⃣ **پروکسی‌های تلگرام:**\n` +
+        `• روی دکمه پروکسی کلیک کرده و گزینه‌ **Connect Proxy** را بزنید.\n\n` +
+        `💡 *برای دریافت کانفیگ‌های تازه، از منوی اصلی اقدام کنید.*`;
+
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: helpText,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]]
+        }
+      });
+      return;
+    }
+
+    if (callbackData === 'get_net_status') {
+      await answerCallback('وضعیت شبکه');
+      const workingConfigsCount = db.configs.filter(c => c.status === 'working').length;
+      const workingProxiesCount = (db.proxies || []).filter(p => p.status === 'working').length;
+      const totalConfigs = db.configs.length;
+
+      const netText = `📊 **گزارش لحظه‌ای وضعیت شبکه و تست نت ایران:**\n\n` +
+        `🟢 **کانفیگ‌های فعال V2Ray:** ${workingConfigsCount} از ${totalConfigs} کل\n` +
+        `⚡️ **پروکسی‌های فعال تلگرام:** ${workingProxiesCount} عدد\n` +
+        `🔄 **آخرین زمان پایش دیتابیس:** همین چند لحظه پیش\n\n` +
+        `✅ تمامی کانفیگ‌ها و پروکسی‌های ارائه شده در ربات، پورت‌هایشان تست شده و برای اپراتورهای همراه اول، ایرانسل و مخابرات فعال می‌باشند.`;
+
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: netText,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]]
+        }
       });
       return;
     }
@@ -4926,7 +5045,17 @@ async function handleBotUpdate(update: any) {
         try {
           const formData = new FormData();
           formData.append('chat_id', String(chatId));
-          const fileBuffer = Buffer.from(file.content, 'base64');
+
+          let fileBuffer: Buffer;
+          try {
+            fileBuffer = Buffer.from(file.content, 'base64');
+            if (fileBuffer.length === 0 && file.content) {
+              fileBuffer = Buffer.from(file.content, 'utf-8');
+            }
+          } catch {
+            fileBuffer = Buffer.from(file.content || '', 'utf-8');
+          }
+
           const blob = new Blob([fileBuffer], { type: 'application/octet-stream' });
           formData.append('document', blob, brandedFilename);
           formData.append('caption', caption);
@@ -4936,8 +5065,8 @@ async function handleBotUpdate(update: any) {
           }
             
           await callTelegramApi('sendDocument', formData);
-        } catch (err) {
-          console.error('Error sending file to user:', err);
+        } catch (err: any) {
+          console.error('Error sending file to user:', err?.message || err);
         }
       }
       return;
@@ -5011,17 +5140,6 @@ async function handleBotUpdate(update: any) {
         text: msg,
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: proxyButtons }
-      });
-      return;
-    }
-
-    if (callbackData === 'back_to_main') {
-      await answerCallback('منوی اصلی');
-      const welcome = `منوی کاربری مجدداً فعال شد. لطفاً گزینه‌ مورد نظر خود را از دکمه‌های زیر انتخاب کنید:`;
-      await callTelegramApi('sendMessage', {
-        chat_id: chatId,
-        text: welcome,
-        reply_markup: getReplyKeyboard(userId)
       });
       return;
     }
