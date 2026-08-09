@@ -1334,8 +1334,8 @@ async function sendBackupToAdmin(): Promise<boolean> {
  * Helper to get sponsor or branding telegram channel button.
  */
 function getSponsorChannelInlineButton() {
-  let url = 'https://t.me';
-  let label = '📢 عضویت در کانال رسمی ما';
+  let url = '';
+  let label = '';
 
   // 1. Check if there are active force join channels
   const activeFj = db.forceJoinChannels.find(c => c.enabled && c.username);
@@ -1365,9 +1365,13 @@ function getSponsorChannelInlineButton() {
       label = `📢 عضویت در کانال اسپانسر`;
       return { text: label, url };
     }
+  } else if (adText.startsWith('http://') || adText.startsWith('https://')) {
+    url = adText;
+    label = `📢 عضویت در کانال اسپانسر`;
+    return { text: label, url };
   }
 
-  return { text: label, url };
+  return null;
 }
 
 /**
@@ -3087,7 +3091,7 @@ async function handleBotUpdate(update: any) {
           const cleanBranding = (db.settings.branding || 'NPV').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_');
           const filename = `${cleanBranding}_Config_${i + 1}.npv`;
           const caption = `🌀 فایل کانفیگ NPV Tunnel شماره ${i + 1}\n🔒 مخصوص وارد کردن در نرم‌افزار NapsternetV`;
-          await sendNpvFile(chatId, npvConfig, filename, caption, inlineKeyboard);
+          await sendNpvFile(chatId, npvConfig, filename, caption);
         }
       }
 
