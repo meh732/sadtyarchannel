@@ -139,10 +139,16 @@ function loadDatabase() {
     if (fs.existsSync(DB_FILE)) {
       const content = fs.readFileSync(DB_FILE, 'utf8');
       const loaded = JSON.parse(content);
+      
+      const envAdminId = process.env.ADMIN_ID ? process.env.ADMIN_ID.trim() : '';
+      const envBotToken = process.env.BOT_TOKEN ? process.env.BOT_TOKEN.trim() : '';
+
       db = {
         settings: { 
           ...DEFAULT_SETTINGS, 
           ...loaded.settings,
+          adminId: envAdminId || loaded.settings?.adminId || '',
+          botToken: envBotToken || loaded.settings?.botToken || '',
           autoPost: { ...DEFAULT_AUTO_POST, ...(loaded.settings?.autoPost || {}) }
         },
         sources: Array.isArray(loaded.sources) ? loaded.sources : DEFAULT_SOURCES,

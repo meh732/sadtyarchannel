@@ -655,8 +655,14 @@ export default function App() {
   });
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col md:flex-row" dir="rtl">
+    <div className="min-h-screen bg-[#f8fafc]/90 text-slate-800 font-sans flex flex-col md:flex-row relative overflow-hidden" dir="rtl">
       
+      {/* Decorative Floating Colorful Glass Mesh Blobs */}
+      <div className="absolute top-[-10%] right-[-10%] w-[550px] h-[550px] rounded-full bg-indigo-300/25 blur-[120px] pointer-events-none z-0" />
+      <div className="absolute bottom-[-10%] left-[-10%] w-[650px] h-[650px] rounded-full bg-cyan-300/20 blur-[130px] pointer-events-none z-0" />
+      <div className="absolute top-[30%] left-[20%] w-[450px] h-[450px] rounded-full bg-pink-300/15 blur-[110px] pointer-events-none z-0" />
+      <div className="absolute bottom-[20%] right-[15%] w-[400px] h-[400px] rounded-full bg-violet-300/20 blur-[100px] pointer-events-none z-0" />
+
       {/* Toast Notification */}
       <AnimatePresence>
         {toast && (
@@ -681,7 +687,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Sidebar Navigation */}
-      <aside className="w-full md:w-80 bg-slate-900 text-slate-100 flex flex-col shrink-0 border-l border-slate-800">
+      <aside className="w-full md:w-80 bg-slate-900/90 backdrop-blur-md text-slate-100 flex flex-col shrink-0 border-l border-slate-800/50 relative z-10">
         <div className="p-6 border-b border-slate-800 flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
             <Radio className="w-6 h-6 text-white animate-pulse" />
@@ -842,10 +848,10 @@ export default function App() {
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto relative z-10">
         
         {/* Header Bar */}
-        <header className="bg-white border-b border-slate-200 px-6 py-5 shrink-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <header className="bg-white/65 backdrop-blur-md border-b border-slate-200/50 px-6 py-5 shrink-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-slate-900 tracking-tight">
               {activeTab === 'dashboard' && 'داشبورد کنترل مرکزی'}
