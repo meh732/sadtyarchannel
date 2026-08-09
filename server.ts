@@ -982,53 +982,23 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // Step 1: Perform Local Connectivity & Verification via REAL XRAY CORE CLIENT HANDSHAKE
-    let localCheck: { working: boolean; latency: number } = { working: false, latency: 999 };
+    // Step 1: Fast direct socket connection check
+    if (details.tls) {
+      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 1800);
+      if (tlsCheck.working) return tlsCheck;
+    }
+
+    const portCheck = await checkPort(details.host, details.port, 1800);
+    if (portCheck.working) return portCheck;
+
+    // Step 2: If local Xray binary is present, test via Xray
     const xrayPath = path.join(process.cwd(), 'bin/xray');
-    
     if (fs.existsSync(xrayPath)) {
-      localCheck = await checkConfigWithXray(rawConfig);
-    } else {
-      // Fallback if binary is not downloaded yet
-      if (details.tls) {
-        localCheck = await checkTlsHandshake(details.host, details.port, details.sni);
-      } else {
-        localCheck = await checkPort(details.host, details.port, 2500);
-      }
+      const xrayCheck = await checkConfigWithXray(rawConfig);
+      if (xrayCheck.working) return xrayCheck;
     }
 
-    // Step 2: Iran Accessibility & Blocking Check
-    let iranCheck: { working: boolean; latency: number; rateLimited?: boolean } = { working: false, latency: 999, rateLimited: false };
-    try {
-      iranCheck = await checkPortFromIran(details.host, details.port);
-    } catch (e) {
-      iranCheck = { working: false, latency: 999, rateLimited: true };
-    }
-
-    // Step 3: Dynamic Decision Tree for Out-of-Country Server
-    if (localCheck.working) {
-      // If globally working, we check Iran accessibility.
-      if (iranCheck.rateLimited) {
-        // If Iran check rate-limited or timed out, trust the local check since we know the credentials/config are valid!
-        return { working: true, latency: localCheck.latency };
-      }
-      if (iranCheck.working) {
-        // Both local and Iran check say it's working!
-        return { working: true, latency: iranCheck.latency };
-      } else {
-        // Local works but Iran check explicitly failed (the IP is 100% blocked/unreachable from Iran nodes)
-        return { working: false, latency: 999 };
-      }
-    } else {
-      // If local Xray check failed, could it be an Iran-only domestic tunnel or geoblocked IP?
-      if (iranCheck.working) {
-        // Yes! It's reachable from Iran, so let's trust it for Iran users!
-        return { working: true, latency: iranCheck.latency };
-      }
-      // If both failed, or local failed and Iran was rate-limited, we mark as failed.
-      return { working: false, latency: 999 };
-    }
-
+    return { working: false, latency: 999 };
   } catch (err) {
     return { working: false, latency: 999 };
   }
@@ -1178,20 +1148,7 @@ async function checkPortFromIran(host: string, port: number): Promise<{ working:
  * Fallbacks to local port tester on any check-host rate limits or issues.
  */
 async function checkPortFull(host: string, port: number): Promise<{ working: boolean; latency: number }> {
-  try {
-    const iranResult = await checkPortFromIran(host, port);
-    if (iranResult.working) {
-      return { working: true, latency: iranResult.latency };
-    }
-    if (iranResult.rateLimited) {
-      // Fallback to local check if rate-limited to avoid false negatives
-      return checkPort(host, port, 2000);
-    }
-    return { working: false, latency: 999 };
-  } catch (err) {
-    console.log(`[CheckPort] Check-Host failed for ${host}:${port}. Falling back to local port check.`);
-    return checkPort(host, port, 2000);
-  }
+  return checkPort(host, port, 1800);
 }
 
 // --- Scraping & Extraction Engine ---
@@ -1783,7 +1740,7 @@ async function testProxiesBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 5;
+  const CONCURRENCY = 25;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.all(chunk.map(async (id) => {
@@ -1804,7 +1761,7 @@ async function testProxiesBatch(ids: string[]) {
     }));
 
     saveDatabase();
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 50));
   }
 
   saveDatabase();
@@ -1829,7 +1786,7 @@ async function testConfigsBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 5;
+  const CONCURRENCY = 25;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.all(chunk.map(async (id) => {
@@ -1851,7 +1808,7 @@ async function testConfigsBatch(ids: string[]) {
     }));
 
     saveDatabase();
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 50));
   }
 
   saveDatabase();
