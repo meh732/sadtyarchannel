@@ -262,7 +262,7 @@ function convertV2rayToNpv(v2rayConfig: string, branding: string): string {
     const trimmed = v2rayConfig.trim();
     const brandingName = branding || 'NPV Config';
 
-    // 1. If it's already an npv:// link, decode it, change remarks, and return raw base64 payload with npv:// prefix
+    // 1. If it's already an npv:// link, decode it, change remarks, and return raw base64 payload
     if (trimmed.startsWith('npv://')) {
       const base64Part = trimmed.replace('npv://', '').split('#')[0];
       const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
@@ -270,7 +270,7 @@ function convertV2rayToNpv(v2rayConfig: string, branding: string): string {
       json.remarks = brandingName;
       if (json.configName) json.configName = brandingName;
       const encoded = Buffer.from(JSON.stringify(json)).toString('base64');
-      return `npv://${encoded}`;
+      return encoded;
     }
 
     // 2. Parse from standard V2Ray URI and construct a compatible NPV JSON
@@ -291,7 +291,7 @@ function convertV2rayToNpv(v2rayConfig: string, branding: string): string {
         rawLink: trimmed
       };
       const encoded = Buffer.from(JSON.stringify(fallbackJson)).toString('base64');
-      return `npv://${encoded}`;
+      return encoded;
     }
 
     const npvJson: any = {
@@ -347,14 +347,10 @@ function convertV2rayToNpv(v2rayConfig: string, branding: string): string {
     }
 
     const encoded = Buffer.from(JSON.stringify(npvJson)).toString('base64');
-    return `npv://${encoded}`;
+    return encoded;
   } catch (e) {
-    // Return original prepended with npv:// if not there
-    if (v2rayConfig.trim().startsWith('npv://')) {
-      return v2rayConfig.trim();
-    }
-    const fallback = Buffer.from(JSON.stringify({ remarks: branding || 'NPV Config', raw: v2rayConfig })).toString('base64');
-    return `npv://${fallback}`;
+    // Return original encoded to base64 as a last resort
+    return Buffer.from(JSON.stringify({ remarks: branding || 'NPV Config', raw: v2rayConfig })).toString('base64');
   }
 }
 
@@ -401,10 +397,17 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
       try {
         const decoded = Buffer.from(payload, 'base64').toString('utf8');
         const json = JSON.parse(decoded);
-        // napsternetv schema fields:
-        result.host = json.host || json.v2rayHost || json.sshHost || json.address || '';
+        // Prioritize address/v2rayAddress since host is often the HTTP Host header
+        result.host = json.address || json.v2rayAddress || json.host || json.v2rayHost || json.sshHost || '';
         result.port = Number(json.port || json.v2rayPort || json.sshPort) || 0;
-        result.remark = json.remarks || remarkPart || 'NPV Config';
+        result.remark = json.remarks || json.configName || remarkPart || 'NPV Config';
+        
+        if (json.protocol) {
+          result.protocol = json.protocol;
+        } else if (json.type && ['vless', 'vmess', 'trojan', 'ss'].includes(json.type)) {
+          result.protocol = json.type;
+        }
+        
         if (result.host && result.port) return result;
       } catch(e) {
         // Fallback or plain text
@@ -533,12 +536,18 @@ function parseFullConfigDetails(rawConfig: string): {
       const decoded = safeBase64Decode(payload);
       if (decoded) {
         const json = JSON.parse(decoded);
-        result.host = json.host || json.v2rayHost || json.sshHost || json.address || '';
+        // Prioritize address/v2rayAddress since host is often the HTTP Host header
+        result.host = json.address || json.v2rayAddress || json.host || json.v2rayHost || json.sshHost || '';
         result.port = Number(json.port || json.v2rayPort || json.sshPort) || 0;
         result.sni = json.sni || '';
-        result.hostHeader = json.hostHeader || '';
+        result.hostHeader = json.hostHeader || json.host || '';
         result.path = json.path || '';
         result.tls = json.security === 'tls' || json.tls === true;
+        if (json.protocol) {
+          result.protocol = json.protocol;
+        } else if (json.type && ['vless', 'vmess', 'trojan', 'ss'].includes(json.type)) {
+          result.protocol = json.type;
+        }
       }
       return result;
     }
@@ -757,7 +766,7 @@ function buildXrayConfig(rawConfig: string, localPort: number): { configJson: an
       if (!decoded) return null;
       const json = JSON.parse(decoded);
       
-      const host = json.host || json.v2rayHost || json.sshHost || json.address || '';
+      const host = json.address || json.v2rayAddress || json.host || json.v2rayHost || json.sshHost || '';
       const port = Number(json.port || json.v2rayPort || json.sshPort) || 0;
       if (!host || !port) return null;
 
@@ -965,44 +974,37 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       }
     }
 
-    // If local test fails (server is offline, port is closed, or credentials/config protocol properties are incorrect), the config is dead.
-    if (!localCheck.working) {
-      return { working: false, latency: 999 };
-    }
-
     // Step 2: Iran Accessibility & Blocking Check
-    // First, check the host IP/domain from Iran
-    let iranHostCheck = { working: false, latency: 999 };
+    let iranCheck: { working: boolean; latency: number; rateLimited?: boolean } = { working: false, latency: 999, rateLimited: false };
     try {
-      iranHostCheck = await checkPortFromIran(details.host, details.port);
+      iranCheck = await checkPortFromIran(details.host, details.port);
     } catch (e) {
-      // Fallback if Iran check-host fails or rate-limits
-      iranHostCheck = localCheck;
+      iranCheck = { working: false, latency: 999, rateLimited: true };
     }
 
-    // If the host is blocked in Iran, it's not working for Iran users
-    if (!iranHostCheck.working) {
+    // Step 3: Dynamic Decision Tree for Out-of-Country Server
+    if (localCheck.working) {
+      // If globally working, we check Iran accessibility.
+      if (iranCheck.rateLimited) {
+        // If Iran check rate-limited or timed out, trust the local check since we know the credentials/config are valid!
+        return { working: true, latency: localCheck.latency };
+      }
+      if (iranCheck.working) {
+        // Both local and Iran check say it's working!
+        return { working: true, latency: iranCheck.latency };
+      } else {
+        // Local works but Iran check explicitly failed (the IP is 100% blocked/unreachable from Iran nodes)
+        return { working: false, latency: 999 };
+      }
+    } else {
+      // If local Xray check failed, could it be an Iran-only domestic tunnel or geoblocked IP?
+      if (iranCheck.working) {
+        // Yes! It's reachable from Iran, so let's trust it for Iran users!
+        return { working: true, latency: iranCheck.latency };
+      }
+      // If both failed, or local failed and Iran was rate-limited, we mark as failed.
       return { working: false, latency: 999 };
     }
-
-    // Step 3: If SNI is a separate domain and different from host, check SNI port/accessibility from Iran too
-    if (details.sni && details.sni !== details.host && !net.isIP(details.sni)) {
-      try {
-        const iranSniCheck = await checkPortFromIran(details.sni, details.port);
-        if (!iranSniCheck.working) {
-          // If the SNI domain itself is blocked in Iran, the config won't connect
-          return { working: false, latency: 999 };
-        }
-      } catch (e) {
-        // Ignore check-host lookup failures on SNI to avoid false-negatives
-      }
-    }
-
-    // Return the latency from Iran Node if successful, otherwise local check latency
-    return { 
-      working: true, 
-      latency: iranHostCheck.latency !== 999 ? iranHostCheck.latency : localCheck.latency 
-    };
 
   } catch (err) {
     return { working: false, latency: 999 };
@@ -1041,12 +1043,18 @@ function checkPort(host: string, port: number, timeout = 2500): Promise<{ workin
 /**
  * Robust port check from inside Iran utilizing check-host.net API
  */
-async function checkPortFromIran(host: string, port: number): Promise<{ working: boolean; latency: number }> {
+async function checkPortFromIran(host: string, port: number): Promise<{ working: boolean; latency: number; rateLimited?: boolean }> {
   try {
     const checkUrl = `https://check-host.net/check-tcp?host=${encodeURIComponent(`${host}:${port}`)}&node=ir5.node.check-host.net&node=ir6.node.check-host.net&node=ir7.node.check-host.net&node=ir8.node.check-host.net&node=ir9.node.check-host.net`;
     const res = await fetch(checkUrl, {
-      headers: { 'Accept': 'application/json' }
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(5000)
     });
+    
+    if (res.status === 403 || res.status === 429) {
+      return { working: false, latency: 999, rateLimited: true };
+    }
+    
     if (!res.ok) {
       throw new Error(`Check-Host API returned status ${res.status}`);
     }
@@ -1078,15 +1086,21 @@ async function checkPortFromIran(host: string, port: number): Promise<{ working:
       );
     }
 
-    // Poll for results (up to 4 times with 2s delay)
+    // Poll for results (up to 3 times with 2s delay)
     let attempts = 0;
-    while (attempts < 4) {
+    while (attempts < 3) {
       await new Promise(resolve => setTimeout(resolve, 2000));
       attempts++;
 
       const resultRes = await fetch(`https://check-host.net/check-result/${requestId}`, {
-        headers: { 'Accept': 'application/json' }
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(5000)
       });
+      
+      if (resultRes.status === 403 || resultRes.status === 429) {
+        return { working: false, latency: 999, rateLimited: true };
+      }
+      
       if (!resultRes.ok) continue;
 
       const resultData: any = await resultRes.json();
@@ -1118,20 +1132,20 @@ async function checkPortFromIran(host: string, port: number): Promise<{ working:
       }
 
       if (anyWorking) {
-        return { working: true, latency: minLatency };
+        return { working: true, latency: minLatency, rateLimited: false };
       }
 
       // If all IR nodes completed and none worked, we know it's blocked/failed
       if (!hasPending && testedCount > 0) {
-        return { working: false, latency: 999 };
+        return { working: false, latency: 999, rateLimited: false };
       }
     }
 
-    // If polling timed out and no success, we default to false
-    return { working: false, latency: 999 };
+    // If polling timed out and no success, we default to false but mark rate-limited
+    return { working: false, latency: 999, rateLimited: true };
   } catch (err: any) {
     console.error('Error checking port from Iran via Check-Host:', err.message);
-    throw err;
+    return { working: false, latency: 999, rateLimited: true };
   }
 }
 
@@ -1143,7 +1157,14 @@ async function checkPortFromIran(host: string, port: number): Promise<{ working:
 async function checkPortFull(host: string, port: number): Promise<{ working: boolean; latency: number }> {
   try {
     const iranResult = await checkPortFromIran(host, port);
-    return iranResult;
+    if (iranResult.working) {
+      return { working: true, latency: iranResult.latency };
+    }
+    if (iranResult.rateLimited) {
+      // Fallback to local check if rate-limited to avoid false negatives
+      return checkPort(host, port, 2000);
+    }
+    return { working: false, latency: 999 };
   } catch (err) {
     console.log(`[CheckPort] Check-Host failed for ${host}:${port}. Falling back to local port check.`);
     return checkPort(host, port, 2000);
@@ -1183,6 +1204,67 @@ function safeDecodeText(text: string): string {
 }
 
 /**
+ * Scans text for Base64 blocks starting with eyJ (which decodes to '{"')
+ * and tries to parse and reconstruct them into valid V2Ray URIs if they represent NapsternetV / NPV configs.
+ */
+function extractBase64NpvConfigs(text: string): string[] {
+  const extractedUris: string[] = [];
+  const base64Regex = /eyJ[a-zA-Z0-9+/=\s]{30,}/g;
+  const matches = text.match(base64Regex);
+  if (!matches) return [];
+
+  for (const match of matches) {
+    const cleaned = match.replace(/\s+/g, '');
+    try {
+      const decoded = Buffer.from(cleaned, 'base64').toString('utf8');
+      if (
+        decoded.includes('"configVersion"') || 
+        decoded.includes('"configType"') || 
+        decoded.includes('"rawLink"') || 
+        decoded.includes('"configName"') ||
+        (decoded.includes('"remarks"') && (decoded.includes('"uuid"') || decoded.includes('"id"')))
+      ) {
+        const json = JSON.parse(decoded);
+        if (json.rawLink) {
+          extractedUris.push(json.rawLink);
+        } else if (json.address && json.port && (json.uuid || json.id)) {
+          // Reconstruct standard config if rawLink is missing
+          const protocol = json.protocol || json.type || 'vless';
+          let link = '';
+          if (protocol === 'vless' || protocol === 'trojan' || protocol === 'ss') {
+            const remark = json.remarks || json.configName || 'NPVScraped';
+            const uuid = json.uuid || json.id || '';
+            link = `${protocol}://${uuid}@${json.address}:${json.port}?security=${json.security || 'none'}&sni=${json.sni || ''}&type=${json.network || json.type || 'tcp'}&path=${encodeURIComponent(json.path || '')}#${encodeURIComponent(remark)}`;
+            extractedUris.push(link);
+          } else if (protocol === 'vmess') {
+            const vmessJson = {
+              v: "2",
+              ps: json.remarks || json.configName || "NPVScraped",
+              add: json.address,
+              port: json.port,
+              id: json.uuid || json.id || '',
+              aid: "0",
+              scy: "auto",
+              net: json.network || json.type || "tcp",
+              type: "none",
+              host: json.host || "",
+              path: json.path || "",
+              tls: json.security === 'tls' || json.tls === true ? "tls" : "none",
+              sni: json.sni || ""
+            };
+            const vmessBase64 = Buffer.from(JSON.stringify(vmessJson)).toString('base64');
+            extractedUris.push(`vmess://${vmessBase64}`);
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore invalid JSON or base64
+    }
+  }
+  return extractedUris;
+}
+
+/**
  * Extracts configuration protocols from HTML or plain text
  */
 function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] {
@@ -1193,11 +1275,15 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
   // Look for configuration protocols (vless://, vmess://, trojan://, ss://, npv://, hy2://, hysteria2://)
   // Matching up to a space, double quote, single quote, less-than, greater-than, newline or backtick
   const regex = /(vless|vmess|trojan|ss|npv):\/\/[^\s"'<>\`\\|]+/gi;
-  const matches = cleanText.match(regex);
-  if (!matches) return [];
+  const matches = cleanText.match(regex) || [];
+
+  // Also parse raw base64-encoded NPV configurations
+  const base64Configs = extractBase64NpvConfigs(cleanText);
+  const allMatches = [...matches, ...base64Configs];
+  if (allMatches.length === 0) return [];
 
   const extracted: ConfigItem[] = [];
-  const uniqueRaw = Array.from(new Set(matches));
+  const uniqueRaw = Array.from(new Set(allMatches));
 
   for (const raw of uniqueRaw) {
     // Basic formatting cleanups
@@ -1960,7 +2046,7 @@ function getSponsorChannelInlineButton() {
 }
 
 /**
- * Sends an NPV Tunnel configuration file (.npv) to a Telegram user.
+ * Sends an NPV Tunnel configuration file (.npvt) to a Telegram user.
  */
 async function sendNpvFile(chatId: string | number, configText: string, filename: string, caption: string, replyMarkup?: any): Promise<boolean> {
   const token = db.settings.botToken;
@@ -3606,7 +3692,7 @@ async function handleBotUpdate(update: any) {
       
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
-        text: '🌀 **دریافت کانفیگ‌های NPV Tunnel**\n\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید:\n*(در این بخش کانفیگ‌های V2Ray تبدیل شده به فرمت NPV به صورت فایل با پسوند .npv برای شما ارسال خواهد شد)*',
+        text: '🌀 **دریافت کانفیگ‌های NPV Tunnel**\n\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید:\n*(در این بخش کانفیگ‌های V2Ray تبدیل شده به فرمت NPV به صورت فایل با پسوند .npvt برای شما ارسال خواهد شد)*',
         parse_mode: 'Markdown',
         reply_markup: qtyKeyboard
       });
@@ -3678,24 +3764,12 @@ async function handleBotUpdate(update: any) {
           reply_markup: inlineKeyboard || getReplyKeyboard(userId)
         });
       } else {
-        msg = `🌀 <b>کانفیگ‌های اختصاصی NPV Tunnel صادر شد</b>\n\n`;
+        msg = `🌀 <b>فایل‌های کانفیگ اختصاصی NPV Tunnel صادر شد</b>\n\n`;
         msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
         msg += `🔒 مخصوص کلاینت <b>NapsternetV</b> در گوشی‌های اندروید و آیفون\n`;
         msg += `⚡️ اتصال: همراه اول، ایرانسل، مخابرات و رایتل\n`;
         msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
-
-        selected.forEach((conf, idx) => {
-          const npvConfig = convertV2rayToNpv(conf.raw, db.settings.branding);
-          const latencyText = conf.latency ? `(پینگ: ${conf.latency}ms)` : '';
-          
-          msg += `⚡ <b>کانفیگ NPV شماره ${idx + 1}</b> [${conf.protocol.toUpperCase()}] ${latencyText}:\n`;
-          msg += `<code>${npvConfig}</code>\n\n`;
-        });
-
-        msg += `📍 <b>راهنمای سریع اتصال:</b>\n`;
-        msg += `۱. روی یکی از کدهای NPV متنی فوق ضربه بزنید تا کپی شود.\n`;
-        msg += `۲. برنامه NapsternetV را باز کرده و از منوی بالا گزینه <b>Import Config from Clipboard</b> را بزنید.\n\n`;
-        msg += `📥 همچنین فایل‌های با پسوند <b>.npv</b> در زیر برای شما ارسال شدند که می‌توانید مستقیماً دانلود و در نرم‌افزار ایمپورت کنید.`;
+        msg += `📥 فایل‌های کانفیگ با پسوند <b>.npvt</b> در زیر برای شما ارسال شدند. کافیست آن‌ها را دانلود کرده و مستقیماً در نرم‌افزار NapsternetV ایمپورت کنید (از بخش Configs دکمه مثبت بالا را زده و گزینه Import npvt config file یا Import npv config file را انتخاب کنید).`;
 
         const sponsorBtn = getSponsorChannelInlineButton();
         const inlineKeyboard = sponsorBtn ? {
@@ -3709,13 +3783,14 @@ async function handleBotUpdate(update: any) {
           reply_markup: inlineKeyboard || getReplyKeyboard(userId)
         });
 
-        // Send actual .npv files!
+        // Send actual .npvt files!
         for (let i = 0; i < selected.length; i++) {
           const conf = selected[i];
           const npvConfig = convertV2rayToNpv(conf.raw, db.settings.branding);
           const cleanBranding = (db.settings.branding || 'NPV').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_');
-          const filename = `${cleanBranding}_Config_${i + 1}.npv`;
-          const caption = `🌀 فایل کانفیگ NPV Tunnel شماره ${i + 1}\n🔒 مخصوص وارد کردن در نرم‌افزار NapsternetV`;
+          const filename = `${cleanBranding}_Config_${i + 1}.npvt`;
+          const latencyText = conf.latency ? `\n⚡ پینگ: ${conf.latency}ms` : '';
+          const caption = `🌀 فایل کانفیگ NPV Tunnel شماره ${i + 1} [${conf.protocol.toUpperCase()}]${latencyText}\n🔒 مخصوص وارد کردن در نرم‌افزار NapsternetV`;
           await sendNpvFile(chatId, npvConfig, filename, caption, inlineKeyboard);
         }
       }
