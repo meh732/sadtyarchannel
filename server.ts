@@ -977,20 +977,14 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
       return resolve({ working: false, latency: 999 });
     }
 
-    try {
-      fs.chmodSync(xrayPath, '755');
-    } catch (e) {}
-
     let isFinished = false;
     let child: any = null;
-
-    let curlInterval: NodeJS.Timeout;
 
     const cleanup = () => {
       if (isFinished) return;
       isFinished = true;
       clearTimeout(globalTimeout);
-      clearInterval(curlInterval);
+      clearTimeout(curlTimer);
       if (child) {
         try { child.kill('SIGKILL'); } catch (e) {}
       }
@@ -1004,7 +998,7 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
 
     const globalTimeout = setTimeout(() => {
       finish(false, 999);
-    }, 7000);
+    }, 4500);
 
     try {
       child = spawn(xrayPath, ['-config', configPath], { stdio: 'ignore' });
@@ -1013,20 +1007,16 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
       return finish(false, 999);
     }
 
-    const curlCmd = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 3`;
-    let attempts = 0;
-
-    const runCurl = () => {
+    const curlTimer = setTimeout(() => {
       if (isFinished) return;
-      attempts++;
+
+      const curlCmd = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 3`;
+      
       exec(curlCmd, { timeout: 3500 }, (error, stdout) => {
         if (isFinished) return;
 
         if (error || !stdout) {
-          if (attempts >= 6) {
-            return finish(false, 999);
-          }
-          return; // Will retry on next interval
+          return finish(false, 999);
         }
 
         const output = stdout.trim();
@@ -1039,16 +1029,9 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
           return finish(true, latencyMs);
         }
 
-        if (attempts >= 6) {
-          finish(false, 999);
-        }
+        finish(false, 999);
       });
-    };
-
-    // Retry every 1000ms
-    curlInterval = setInterval(runCurl, 1000);
-    // Initial delay for Xray to start
-    setTimeout(runCurl, 500);
+    }, 250);
   });
 }
 
@@ -1894,7 +1877,7 @@ async function testProxiesBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 10;
+  const CONCURRENCY = 25;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
@@ -1952,7 +1935,7 @@ async function testConfigsBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 10;
+  const CONCURRENCY = 25;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
@@ -1961,7 +1944,7 @@ async function testConfigsBatch(ids: string[]) {
 
       const checkResult = await withHardTimeout(
         () => checkConfigFully(config.raw),
-        15000,
+        4000,
         { working: false, latency: 999 }
       );
       
@@ -2066,26 +2049,20 @@ async function executeAutoPost(): Promise<boolean> {
 
     // Get configs
     const workingConfigs = db.configs.filter(c => c.status === 'working');
-    let availableConfigs = workingConfigs;
-    if (availableConfigs.length === 0) {
-      availableConfigs = db.configs.filter(c => c.status === 'untested').slice(0, 50);
-    }
+    const availableConfigs = workingConfigs.length > 0 ? workingConfigs : db.configs.slice(0, 50);
     const shuffledConfigs = [...availableConfigs].sort(() => 0.5 - Math.random());
     const configLimit = typeof settings.configCount === 'number' ? settings.configCount : 1;
     const selectedConfigs = shuffledConfigs.slice(0, Math.min(configLimit, shuffledConfigs.length));
 
     // Get proxies
     const workingProxies = (db.proxies || []).filter(p => p.status === 'working');
-    let availableProxies = workingProxies;
-    if (availableProxies.length === 0) {
-      availableProxies = (db.proxies || []).filter(p => p.status === 'untested').slice(0, 50);
-    }
+    const availableProxies = workingProxies.length > 0 ? workingProxies : (db.proxies || []).slice(0, 50);
     const shuffledProxies = [...availableProxies].sort(() => 0.5 - Math.random());
     const proxyLimit = typeof settings.proxyCount === 'number' ? settings.proxyCount : 1;
     const selectedProxies = shuffledProxies.slice(0, Math.min(proxyLimit, shuffledProxies.length));
 
     if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
-      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی فعال یا تست‌نشده‌ای در دیتابیس یافت نشد.');
+      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی فعالی در دیتابیس یافت نشد.');
       return false;
     }
 
@@ -2096,10 +2073,9 @@ async function executeAutoPost(): Promise<boolean> {
       const conf = selectedConfigs[i];
       const loc = await getIpLocation(conf.server);
       const flag = getFlagEmoji(loc.countryCode);
-      const pingText = conf.status === 'working' ? (conf.latency ? `پینگ: ${conf.latency}ms` : 'پورت: فعال') : 'وضعیت: بررسی نشده';
-      const statusIcon = conf.status === 'working' ? '🟢' : '⚪';
+      const pingText = conf.latency ? `پینگ: ${conf.latency}ms` : 'پورت: فعال';
       
-      text += `${statusIcon} **کانفیگ شماره ${i + 1}** [${conf.protocol.toUpperCase()}]\n`;
+      text += `🟢 **کانفیگ شماره ${i + 1}** [${conf.protocol.toUpperCase()}]\n`;
       text += `🔹 ${pingText} | لوکیشن: ${loc.country} ${flag}\n`;
       const brandedRaw = applyBrandingToConfig(conf.raw, db.settings.branding);
       text += `\`${brandedRaw}\`\n\n`;
@@ -2112,9 +2088,8 @@ async function executeAutoPost(): Promise<boolean> {
         const proxy = selectedProxies[i];
         const loc = await getIpLocation(proxy.server);
         const flag = getFlagEmoji(loc.countryCode);
-        const pingText = proxy.status === 'working' ? (proxy.latency ? `پینگ: ${proxy.latency}ms` : 'پورت: فعال') : 'وضعیت: بررسی نشده';
-        const statusIcon = proxy.status === 'working' ? '🟢' : '⚪';
-        text += `${statusIcon} پروکسی ${proxy.type.toUpperCase()} | ${pingText} | کشور: ${loc.country} ${flag}\n`;
+        const pingText = proxy.latency ? `پینگ: ${proxy.latency}ms` : 'پورت: فعال';
+        text += `🔹 پروکسی ${proxy.type.toUpperCase()} | ${pingText} | کشور: ${loc.country} ${flag}\n`;
       }
       text += `\n👇 برای اتصال، روی دکمه‌های شیشه‌ای زیر ضربه بزنید:\n`;
     }
@@ -4008,7 +3983,7 @@ async function handleBotUpdate(update: any) {
 
       if (callbackData === 'admin_ap_conf_count') {
         let count = (db.settings.autoPost.configCount || 0) + 1;
-        if (count > 5) count = 0;
+        if (count > 2) count = 0;
         db.settings.autoPost.configCount = count;
         saveDatabase();
         await answerCallback(`تعداد کانفیگ: ${count} عدد`);
@@ -4018,7 +3993,7 @@ async function handleBotUpdate(update: any) {
 
       if (callbackData === 'admin_ap_proxy_count') {
         let count = (db.settings.autoPost.proxyCount || 0) + 1;
-        if (count > 5) count = 0;
+        if (count > 2) count = 0;
         db.settings.autoPost.proxyCount = count;
         saveDatabase();
         await answerCallback(`تعداد پروکسی: ${count} عدد`);
@@ -4985,7 +4960,7 @@ async function startExpressServer() {
   app.post('/api/settings/test-bot', async (req, res) => {
     try {
       const { botToken } = req.body;
-      const token = (botToken || db.settings.botToken || '').trim();
+      const token = botToken || db.settings.botToken;
       if (!token) {
         return res.status(400).json({ success: false, message: 'توکن ربات وارد نشده است.' });
       }
@@ -5451,7 +5426,7 @@ async function startExpressServer() {
   // API: Bot Status Toggle
   app.post('/api/bot/toggle', async (req, res) => {
     try {
-      if (db.settings.isBotRunning) {
+      if (pollingActive) {
         stopBot();
         res.json({ success: true, isBotRunning: false });
       } else {
