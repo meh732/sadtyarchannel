@@ -1494,6 +1494,37 @@ async function scrapeSource(source: SourceItem): Promise<number> {
     } else {
       extracted = extractConfigsFromText(text, source.name);
       extractedProxies = extractProxiesFromText(text, source.name);
+
+      // Deep scan Telegram channels for attached NPVT / document post files
+      if (source.type === 'telegram') {
+        const handle = source.urlOrHandle.replace(/^@/, '').trim();
+        const msgLinkRegex = new RegExp(`href="(https?:\\/\\/t\\.me\\/(?:s\\/)?${handle}\\/(\\d+))"`, 'gi');
+        const matches = Array.from(text.matchAll(msgLinkRegex));
+        const postUrls: string[] = [];
+        
+        for (const m of matches) {
+          if (m[1]) postUrls.push(m[1].replace('t.me/', 't.me/s/'));
+        }
+        
+        const uniquePostUrls = Array.from(new Set(postUrls)).slice(-12);
+        if (uniquePostUrls.length > 0) {
+          const postResults = await Promise.allSettled(
+            uniquePostUrls.map(pUrl => fetch(pUrl, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36' }
+            }).then(r => r.text()))
+          );
+
+          for (const res of postResults) {
+            if (res.status === 'fulfilled') {
+              const pText = res.value;
+              const pConfigs = extractConfigsFromText(pText, source.name);
+              const pProxies = extractProxiesFromText(pText, source.name);
+              extracted.push(...pConfigs);
+              extractedProxies.push(...pProxies);
+            }
+          }
+        }
+      }
     }
 
     if (!db.proxies) db.proxies = [];
@@ -1542,6 +1573,15 @@ async function testProxiesBatch(ids: string[]) {
   let workingCount = 0;
   let failedCount = 0;
 
+  // Bulk set status to checking first for immediate UI reflection
+  for (const id of ids) {
+    const proxy = db.proxies.find(p => p.id === id);
+    if (proxy && proxy.status !== 'working') {
+      proxy.status = 'checking';
+    }
+  }
+  saveDatabase();
+
   for (const id of ids) {
     const proxy = db.proxies.find(p => p.id === id);
     if (!proxy) continue;
@@ -1578,12 +1618,20 @@ async function testConfigsBatch(ids: string[]) {
   let workingCount = 0;
   let failedCount = 0;
 
+  // Bulk set status to checking first for immediate UI reflection
+  for (const id of ids) {
+    const config = db.configs.find(c => c.id === id);
+    if (config && config.status !== 'working') {
+      config.status = 'checking';
+    }
+  }
+  saveDatabase();
+
   for (const id of ids) {
     const config = db.configs.find(c => c.id === id);
     if (!config) continue;
 
     config.status = 'checking';
-    // Save checking status
     saveDatabase();
 
     const checkResult = await checkConfigFully(config.raw);
@@ -2444,6 +2492,75 @@ async function handleBotUpdate(update: any) {
         }
       }
     };
+
+    // --- Telegram Channel Posts & Document Attachment Scraper ---
+    const channelPost = update.channel_post;
+    if (channelPost) {
+      const pText = channelPost.text || channelPost.caption || '';
+      if (pText) {
+        const cExtracted = extractConfigsFromText(pText, 'پست کانال تلگرام');
+        const pExtracted = extractProxiesFromText(pText, 'پست کانال تلگرام');
+        if (cExtracted.length > 0 || pExtracted.length > 0) {
+          db.configs.unshift(...cExtracted);
+          if (!db.proxies) db.proxies = [];
+          db.proxies.unshift(...pExtracted);
+          saveDatabase();
+          addLog('success', `تعداد ${cExtracted.length} کانفیگ و ${pExtracted.length} پروکسی از پست کانال تلگرام استخراج گردید.`);
+        }
+      }
+      if (channelPost.document) {
+        const cDoc = channelPost.document;
+        if (cDoc.file_name && (cDoc.file_name.endsWith('.npvt') || cDoc.file_name.endsWith('.npv') || cDoc.file_name.endsWith('.txt') || cDoc.file_name.endsWith('.json'))) {
+          try {
+            const fileInfo = await callTelegramApi('getFile', { file_id: cDoc.file_id });
+            if (fileInfo?.file_path) {
+              const fRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${fileInfo.file_path}`);
+              const fContent = await fRes.text();
+              const fExtracted = extractConfigsFromText(fContent, `پست کانال (${cDoc.file_name})`);
+              if (fExtracted.length > 0) {
+                db.configs.unshift(...fExtracted);
+                saveDatabase();
+                addLog('success', `تعداد ${fExtracted.length} کانفیگ با موفقیت از فایل NPVT ارسالی در کانال (${cDoc.file_name}) استخراج شد.`);
+              }
+            }
+          } catch (e: any) {
+            console.error('Channel document download error:', e);
+          }
+        }
+      }
+    }
+
+    // --- Direct User/Admin Document Uploads (.npvt / .npv / .txt) ---
+    if (update.message?.document && chatId) {
+      const uDoc = update.message.document;
+      if (uDoc.file_name && (uDoc.file_name.endsWith('.npvt') || uDoc.file_name.endsWith('.npv') || uDoc.file_name.endsWith('.txt'))) {
+        try {
+          const fileInfo = await callTelegramApi('getFile', { file_id: uDoc.file_id });
+          if (fileInfo?.file_path) {
+            const fRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${fileInfo.file_path}`);
+            const fContent = await fRes.text();
+            const fExtracted = extractConfigsFromText(fContent, `فایل ارسالی (${uDoc.file_name})`);
+            if (fExtracted.length > 0) {
+              db.configs.unshift(...fExtracted);
+              saveDatabase();
+              addLog('success', `تعداد ${fExtracted.length} کانفیگ از فایل NPVT ارسالی (${uDoc.file_name}) استخراج گردید.`);
+              await callTelegramApi('sendMessage', {
+                chat_id: chatId,
+                text: `✅ **تعداد ${fExtracted.length} کانفیگ جدید با موفقیت از فایل ${uDoc.file_name} استخراج و ذخیره شد!**`,
+                parse_mode: 'Markdown'
+              });
+            } else {
+              await callTelegramApi('sendMessage', {
+                chat_id: chatId,
+                text: `⚠️ هیچ کانفیگ معتبری در فایل ${uDoc.file_name} یافت نشد.`
+              });
+            }
+          }
+        } catch (e: any) {
+          console.error('User document processing error:', e);
+        }
+      }
+    }
 
     // --- ADMIN CONTROLS BYPASS ---
     if (isAdmin) {
@@ -3741,7 +3858,16 @@ async function handleBotUpdate(update: any) {
       const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss', 'npv'];
       let available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
       
-      // If we don't have enough working configs, append untested ones
+      if (!isV2ray && available.length < qty) {
+        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+        if (untested.length > 0) {
+          const testIds = untested.slice(0, qty * 2).map(c => c.id);
+          await testConfigsBatch(testIds);
+          available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+        }
+      }
+
+      // If we still don't have enough working configs, append untested ones
       if (available.length < qty) {
         const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
         available = [...available, ...untested];

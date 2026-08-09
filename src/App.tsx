@@ -186,14 +186,21 @@ export default function App() {
     }
   };
 
-  // Initial and periodic data fetch (every 5 seconds)
+  // Initial fetch and adaptive fast polling when testing is active
   useEffect(() => {
     fetchData();
+  }, []);
+
+  useEffect(() => {
+    const isTesting = (stats.checkingConfigsCount || 0) > 0 || (stats.checkingProxiesCount || 0) > 0 || actionLoading === 'test_all';
+    const pollMs = isTesting ? 1500 : 5000;
+
     const interval = setInterval(() => {
       fetchData(true);
-    }, 5000);
+    }, pollMs);
+
     return () => clearInterval(interval);
-  }, []);
+  }, [stats.checkingConfigsCount, stats.checkingProxiesCount, actionLoading]);
 
   // Handle Restore Backup
   const handleRestoreBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1022,13 +1029,25 @@ export default function App() {
                     {/* Stat Card 2 */}
                     <div className="bg-white border border-slate-200 rounded-2xl p-6 flex items-center justify-between shadow-sm">
                       <div className="space-y-2">
-                        <span className="text-xs font-medium text-slate-500">کانفیگ‌های فعال (v2ray)</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-slate-500">کانفیگ‌های فعال (V2Ray / NPV)</span>
+                          {stats.checkingConfigsCount > 0 && (
+                            <span className="flex items-center gap-1 text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded-full animate-pulse">
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                              در حال تست ({stats.checkingConfigsCount})
+                            </span>
+                          )}
+                        </div>
                         <h3 className="text-3xl font-extrabold text-emerald-600">{stats.workingConfigsCount}</h3>
-                        <p className="text-[10px] text-emerald-600">
-                          از کل <strong className="text-slate-700">{stats.totalConfigs}</strong> کانفیگ ذخیره شده
-                        </p>
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <span className="text-emerald-700 font-bold">{stats.workingConfigsCount} فعال</span>
+                          <span className="text-slate-300">•</span>
+                          <span className="text-slate-500">{stats.untestedConfigsCount} تست‌نشده</span>
+                          <span className="text-slate-300">•</span>
+                          <span className="text-slate-400">کل: {stats.totalConfigs}</span>
+                        </div>
                       </div>
-                      <div className="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600">
+                      <div className="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
                         <CheckCircle2 className="w-6 h-6" />
                       </div>
                     </div>
@@ -1036,13 +1055,25 @@ export default function App() {
                     {/* Stat Card 3 */}
                     <div className="bg-white border border-slate-200 rounded-2xl p-6 flex items-center justify-between shadow-sm">
                       <div className="space-y-2">
-                        <span className="text-xs font-medium text-slate-500">پروکسی‌های فعال (تلگرام)</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-slate-500">پروکسی‌های فعال (تلگرام)</span>
+                          {stats.checkingProxiesCount > 0 && (
+                            <span className="flex items-center gap-1 text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded-full animate-pulse">
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                              در حال تست ({stats.checkingProxiesCount})
+                            </span>
+                          )}
+                        </div>
                         <h3 className="text-3xl font-extrabold text-indigo-600">{stats.workingProxiesCount}</h3>
-                        <p className="text-[10px] text-indigo-500">
-                          از کل <strong className="text-slate-700">{stats.totalProxies}</strong> پروکسی استخراج شده
-                        </p>
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <span className="text-indigo-600 font-bold">{stats.workingProxiesCount} فعال</span>
+                          <span className="text-slate-300">•</span>
+                          <span className="text-slate-500">{stats.untestedProxiesCount} تست‌نشده</span>
+                          <span className="text-slate-300">•</span>
+                          <span className="text-slate-400">کل: {stats.totalProxies}</span>
+                        </div>
                       </div>
-                      <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600">
+                      <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
                         <Radio className="w-6 h-6" />
                       </div>
                     </div>
@@ -1056,7 +1087,7 @@ export default function App() {
                           کانفیگ و پروکسی جدید در ۲۴ ساعت گذشته
                         </p>
                       </div>
-                      <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center text-slate-600">
+                      <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center text-slate-600 shrink-0">
                         <Database className="w-6 h-6" />
                       </div>
                     </div>
@@ -1064,15 +1095,23 @@ export default function App() {
 
                   {/* Quick Actions Panel */}
                   <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                      <Sliders className="w-4 h-4 text-slate-600" />
-                      <span>عملیات کنترل سریع سیستم</span>
+                    <h3 className="text-sm font-bold text-slate-800 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sliders className="w-4 h-4 text-indigo-600" />
+                        <span>عملیات کنترل سریع سیستم</span>
+                      </div>
+                      {((stats.checkingConfigsCount || 0) > 0 || (stats.checkingProxiesCount || 0) > 0 || actionLoading === 'test_all') && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[10px] font-bold animate-pulse">
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          <span>عملیات تست پورت در حال اجراست...</span>
+                        </span>
+                      )}
                     </h3>
                     <div className="flex flex-wrap gap-3">
                       <button
                         onClick={handleScrapeAll}
                         disabled={actionLoading === 'scrape_all'}
-                        className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                        className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
                       >
                         <RefreshCw className={`w-4 h-4 ${actionLoading === 'scrape_all' ? 'animate-spin' : ''}`} />
                         <span>اجرای پویش دستی و استخراج کانفیگ‌ها</span>
@@ -1080,10 +1119,10 @@ export default function App() {
 
                       <button
                         onClick={handleTestAllPorts}
-                        disabled={actionLoading === 'test_all'}
-                        className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                        disabled={actionLoading === 'test_all' || (stats.checkingConfigsCount || 0) > 0}
+                        className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
                       >
-                        <Play className="w-4 h-4" />
+                        <Play className={`w-4 h-4 ${((stats.checkingConfigsCount || 0) > 0 || actionLoading === 'test_all') ? 'animate-spin' : ''}`} />
                         <span>تست اتصال پورت کل کانفیگ‌ها</span>
                       </button>
 
@@ -1107,7 +1146,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Visual Colored Testing Progress Bar Card */}
+                  {/* Connected Visual Animated Testing Progress Bar Card */}
                   {(() => {
                     const totalItems = (stats.totalConfigs || 0) + (stats.totalProxies || 0);
                     const totalWorking = (stats.workingConfigsCount || 0) + (stats.workingProxiesCount || 0);
@@ -1120,46 +1159,54 @@ export default function App() {
                     const checkingPct = totalItems > 0 ? (totalChecking / totalItems) * 100 : 0;
                     const untestedPct = totalItems > 0 ? (totalUntested / totalItems) * 100 : 0;
 
+                    const isActivelyChecking = totalChecking > 0 || actionLoading === 'test_all';
+
                     return (
                       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
                         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                           <div>
                             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                              <Sliders className="w-4 h-4 text-indigo-600" />
-                              <span>نوار پیشرفت وضعیت تست پورت و صف بررسی</span>
+                              <Sliders className={`w-4 h-4 ${isActivelyChecking ? 'text-amber-500 animate-spin' : 'text-indigo-600'}`} />
+                              <span>نوار پیشرفت زنده وضعیت تست پورت و صف بررسی</span>
                             </h3>
                             <p className="text-xs text-slate-500 mt-0.5">
-                              تعداد تست‌نشده‌ها و در صف بررسی به‌صورت پویا با انجام تست‌ها کاهش می‌یابد.
+                              اطلاعات کاشی‌های بالا و نوار پیشرفت کاملاً متصل و همگام هستند و با انجام تست‌ها جابه‌جا می‌شوند.
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
+                            {isActivelyChecking && (
+                              <span className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-bold flex items-center gap-1.5 animate-pulse">
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                                در حال بررسی {totalChecking} مورد
+                              </span>
+                            )}
                             <span className="px-3 py-1 bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold">
                               مجموع کل: {totalItems} مورد
                             </span>
                           </div>
                         </div>
 
-                        {/* Multi-Segmented Colorful Progress Bar */}
-                        <div className="w-full h-4 bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                        {/* Multi-Segmented Animated Progress Bar */}
+                        <div className="w-full h-5 bg-slate-100 rounded-xl overflow-hidden flex shadow-inner border border-slate-200 relative">
                           <div 
                             style={{ width: `${workingPct}%` }} 
                             className="bg-emerald-500 h-full transition-all duration-500" 
-                            title={`فعال: ${totalWorking}`}
+                            title={`فعال: ${totalWorking} مورد (${workingPct.toFixed(1)}%)`}
                           />
                           <div 
                             style={{ width: `${failedPct}%` }} 
                             className="bg-rose-500 h-full transition-all duration-500" 
-                            title={`خراب: ${totalFailed}`}
+                            title={`خراب: ${totalFailed} مورد (${failedPct.toFixed(1)}%)`}
                           />
                           <div 
                             style={{ width: `${checkingPct}%` }} 
-                            className="bg-amber-500 h-full animate-pulse transition-all duration-500" 
-                            title={`در حال تست: ${totalChecking}`}
+                            className="bg-amber-500 h-full animate-stripe transition-all duration-500" 
+                            title={`در حال تست: ${totalChecking} مورد (${checkingPct.toFixed(1)}%)`}
                           />
                           <div 
                             style={{ width: `${untestedPct}%` }} 
                             className="bg-slate-300 h-full transition-all duration-500" 
-                            title={`تست نشده: ${totalUntested}`}
+                            title={`تست نشده: ${totalUntested} مورد (${untestedPct.toFixed(1)}%)`}
                           />
                         </div>
 
@@ -1170,7 +1217,7 @@ export default function App() {
                               <p className="text-[10px] font-medium text-emerald-600">فعال (Working)</p>
                               <p className="text-lg font-extrabold text-emerald-700 mt-0.5">{totalWorking}</p>
                             </div>
-                            <div className="w-3 h-3 rounded-full bg-emerald-500" />
+                            <div className="w-3.5 h-3.5 rounded-full bg-emerald-500 shadow-sm" />
                           </div>
 
                           <div className="bg-rose-50 border border-rose-100 rounded-xl p-3 flex items-center justify-between">
@@ -1178,15 +1225,18 @@ export default function App() {
                               <p className="text-[10px] font-medium text-rose-600">خراب (Failed)</p>
                               <p className="text-lg font-extrabold text-rose-700 mt-0.5">{totalFailed}</p>
                             </div>
-                            <div className="w-3 h-3 rounded-full bg-rose-500" />
+                            <div className="w-3.5 h-3.5 rounded-full bg-rose-500 shadow-sm" />
                           </div>
 
                           <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex items-center justify-between">
                             <div>
-                              <p className="text-[10px] font-medium text-amber-600">در حال تست (Checking)</p>
+                              <p className="text-[10px] font-medium text-amber-600 flex items-center gap-1">
+                                {totalChecking > 0 && <RefreshCw className="w-3 h-3 animate-spin text-amber-600" />}
+                                <span>در حال تست (Checking)</span>
+                              </p>
                               <p className="text-lg font-extrabold text-amber-700 mt-0.5">{totalChecking}</p>
                             </div>
-                            <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse" />
+                            <div className="w-3.5 h-3.5 rounded-full bg-amber-500 animate-pulse shadow-sm" />
                           </div>
 
                           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between">
@@ -1194,7 +1244,7 @@ export default function App() {
                               <p className="text-[10px] font-medium text-slate-500">تست نشده (Untested)</p>
                               <p className="text-lg font-extrabold text-slate-700 mt-0.5">{totalUntested}</p>
                             </div>
-                            <div className="w-3 h-3 rounded-full bg-slate-300" />
+                            <div className="w-3.5 h-3.5 rounded-full bg-slate-300 shadow-sm" />
                           </div>
                         </div>
                       </div>
