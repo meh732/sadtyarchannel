@@ -242,6 +242,79 @@ function applyBrandingToConfig(rawConfig: string, brandingText: string): string 
 }
 
 /**
+ * Converts a V2Ray (VMess, VLESS, Trojan, SS) config to NPV Tunnel (npv://) base64 format.
+ */
+function convertV2rayToNpv(v2rayConfig: string, branding: string): string {
+  try {
+    const parsed = parseConfigHostPort(v2rayConfig);
+    if (!parsed.host || !parsed.port) {
+      return v2rayConfig; // return original if we can't parse
+    }
+    
+    // Construct NPV-compatible JSON structure
+    const npvJson: any = {
+      remarks: branding || parsed.remark || 'NPV Config',
+      v2rayHost: parsed.host,
+      v2rayPort: parsed.port,
+      host: parsed.host,
+      port: parsed.port,
+      address: parsed.host,
+      protocol: parsed.protocol === 'unknown' ? 'vless' : parsed.protocol,
+      security: 'tls', // default fallback
+      type: 'ws',      // default fallback
+      uuid: '00000000-0000-0000-0000-000000000000', // default dummy
+    };
+
+    // If it's vmess, let's try to extract deeper parameters
+    const trimmed = v2rayConfig.trim();
+    if (trimmed.startsWith('vmess://')) {
+      const base64Part = trimmed.substring(8).trim();
+      const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
+      const vmessJson = JSON.parse(decoded);
+      npvJson.v2rayHost = vmessJson.add || parsed.host;
+      npvJson.v2rayPort = Number(vmessJson.port) || parsed.port;
+      npvJson.host = vmessJson.add || parsed.host;
+      npvJson.port = Number(vmessJson.port) || parsed.port;
+      npvJson.address = vmessJson.add || parsed.host;
+      npvJson.remarks = branding || vmessJson.ps || parsed.remark;
+      // Copy other vmess parameters to npvJson
+      Object.assign(npvJson, {
+        uuid: vmessJson.id || npvJson.uuid,
+        network: vmessJson.net || 'tcp',
+        type: vmessJson.type || 'none',
+        security: vmessJson.tls === 'tls' ? 'tls' : 'none',
+        sni: vmessJson.sni || vmessJson.host || '',
+        path: vmessJson.path || '',
+        hostHeader: vmessJson.host || ''
+      });
+    } else if (trimmed.startsWith('vless://') || trimmed.startsWith('trojan://') || trimmed.startsWith('ss://')) {
+      // Parse parameters from query string
+      const urlPart = trimmed.split('#')[0];
+      const qIndex = urlPart.indexOf('?');
+      if (qIndex !== -1) {
+        const queryStr = urlPart.substring(qIndex + 1);
+        const params = new URLSearchParams(queryStr);
+        npvJson.security = params.get('security') || 'tls';
+        npvJson.type = params.get('type') || 'ws';
+        npvJson.sni = params.get('sni') || '';
+        npvJson.path = params.get('path') || '';
+        // Extract uuid or userinfo
+        const atIndex = urlPart.indexOf('@');
+        const pIndex = urlPart.indexOf('://');
+        if (pIndex !== -1 && atIndex !== -1) {
+          npvJson.uuid = urlPart.substring(pIndex + 3, atIndex);
+        }
+      }
+    }
+
+    const payload = Buffer.from(JSON.stringify(npvJson)).toString('base64');
+    return `npv://${payload}`;
+  } catch (e) {
+    return v2rayConfig; // Fallback
+  }
+}
+
+/**
  * Extracts connection host/IP and port from any v2ray/npv config for testing
  */
 function parseConfigHostPort(rawConfig: string): { host: string; port: number; protocol: ProtocolType; remark: string } {
@@ -1380,21 +1453,21 @@ function getReplyKeyboard(userId: string | number) {
 
   const keyboard: any[][] = [
     [
-      { text: '📥 دریافت کانفیگ ویتوری' },
-      { text: '🌀 دریافت کانفیگ NPV' }
+      { text: '📥 دریافت کانفیگ ویتوری ⚡' },
+      { text: '🌀 دریافت کانفیگ NPV تانل 💎' }
     ],
     [
-      { text: '🔌 دریافت پروکسی تلگرام' },
-      { text: '📊 وضعیت شبکه' }
+      { text: '🔌 دریافت پروکسی تلگرام 🚀' },
+      { text: '📊 وضعیت شبکه و پینگ نت 🟢' }
     ],
     [
-      { text: 'ℹ️ راهنمای اتصال' }
+      { text: 'ℹ️ راهنمای اتصال گام به گام 📚' }
     ]
   ];
 
   if (isAdmin) {
     // Show Admin Panel quick shortcut button directly in the bar below the chat for the admin!
-    keyboard.push([{ text: '⚙️ ورود به پنل مدیریت' }]);
+    keyboard.push([{ text: '⚙️ ورود به پنل مدیریت 🔴' }]);
   }
 
   return {
@@ -1492,17 +1565,18 @@ async function handleBotUpdate(update: any) {
     if (!chatId) return;
 
     // --- Map persistent custom keyboard buttons to standard commands/callbacks ---
-    if (messageText === '📥 دریافت کانفیگ ویتوری') {
+    const cleanMsg = messageText ? messageText.trim() : '';
+    if (cleanMsg.includes('دریافت کانفیگ ویتوری') || cleanMsg.includes('ویتوری')) {
       callbackData = 'get_v2ray_configs';
-    } else if (messageText === '🌀 دریافت کانفیگ NPV') {
+    } else if (cleanMsg.includes('دریافت کانفیگ NPV') || cleanMsg.includes('NPV')) {
       callbackData = 'get_npv_configs';
-    } else if (messageText === '🔌 دریافت پروکسی تلگرام') {
+    } else if (cleanMsg.includes('دریافت پروکسی') || cleanMsg.includes('پروکسی')) {
       callbackData = 'get_proxies';
-    } else if (messageText === '📊 وضعیت شبکه') {
+    } else if (cleanMsg.includes('وضعیت شبکه') || cleanMsg.includes('وضعیت اتصال')) {
       callbackData = 'get_net_status';
-    } else if (messageText === 'ℹ️ راهنمای اتصال') {
+    } else if (cleanMsg.includes('راهنمای اتصال') || cleanMsg.includes('راهنما')) {
       callbackData = 'get_help';
-    } else if (messageText === '⚙️ ورود به پنل مدیریت') {
+    } else if (cleanMsg.includes('ورود به پنل مدیریت') || cleanMsg.includes('پنل مدیریت')) {
       messageText = '/admin';
     }
 
@@ -1743,6 +1817,53 @@ async function handleBotUpdate(update: any) {
           return;
         }
 
+        if (state.action === 'await_add_src') {
+          if (!messageText || messageText.trim() === '') {
+            await callTelegramApi('sendMessage', { chat_id: chatId, text: '⚠️ اطلاعات ارسالی نامعتبر است.' });
+            return;
+          }
+          const parts = messageText.split('|');
+          if (parts.length < 3) {
+            await callTelegramApi('sendMessage', {
+              chat_id: chatId,
+              text: '⚠️ فرمت وارد شده صحیح نیست. باید با کاراکتر خط عمودی | جدا کنید:\n`نوع_منبع|نام_منبع|آدرس_یا_آیدی`'
+            });
+            return;
+          }
+          const typeRaw = parts[0].trim().toLowerCase();
+          const type = (typeRaw === 'telegram' || typeRaw === 'sub' || typeRaw === 'github') ? typeRaw : null;
+          const name = parts[1].trim();
+          const urlOrHandle = parts[2].trim();
+
+          if (!type) {
+            await callTelegramApi('sendMessage', {
+              chat_id: chatId,
+              text: '⚠️ نوع منبع نامعتبر است. فقط مقادیر زیر مجاز هستند:\n`telegram` یا `sub` یا `github`'
+            });
+            return;
+          }
+
+          const newSrc: SourceItem = {
+            id: generateId(),
+            type,
+            name,
+            urlOrHandle,
+            enabled: true,
+            extractedCount: 0,
+            lastExtracted: null
+          };
+
+          db.sources.push(newSrc);
+          saveDatabase();
+          delete adminStates[chatId];
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `✅ منبع استخراج جدید با موفقیت ثبت و فعال گردید:\n\n🌐 **${name}** (${type})\n🔗 ${urlOrHandle}`,
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به مدیریت منابع', callback_data: 'admin_sources_list' }]] }
+          });
+          return;
+        }
+
         if (state.action === 'await_autopost_channel') {
           if (!messageText || messageText.trim() === '') {
             await callTelegramApi('sendMessage', { chat_id: chatId, text: '⚠️ شناسه کانال هدف نامعتبر است.' });
@@ -1796,6 +1917,9 @@ async function handleBotUpdate(update: any) {
             [
               { text: `📢 عضویت اجباری (Force Join)`, callback_data: 'admin_fj_list', style: 'primary' },
               { text: `📝 تنظیم ارسال خودکار`, callback_data: 'admin_autopost_menu', style: 'primary' }
+            ],
+            [
+              { text: `🌐 مدیریت منابع استخراج (کانال/لینک)`, callback_data: 'admin_sources_list', style: 'primary' }
             ],
             [
               { text: `🔍 پایش ۵ روزه کانال`, callback_data: 'admin_monitor_menu', style: 'primary' },
@@ -2153,6 +2277,81 @@ async function handleBotUpdate(update: any) {
           await answerCallback(`کانال ${name} حذف شد`);
         }
         await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_fj_list' } });
+        return;
+      }
+
+      // --- Extraction Sources List ---
+      if (callbackData === 'admin_sources_list') {
+        await answerCallback('مدیریت منابع استخراج...');
+        let msg = `🌐 **پیکربندی و مدیریت منابع استخراج کانفیگ و پروکسی**\n\nدر این بخش می‌توانید کانال‌های تلگرامی، لینک‌های ساب و گیت‌هاب که ربات به صورت خودکار از آن‌ها کانفیگ استخراج می‌کند را مدیریت کنید:\n\n`;
+        const keyboard: any[] = [];
+
+        if (db.sources.length === 0) {
+          msg += `❌ هیچ منبع استخراجی ثبت نشده است.`;
+        } else {
+          db.sources.forEach((src, idx) => {
+            const lastDate = src.lastExtracted ? new Date(src.lastExtracted).toLocaleString('fa-IR') : 'هرگز';
+            msg += `🔹 ${idx + 1}. **${src.name}** [نوع: ${src.type}]\n`;
+            msg += `وضعیت: ${src.enabled ? '🟢 فعال' : '🔴 غیرفعال'}\n`;
+            msg += `آدرس/آیدی: \`${src.urlOrHandle}\`\n`;
+            msg += `تعداد استخراج شده: **${src.extractedCount || 0} کانفیگ**\n`;
+            msg += `آخرین استخراج: **${lastDate}**\n\n`;
+            
+            keyboard.push([
+              { text: `❌ حذف ${src.name}`, callback_data: `admin_src_del_${src.id}` },
+              { text: `${src.enabled ? '🔴 غیرفعال' : '🟢 فعال'}`, callback_data: `admin_src_toggle_${src.id}` }
+            ]);
+          });
+        }
+
+        keyboard.push([{ text: '➕ افزودن منبع استخراج جدید', callback_data: 'admin_src_add' }]);
+        keyboard.push([{ text: '🔙 بازگشت به منوی مدیریت', callback_data: 'admin_menu' }]);
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: msg,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        return;
+      }
+
+      if (callbackData === 'admin_src_add') {
+        adminStates[chatId] = { action: 'await_add_src' };
+        await answerCallback('افزودن منبع...');
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `➕ **افزودن منبع استخراج جدید**\n\nلطفاً اطلاعات منبع را به فرمت دقیق زیر برای من ارسال کنید (با کاراکتر خط عمودی | جدا کنید):\n\n\`نوع_منبع|نام_منبع|آدرس_یا_آیدی\`\n\n**راهنمای نوع منبع:**\n- برای کانال تلگرام از کلمه: \`telegram\`\n- برای لینک ساب اختصاصی از کلمه: \`sub\`\n- برای آدرس گیت‌هاب از کلمه: \`github\`\n\n**مثال‌ها:**\n1️⃣ کانال تلگرامی:\n\`telegram|کانال ویتوری اصلی|@v2ray_channel\`\n\n2️⃣ لینک ساب/اشتراک:\n\`sub|ساب‌پک اختصاصی|https://raw.githubusercontent.com/.../main/sub\`\n\n3️⃣ مخزن گیت‌هاب:\n\`github|گیت‌هاب ویتوری|https://github.com/...\`\n\nبرای انصراف دکمه **انصراف 🔙** را بزنید یا کلمه **لغو** را بفرستید.`,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[{ text: '🔙 انصراف', callback_data: 'admin_sources_list' }]]
+          }
+        });
+        return;
+      }
+
+      if (callbackData?.startsWith('admin_src_toggle_')) {
+        const id = callbackData.replace('admin_src_toggle_', '');
+        const src = db.sources.find(s => s.id === id);
+        if (src) {
+          src.enabled = !src.enabled;
+          saveDatabase();
+          await answerCallback(`تغییر وضعیت منبع به: ${src.enabled ? 'فعال' : 'غیرفعال'}`);
+        }
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_sources_list' } });
+        return;
+      }
+
+      if (callbackData?.startsWith('admin_src_del_')) {
+        const id = callbackData.replace('admin_src_del_', '');
+        const idx = db.sources.findIndex(s => s.id === id);
+        if (idx !== -1) {
+          const name = db.sources[idx].name;
+          db.sources.splice(idx, 1);
+          saveDatabase();
+          await answerCallback(`منبع ${name} حذف شد`);
+        }
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_sources_list' } });
         return;
       }
 
@@ -2559,7 +2758,66 @@ async function handleBotUpdate(update: any) {
     }
 
     if (callbackData === 'get_v2ray_configs') {
-      await answerCallback('در حال آماده‌سازی کانفیگ‌های ویتوری...');
+      await answerCallback('در حال آماده‌سازی منو ویتوری...');
+      
+      const qtyKeyboard = {
+        inline_keyboard: [
+          [
+            { text: '1️⃣ یک عدد', callback_data: 'v2ray_qty_1' },
+            { text: '2️⃣ دو عدد', callback_data: 'v2ray_qty_2' }
+          ],
+          [
+            { text: '3️⃣ سه عدد', callback_data: 'v2ray_qty_3' },
+            { text: '5️⃣ پنج عدد', callback_data: 'v2ray_qty_5' }
+          ],
+          [
+            { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main' }
+          ]
+        ]
+      };
+      
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: '📥 **دریافت کانفیگ‌های V2Ray (ویتوری)**\n\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید تا برای اپراتورهای همراه اول، ایرانسل و مخابرات بهترین‌ها ارسال گردند:',
+        parse_mode: 'Markdown',
+        reply_markup: qtyKeyboard
+      });
+      return;
+    }
+
+    if (callbackData === 'get_npv_configs') {
+      await answerCallback('در حال آماده‌سازی منو NPV...');
+      
+      const qtyKeyboard = {
+        inline_keyboard: [
+          [
+            { text: '1️⃣ یک عدد', callback_data: 'npv_qty_1' },
+            { text: '2️⃣ دو عدد', callback_data: 'npv_qty_2' }
+          ],
+          [
+            { text: '3️⃣ سه عدد', callback_data: 'npv_qty_3' },
+            { text: '5️⃣ پنج عدد', callback_data: 'npv_qty_5' }
+          ],
+          [
+            { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main' }
+          ]
+        ]
+      };
+      
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: '🌀 **دریافت کانفیگ‌های NPV Tunnel**\n\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید:\n*(در این بخش کانفیگ‌های V2Ray تبدیل شده به فرمت NPV به شما ارائه خواهد شد)*',
+        parse_mode: 'Markdown',
+        reply_markup: qtyKeyboard
+      });
+      return;
+    }
+
+    if (callbackData && (callbackData.startsWith('v2ray_qty_') || callbackData.startsWith('npv_qty_'))) {
+      const isV2ray = callbackData.startsWith('v2ray_qty_');
+      const qty = parseInt(callbackData.split('_')[2]) || 3;
+      
+      await answerCallback('در حال استخراج و ساخت کانفیگ...');
       
       // Filter configurations
       const available = db.configs.filter(c => c.status === 'working' && ['vmess', 'vless', 'trojan', 'ss'].includes(c.protocol));
@@ -2568,82 +2826,57 @@ async function handleBotUpdate(update: any) {
       if (list.length === 0) {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: '❌ متاسفانه در حال حاضر کانفیگ تست‌شده ویتوری در دیتابیس موجود نیست. تیم ما هم‌اکنون در حال استخراج و بررسی خودکار است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
+          text: '❌ متاسفانه در حال حاضر کانفیگ تست‌شده فعال در دیتابیس موجود نیست. تیم ما هم‌اکنون در حال استخراج و بررسی خودکار است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
         });
         return;
       }
 
-      // Shuffle and pick 3 configs
+      // Shuffle and pick requested quantity
       const shuffled = [...list].sort(() => 0.5 - Math.random());
-      const selected = shuffled.slice(0, 3);
+      const selected = shuffled.slice(0, qty);
       
-      let msg = `📥 **کانفیگ‌های اختصاصی V2Ray**\n`;
-      msg += `🔔 اتصال: همراه اول، ایرانسل، مخابرات و وای‌فای خانگی\n`;
-      msg += `🏷️ برندینگ انحصاری: \`${db.settings.branding}\`\n\n`;
+      let msg = '';
+      if (isV2ray) {
+        msg = `📥 <b>کانفیگ‌های اختصاصی V2Ray (ویتوری)</b>\n`;
+        msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
+        msg += `⚡️ اتصال: همراه اول، ایرانسل، مخابرات و رایتل\n`;
+        msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
 
-      selected.forEach((conf, idx) => {
-        // Apply custom branding before sending
-        const branded = applyBrandingToConfig(conf.raw, db.settings.branding);
-        const latencyText = conf.latency ? `(پینگ: ${conf.latency}ms)` : '';
-        
-        msg += `⚡ **کانفیگ ${idx + 1}** [${conf.protocol.toUpperCase()}] ${latencyText}:\n`;
-        msg += `\`${branded}\`\n\n`;
-      });
+        selected.forEach((conf, idx) => {
+          const branded = applyBrandingToConfig(conf.raw, db.settings.branding);
+          const latencyText = conf.latency ? `(پینگ: ${conf.latency}ms)` : '';
+          
+          msg += `⚡ <b>کانفیگ ${idx + 1}</b> [${conf.protocol.toUpperCase()}] ${latencyText}:\n`;
+          msg += `<code>${branded}</code>\n\n`;
+        });
 
-      msg += `📍 جهت کپی روی کانفیگ‌ها ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
+        msg += `📍 جهت کپی روی کانفیگ‌ها ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
+      } else {
+        msg = `🌀 <b>کانفیگ‌های اختصاصی NPV Tunnel</b>\n`;
+        msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
+        msg += `🔒 برای نرم‌افزار NapsternetV در گوشی‌های اندروید و آیفون\n`;
+        msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
+
+        selected.forEach((conf, idx) => {
+          // Convert V2Ray config to NPV format!
+          const npvConfig = convertV2rayToNpv(conf.raw, db.settings.branding);
+          const latencyText = conf.latency ? `(پینگ: ${conf.latency}ms)` : '';
+          
+          msg += `💎 <b>کانفیگ تانل NPV ${idx + 1}</b> ${latencyText}:\n`;
+          msg += `<code>${npvConfig}</code>\n\n`;
+        });
+
+        msg += `📍 جهت کپی روی کانفیگ‌ها ضربه بزنید. سپس در نرم‌افزار NapsternetV وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
+      }
 
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: msg,
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
         reply_markup: getReplyKeyboard(userId)
       });
 
       // Increment statistics
-      const idx = db.users.findIndex(u => u.chatId === chatId);
-      if (idx !== -1) db.users[idx].configsFetched += selected.length;
-      saveDatabase();
-      return;
-    }
-
-    if (callbackData === 'get_npv_configs') {
-      await answerCallback('در حال آماده‌سازی کانفیگ‌های NPV...');
-      
-      // Filter NPV configs
-      const available = db.configs.filter(c => c.status === 'working' && c.protocol === 'npv');
-      const list = available.length > 0 ? available : db.configs.filter(c => c.protocol === 'npv').slice(0, 30);
-
-      if (list.length === 0) {
-        await callTelegramApi('sendMessage', {
-          chat_id: chatId,
-          text: '❌ در حال حاضر کانفیگ NapsternetV (npv://) جدیدی در سیستم ثبت نشده است. هم‌اکنون سیستم در حال پویش است. برای جبران می‌توانید از بخش کانفیگ‌های V2ray در منو استفاده کنید.'
-        });
-        return;
-      }
-
-      // Shuffle and pick 2 configs
-      const shuffled = [...list].sort(() => 0.5 - Math.random());
-      const selected = shuffled.slice(0, 2);
-
-      let msg = `🌀 **کانفیگ‌های اختصاصی NPV Tunnel**\n`;
-      msg += `🔒 برای نرم‌افزار NapsternetV در گوشی‌های اندروید و آیفون\n`;
-      msg += `🏷️ برندینگ: \`${db.settings.branding}\`\n\n`;
-
-      selected.forEach((conf, idx) => {
-        const branded = applyBrandingToConfig(conf.raw, db.settings.branding);
-        msg += `💎 **کانفیگ تانل NPV ${idx + 1}**:\n`;
-        msg += `\`${branded}\`\n\n`;
-      });
-
-      msg += `📍 برای کپی روی متن ضربه بزنید.\n\n🆔 ${db.settings.branding}`;
-
-      await callTelegramApi('sendMessage', {
-        chat_id: chatId,
-        text: msg,
-        parse_mode: 'Markdown',
-        reply_markup: getReplyKeyboard(userId)
-      });
-
       const idx = db.users.findIndex(u => u.chatId === chatId);
       if (idx !== -1) db.users[idx].configsFetched += selected.length;
       saveDatabase();
