@@ -1331,9 +1331,49 @@ async function sendBackupToAdmin(): Promise<boolean> {
 }
 
 /**
+ * Helper to get sponsor or branding telegram channel button.
+ */
+function getSponsorChannelInlineButton() {
+  let url = 'https://t.me';
+  let label = '📢 عضویت در کانال رسمی ما';
+
+  // 1. Check if there are active force join channels
+  const activeFj = db.forceJoinChannels.find(c => c.enabled && c.username);
+  if (activeFj) {
+    url = activeFj.inviteLink || `https://t.me/${activeFj.username.replace('@', '')}`;
+    label = `📢 کانال رسمی ما: ${activeFj.title}`;
+    return { text: label, url };
+  }
+
+  // 2. Check branding for channel handle
+  const branding = db.settings.branding || '';
+  if (branding.includes('@')) {
+    const handle = branding.match(/@[a-zA-Z0-9_]+/)?.[0]?.replace('@', '');
+    if (handle) {
+      url = `https://t.me/${handle}`;
+      label = `📢 عضویت در کانال ${branding}`;
+      return { text: label, url };
+    }
+  }
+
+  // 3. Check autoPost.adText
+  const adText = db.settings.autoPost?.adText || '';
+  if (adText.includes('@')) {
+    const handle = adText.match(/@[a-zA-Z0-9_]+/)?.[0]?.replace('@', '');
+    if (handle) {
+      url = `https://t.me/${handle}`;
+      label = `📢 عضویت در کانال اسپانسر`;
+      return { text: label, url };
+    }
+  }
+
+  return { text: label, url };
+}
+
+/**
  * Sends an NPV Tunnel configuration file (.npv) to a Telegram user.
  */
-async function sendNpvFile(chatId: string | number, configText: string, filename: string, caption: string): Promise<boolean> {
+async function sendNpvFile(chatId: string | number, configText: string, filename: string, caption: string, replyMarkup?: any): Promise<boolean> {
   const token = db.settings.botToken;
   if (!token) return false;
   try {
@@ -1344,6 +1384,9 @@ async function sendNpvFile(chatId: string | number, configText: string, filename
     formData.append('document', blob, filename);
     if (caption) {
       formData.append('caption', caption);
+    }
+    if (replyMarkup) {
+      formData.append('reply_markup', JSON.stringify(replyMarkup));
     }
 
     const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
@@ -1481,21 +1524,21 @@ function getReplyKeyboard(userId: string | number) {
 
   const keyboard: any[][] = [
     [
-      { text: '📥 دریافت کانفیگ ویتوری ⚡' },
-      { text: '🌀 دریافت کانفیگ NPV تانل 💎' }
+      { text: '📥 دریافت کانفیگ ویتوری ⚡', style: 'success' },
+      { text: '🌀 دریافت کانفیگ NPV تانل 💎', style: 'success' }
     ],
     [
-      { text: '🔌 دریافت پروکسی تلگرام 🚀' },
-      { text: '📊 وضعیت شبکه و پینگ نت 🟢' }
+      { text: '🔌 دریافت پروکسی تلگرام 🚀', style: 'primary' },
+      { text: '📊 وضعیت شبکه و پینگ نت 🟢', style: 'primary' }
     ],
     [
-      { text: 'ℹ️ راهنمای اتصال گام به گام 📚' }
+      { text: 'ℹ️ راهنمای اتصال گام به گام 📚', style: 'primary' }
     ]
   ];
 
   if (isAdmin) {
     // Show Admin Panel quick shortcut button directly in the bar below the chat for the admin!
-    keyboard.push([{ text: '⚙️ ورود به پنل مدیریت 🔴' }]);
+    keyboard.push([{ text: '⚙️ ورود به پنل مدیریت 🔴', style: 'danger' }]);
   }
 
   return {
@@ -1809,26 +1852,61 @@ async function handleBotUpdate(update: any) {
           return;
         }
 
-        if (state.action === 'await_add_fj') {
+        if (state.action === 'await_fj_username') {
           if (!messageText || messageText.trim() === '') {
-            await callTelegramApi('sendMessage', { chat_id: chatId, text: '⚠️ اطلاعات ارسالی نامعتبر است.' });
+            await callTelegramApi('sendMessage', { chat_id: chatId, text: '⚠️ آیدی وارد شده نامعتبر است.' });
             return;
           }
-          const parts = messageText.split('|');
-          if (parts.length < 2) {
-            await callTelegramApi('sendMessage', {
-              chat_id: chatId,
-              text: '⚠️ فرمت وارد شده صحیح نیست. باید با کاراکتر خط عمودی | جدا کنید:\n`@آیدی_کانال|عنوان_کانال|لینک_دعوت_اختیاری`'
-            });
+          let username = messageText.trim();
+          if (!username.startsWith('@')) {
+            username = '@' + username;
+          }
+          adminStates[chatId] = { action: 'await_fj_title', data: { username } };
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `📢 **افزودن کانال حامی جدید - مرحله ۲ از ۳**\n\nآیدی کانال با موفقیت ثبت شد: \`${username}\`\n\nحالا **عنوان یا نام نمایشی کانال** را ارسال کنید:\n*(مثال: کانال رسمی ویتوری)*`,
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[{ text: '🔙 انصراف', callback_data: 'admin_fj_list' }]]
+            }
+          });
+          return;
+        }
+
+        if (state.action === 'await_fj_title') {
+          if (!messageText || messageText.trim() === '') {
+            await callTelegramApi('sendMessage', { chat_id: chatId, text: '⚠️ عنوان وارد شده نامعتبر است.' });
             return;
           }
-          const username = parts[0].trim();
-          const title = parts[1].trim();
-          const inviteLink = parts[2] ? parts[2].trim() : `https://t.me/${username.replace('@', '')}`;
+          const title = messageText.trim();
+          const username = state.data?.username;
+          adminStates[chatId] = { action: 'await_fj_link', data: { username, title } };
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `📢 **افزودن کانال حامی جدید - مرحله ۳ از ۳**\n\nنام نمایشی ثبت شد: \`${title}\`\n\nحالا **لینک دعوت کامل کانال** را بفرستید، یا اگر می‌خواهید لینک پیش‌فرض ساخته شود دکمه زیر را کلیک کنید:`,
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '🔗 ساخت لینک دعوت پیش‌فرض', callback_data: 'admin_fj_default_link' }],
+                [{ text: '🔙 انصراف', callback_data: 'admin_fj_list' }]
+              ]
+            }
+          });
+          return;
+        }
+
+        if (state.action === 'await_fj_link') {
+          if (!messageText || messageText.trim() === '') {
+            await callTelegramApi('sendMessage', { chat_id: chatId, text: '⚠️ لینک وارد شده نامعتبر است.' });
+            return;
+          }
+          const inviteLink = messageText.trim();
+          const username = state.data?.username;
+          const title = state.data?.title;
 
           const newCh: ForceJoinChannel = {
             id: generateId(),
-            username: username.startsWith('@') ? username : `@${username}`,
+            username,
             title,
             inviteLink,
             enabled: true
@@ -1839,37 +1917,40 @@ async function handleBotUpdate(update: any) {
           delete adminStates[chatId];
           await callTelegramApi('sendMessage', {
             chat_id: chatId,
-            text: `✅ کانال حامی با موفقیت ثبت و فعال گردید:\n\n📢 **${title}** (${newCh.username})`,
+            text: `✅ کانال حامی با موفقیت ثبت و فعال گردید:\n\n📢 **${title}** (${username})\n🔗 ${inviteLink}`,
+            parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به مدیریت کانال‌ها', callback_data: 'admin_fj_list' }]] }
           });
           return;
         }
 
-        if (state.action === 'await_add_src') {
+        if (state.action === 'await_src_name') {
           if (!messageText || messageText.trim() === '') {
-            await callTelegramApi('sendMessage', { chat_id: chatId, text: '⚠️ اطلاعات ارسالی نامعتبر است.' });
+            await callTelegramApi('sendMessage', { chat_id: chatId, text: '⚠️ نام وارد شده نامعتبر است.' });
             return;
           }
-          const parts = messageText.split('|');
-          if (parts.length < 3) {
-            await callTelegramApi('sendMessage', {
-              chat_id: chatId,
-              text: '⚠️ فرمت وارد شده صحیح نیست. باید با کاراکتر خط عمودی | جدا کنید:\n`نوع_منبع|نام_منبع|آدرس_یا_آیدی`'
-            });
-            return;
-          }
-          const typeRaw = parts[0].trim().toLowerCase();
-          const type = (typeRaw === 'telegram' || typeRaw === 'sub' || typeRaw === 'github') ? typeRaw : null;
-          const name = parts[1].trim();
-          const urlOrHandle = parts[2].trim();
+          const name = messageText.trim();
+          const type = state.data?.type;
+          adminStates[chatId] = { action: 'await_src_val', data: { type, name } };
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `🌐 **افزودن منبع جدید - مرحله ۳ از ۳**\n\nنام منبع ثبت شد: \`${name}\`\n\nحالا **آدرس کامل یا آیدی منبع** را ارسال کنید:\n*(برای کانال تلگرام مثل @v2ray_outline و برای گیت‌هاب یا لینک ساب آدرس کامل لینک)*`,
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[{ text: '🔙 انصراف', callback_data: 'admin_sources_list' }]]
+            }
+          });
+          return;
+        }
 
-          if (!type) {
-            await callTelegramApi('sendMessage', {
-              chat_id: chatId,
-              text: '⚠️ نوع منبع نامعتبر است. فقط مقادیر زیر مجاز هستند:\n`telegram` یا `sub` یا `github`'
-            });
+        if (state.action === 'await_src_val') {
+          if (!messageText || messageText.trim() === '') {
+            await callTelegramApi('sendMessage', { chat_id: chatId, text: '⚠️ آدرس وارد شده نامعتبر است.' });
             return;
           }
+          const urlOrHandle = messageText.trim();
+          const type = state.data?.type;
+          const name = state.data?.name;
 
           const newSrc: SourceItem = {
             id: generateId(),
@@ -1886,8 +1967,26 @@ async function handleBotUpdate(update: any) {
           delete adminStates[chatId];
           await callTelegramApi('sendMessage', {
             chat_id: chatId,
-            text: `✅ منبع استخراج جدید با موفقیت ثبت و فعال گردید:\n\n🌐 **${name}** (${type})\n🔗 ${urlOrHandle}`,
+            text: `✅ منبع استخراج جدید با موفقیت ثبت و فعال گردید:\n\n🌐 **${name}** (${type})\n🔗 \`${urlOrHandle}\``,
+            parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به مدیریت منابع', callback_data: 'admin_sources_list' }]] }
+          });
+          return;
+        }
+
+        if (state.action === 'await_autopost_ad') {
+          if (!messageText || messageText.trim() === '') {
+            await callTelegramApi('sendMessage', { chat_id: chatId, text: '⚠️ متن ارسالی نامعتبر است.' });
+            return;
+          }
+          db.settings.autoPost.adText = messageText.trim();
+          saveDatabase();
+          delete adminStates[chatId];
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `✅ تبلیغات با موفقیت تغییر یافت به:\n\`${db.settings.autoPost.adText}\``,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به تنظیمات خودکار', callback_data: 'admin_autopost_menu' }]] }
           });
           return;
         }
@@ -2270,15 +2369,46 @@ async function handleBotUpdate(update: any) {
       }
 
       if (callbackData === 'admin_fj_add') {
-        adminStates[chatId] = { action: 'await_add_fj' };
+        adminStates[chatId] = { action: 'await_fj_username' };
         await answerCallback('افزودن اسپانسر...');
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `➕ **افزودن کانال حامی جدید**\n\nلطفاً اطلاعات کانال را به فرمت دقیق زیر برای من ارسال کنید:\n\n\`@آیدی_کانال|عنوان_نمایشی_کانال|لینک_دعوت_اختیاری\`\n\nمثال:\n\`@MyChannel|کانال رسمی ویتوری|https://t.me/MyChannel\``,
+          text: `📢 **افزودن کانال حامی جدید - مرحله ۱ از ۳**\n\nلطفاً **آیدی کانال** حامی جدید را همراه با @ ارسال کنید:\n*(مثال: @MyChannel)*`,
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [[{ text: '🔙 انصراف', callback_data: 'admin_fj_list' }]]
           }
+        });
+        return;
+      }
+
+      if (callbackData === 'admin_fj_default_link') {
+        const state = adminStates[chatId];
+        if (!state || state.action !== 'await_fj_link') {
+          await answerCallback('⚠️ خطایی رخ داد، مجدداً تلاش کنید.', true);
+          return;
+        }
+        const username = state.data?.username;
+        const title = state.data?.title;
+        const inviteLink = `https://t.me/${username.replace('@', '')}`;
+
+        const newCh: ForceJoinChannel = {
+          id: generateId(),
+          username,
+          title,
+          inviteLink,
+          enabled: true
+        };
+
+        db.forceJoinChannels.push(newCh);
+        saveDatabase();
+        delete adminStates[chatId];
+        await answerCallback('لینک پیش‌فرض ساخته شد');
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `✅ کانال حامی با موفقیت ثبت و فعال گردید:\n\n📢 **${title}** (${username})\n🔗 ${inviteLink}`,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به مدیریت کانال‌ها', callback_data: 'admin_fj_list' }]] }
         });
         return;
       }
@@ -2345,11 +2475,37 @@ async function handleBotUpdate(update: any) {
       }
 
       if (callbackData === 'admin_src_add') {
-        adminStates[chatId] = { action: 'await_add_src' };
-        await answerCallback('افزودن منبع...');
+        await answerCallback('انتخاب نوع منبع...');
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `➕ **افزودن منبع استخراج جدید**\n\nلطفاً اطلاعات منبع را به فرمت دقیق زیر برای من ارسال کنید (با کاراکتر خط عمودی | جدا کنید):\n\n\`نوع_منبع|نام_منبع|آدرس_یا_آیدی\`\n\n**راهنمای نوع منبع:**\n- برای کانال تلگرام از کلمه: \`telegram\`\n- برای لینک ساب اختصاصی از کلمه: \`sub\`\n- برای آدرس گیت‌هاب از کلمه: \`github\`\n\n**مثال‌ها:**\n1️⃣ کانال تلگرامی:\n\`telegram|کانال ویتوری اصلی|@v2ray_channel\`\n\n2️⃣ لینک ساب/اشتراک:\n\`sub|ساب‌پک اختصاصی|https://raw.githubusercontent.com/.../main/sub\`\n\n3️⃣ مخزن گیت‌هاب:\n\`github|گیت‌هاب ویتوری|https://github.com/...\`\n\nبرای انصراف دکمه **انصراف 🔙** را بزنید یا کلمه **لغو** را بفرستید.`,
+          text: `🌐 **افزودن منبع استخراج جدید - مرحله ۱ از ۳**\n\nلطفاً **نوع منبع** مورد نظر خود را از دکمه‌های زیر انتخاب کنید:`,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '📢 کانال تلگرام', callback_data: 'admin_src_set_type_telegram' },
+                { text: '🐙 مخزن گیت‌هاب', callback_data: 'admin_src_set_type_github' }
+              ],
+              [
+                { text: '🔗 لینک ساب v2ray', callback_data: 'admin_src_set_type_sub' }
+              ],
+              [
+                { text: '🔙 انصراف', callback_data: 'admin_sources_list' }
+              ]
+            ]
+          }
+        });
+        return;
+      }
+
+      if (callbackData?.startsWith('admin_src_set_type_')) {
+        const type = callbackData.replace('admin_src_set_type_', '');
+        adminStates[chatId] = { action: 'await_src_name', data: { type } };
+        const typeLabel = type === 'telegram' ? 'کانال تلگرام' : type === 'github' ? 'مخزن گیت‌هاب' : 'لینک ساب v2ray';
+        await answerCallback(typeLabel);
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `🌐 **افزودن منبع جدید - مرحله ۲ از ۳**\n\nنوع منبع انتخاب شد: **${typeLabel}**\n\nحالا **یک نام نمایشی دلخواه** برای این منبع ارسال کنید:\n*(مثال: کانال مرجع ویتوری)*`,
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [[{ text: '🔙 انصراف', callback_data: 'admin_sources_list' }]]
@@ -2426,7 +2582,8 @@ async function handleBotUpdate(update: any) {
             { text: `🔌 پروکسی: ${ap.proxyCount} عدد`, callback_data: 'admin_ap_proxy_count' }
           ],
           [
-            { text: `✍️ تغییر متن اصلی پست`, callback_data: 'admin_ap_edit_text' }
+            { text: `✍️ تغییر متن اصلی پست`, callback_data: 'admin_ap_edit_text' },
+            { text: `📢 ویرایش تبلیغات (Sponsor Ad)`, callback_data: 'admin_ap_edit_ad' }
           ],
           [
             { text: `🚀 ارسال فوری همین حالا (تست)`, callback_data: 'admin_ap_trigger' }
@@ -2481,6 +2638,20 @@ async function handleBotUpdate(update: any) {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
           text: `✍️ **ویرایش متن توضیحات پست خودکار**\n\nلطفاً متن جدیدی که دوست دارید در شروع هر پست خودکار قرار بگیرد را بفرستید:\n\nمتن فعلی:\n\`${db.settings.autoPost.customText}\``,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[{ text: '🔙 انصراف', callback_data: 'admin_autopost_menu' }]]
+          }
+        });
+        return;
+      }
+
+      if (callbackData === 'admin_ap_edit_ad') {
+        adminStates[chatId] = { action: 'await_autopost_ad' };
+        await answerCallback('ویرایش تبلیغات...');
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `📢 **تنظیم تبلیغات اسپانسر (Sponsor Ad)**\n\nاین متن به عنوان دکمه شیشه‌ای یا لینک اسپانسر در انتهای پست‌های ارسال خودکار و همچنین در انتهای پیام‌های صادر شده برای کاربران قرار می‌گیرد.\n\nمی‌توانید یک آیدی کانال با @ (مثل @MyChannel) یا لینک یا متن دلخواه بفرستید.\n\nتبلیغات فعلی: \`${db.settings.autoPost.adText || 'تنظیم نشده'}\`\n\nلطفاً متن جدید خود را بفرستید:`,
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [[{ text: '🔙 انصراف', callback_data: 'admin_autopost_menu' }]]
@@ -2879,40 +3050,39 @@ async function handleBotUpdate(update: any) {
         });
 
         msg += `📍 جهت کپی روی کانفیگ‌ها ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
-      } else {
-        msg = `🌀 <b>کانفیگ‌های اختصاصی NPV Tunnel</b>\n`;
-        msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
-        msg += `🔒 فایل‌های با پسوند <b>.npv</b> مخصوص کلاینت NapsternetV در اندروید و آیفون\n`;
-        msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
 
-        selected.forEach((conf, idx) => {
-          // Convert V2Ray config to NPV format!
-          const npvConfig = convertV2rayToNpv(conf.raw, db.settings.branding);
-          const latencyText = conf.latency ? `(پینگ: ${conf.latency}ms)` : '';
-          
-          msg += `💎 <b>کانفیگ تانل NPV ${idx + 1}</b> ${latencyText}:\n`;
-          msg += `<code>${npvConfig}</code>\n\n`;
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: msg,
+          parse_mode: 'HTML',
+          reply_markup: getReplyKeyboard(userId)
+        });
+      } else {
+        msg = `🌀 <b>فایل‌های کانفیگ اختصاصی NPV Tunnel صادر شد</b>\n\n`;
+        msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
+        msg += `🔒 مخصوص کلاینت NapsternetV در گوشی‌های اندروید و آیفون\n\n`;
+        msg += `📥 فایل‌های با پسوند <b>.npv</b> در زیر برای شما ارسال شدند. کافیست آن‌ها را دانلود کرده و مستقیماً وارد نرم‌افزار کنید.`;
+
+        const sponsorBtn = getSponsorChannelInlineButton();
+        const inlineKeyboard = sponsorBtn ? {
+          inline_keyboard: [[{ text: sponsorBtn.text, url: sponsorBtn.url }]]
+        } : undefined;
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: msg,
+          parse_mode: 'HTML',
+          reply_markup: inlineKeyboard || getReplyKeyboard(userId)
         });
 
-        msg += `📍 جهت کپی دستی می‌توانید روی متن بالا ضربه بزنید. همچنین فایل‌های قابل نصب (.npv) نیز در زیر برای شما فرستاده شد:\n\n🆔 ${db.settings.branding}`;
-      }
-
-      await callTelegramApi('sendMessage', {
-        chat_id: chatId,
-        text: msg,
-        parse_mode: 'HTML',
-        reply_markup: getReplyKeyboard(userId)
-      });
-
-      // If requested NPV configs, let's also send them as real .npv files!
-      if (!isV2ray) {
+        // Send actual .npv files!
         for (let i = 0; i < selected.length; i++) {
           const conf = selected[i];
           const npvConfig = convertV2rayToNpv(conf.raw, db.settings.branding);
           const cleanBranding = (db.settings.branding || 'NPV').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '_');
           const filename = `${cleanBranding}_Config_${i + 1}.npv`;
           const caption = `🌀 فایل کانفیگ NPV Tunnel شماره ${i + 1}\n🔒 مخصوص وارد کردن در نرم‌افزار NapsternetV`;
-          await sendNpvFile(chatId, npvConfig, filename, caption);
+          await sendNpvFile(chatId, npvConfig, filename, caption, inlineKeyboard);
         }
       }
 
