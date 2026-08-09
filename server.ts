@@ -1331,17 +1331,24 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
       continue;
     }
 
+    const isNpvFormat = rawConfig.startsWith('npv://') || 
+                        rawConfig.startsWith('npvt://') || 
+                        info.protocol === 'npv' || 
+                        sourceName.toLowerCase().includes('npv') ||
+                        sourceName.toLowerCase().includes('npvt');
+
     extracted.push({
       id: generateId(),
       raw: rawConfig,
-      protocol: info.protocol,
+      protocol: isNpvFormat ? 'npv' : info.protocol,
       remark: info.remark,
       server: info.host,
       port: info.port,
       source: sourceName,
       status: 'untested',
       latency: null,
-      lastChecked: null
+      lastChecked: null,
+      isNpv: isNpvFormat
     });
   }
 
@@ -3821,8 +3828,20 @@ async function handleBotUpdate(update: any) {
     }
 
     if (callbackData === 'get_npv_configs') {
-      await answerCallback('در حال آماده‌سازی منو NPV...');
+      await answerCallback('در حال بررسی فایل‌های NPV...');
       
+      const extractedNpv = db.configs.filter(c => c.isNpv || c.protocol === 'npv' || c.raw.startsWith('npv') || c.source.toLowerCase().includes('npv') || c.source.toLowerCase().includes('npvt'));
+
+      if (extractedNpv.length === 0) {
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `⚠️ <b>فایل کانفیگ NapsternetV (.NPVT) در دیتابیس یافت نشد!</b>\n\nربات هنوز هیچ فایل یا لینک با فرمت NPVT را از کانال‌های تلگرامی استخراج نکرده است.\n\n<b>توضیح روند سیستم:</b>\nکانال‌های منبع باید فایل‌های NapsternetV (.npvt) را منتشر کرده باشند تا ربات آنها را از کانال‌ها استخراج کند، سپس تست سلامت پورت روی آنها انجام شده، نام آنها به برند انحصاری شما (<b>${db.settings.branding}</b>) تغییر کرده و در این بخش فایل .npvt اصلی صادر گردد.\n\nلطفاً از پنل مدیریت، کانال‌های منبع حاوی فایل NPVT را افزوده و پویش دستی را اجرا نمایید.`,
+          parse_mode: 'HTML',
+          reply_markup: getReplyKeyboard(userId)
+        });
+        return;
+      }
+
       const qtyKeyboard = {
         inline_keyboard: [
           [
@@ -3841,8 +3860,8 @@ async function handleBotUpdate(update: any) {
       
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
-        text: '🌀 **دریافت کانفیگ‌های NPV Tunnel**\n\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید:\n*(در این بخش کانفیگ‌های V2Ray تبدیل شده به فرمت NPV به صورت فایل با پسوند .npvt برای شما ارسال خواهد شد)*',
-        parse_mode: 'Markdown',
+        text: `🌀 <b>دریافت کانفیگ‌های NapsternetV (.NPVT)</b>\n\nتعداد ${extractedNpv.length} فایل NPVT استخراج شده از کانال‌ها در دیتابیس موجود است.\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید:\n*(کانفیگ‌ها به اسم برند <b>${db.settings.branding}</b> تغییر نام داده شده و به صورت فایل .npvt ارسال می‌گردند)*`,
+        parse_mode: 'HTML',
         reply_markup: qtyKeyboard
       });
       return;
@@ -3852,41 +3871,76 @@ async function handleBotUpdate(update: any) {
       const isV2ray = callbackData.startsWith('v2ray_qty_');
       const qty = parseInt(callbackData.split('_')[2]) || 3;
       
-      await answerCallback('در حال استخراج و ساخت کانفیگ...');
+      await answerCallback('در حال آماده‌سازی و تغییر نام کانفیگ...');
       
-      // Smart filter: prioritize working configs of compatible protocols (including npv)
-      const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss', 'npv'];
-      let available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
-      
-      if (!isV2ray && available.length < qty) {
-        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
-        if (untested.length > 0) {
-          const testIds = untested.slice(0, qty * 2).map(c => c.id);
-          await testConfigsBatch(testIds);
-          available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+      let list: ConfigItem[] = [];
+
+      if (isV2ray) {
+        const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss'];
+        let available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+        
+        if (available.length < qty) {
+          const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+          if (untested.length > 0) {
+            const testIds = untested.slice(0, qty * 2).map(c => c.id);
+            await testConfigsBatch(testIds);
+            available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+          }
         }
-      }
 
-      // If we still don't have enough working configs, append untested ones
-      if (available.length < qty) {
-        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
-        available = [...available, ...untested];
-      }
-      
-      // If still empty, filter out failed ones
-      if (available.length === 0) {
-        available = db.configs.filter(c => allowedProtocols.includes(c.protocol) && c.status !== 'failed');
-      }
-      
-      // Final fallback to absolutely any configs of compatible protocols
-      const list = available.length > 0 ? available : db.configs.filter(c => allowedProtocols.includes(c.protocol)).slice(0, 50);
+        if (available.length < qty) {
+          const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+          available = [...available, ...untested];
+        }
+        
+        if (available.length === 0) {
+          available = db.configs.filter(c => allowedProtocols.includes(c.protocol) && c.status !== 'failed');
+        }
+        
+        list = available.length > 0 ? available : db.configs.filter(c => allowedProtocols.includes(c.protocol)).slice(0, 50);
 
-      if (list.length === 0) {
-        await callTelegramApi('sendMessage', {
-          chat_id: chatId,
-          text: '❌ متاسفانه در حال حاضر کانفیگ تست‌شده فعال در دیتابیس موجود نیست. تیم ما هم‌اکنون در حال استخراج و بررسی خودکار است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
-        });
-        return;
+        if (list.length === 0) {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده فعال در دیتابیس موجود نیست. تیم ما هم‌اکنون در حال استخراج و بررسی خودکار است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
+          });
+          return;
+        }
+      } else {
+        // NPVT Configs logic
+        const npvConfigs = db.configs.filter(c => c.isNpv || c.protocol === 'npv' || c.raw.startsWith('npv') || c.source.toLowerCase().includes('npv') || c.source.toLowerCase().includes('npvt'));
+
+        if (npvConfigs.length === 0) {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `⚠️ <b>فایل کانفیگ NapsternetV (.NPVT) در دیتابیس یافت نشد!</b>\n\nربات هنوز فایلهای NPVT را از کانال‌های تلگرامی استخراج نکرده است. کانال‌های مبدا باید فایل‌های NPVT داشته باشند تا ربات آنها را استخراج، تست سلامت کرده و تغییر نام دهد.`,
+            parse_mode: 'HTML',
+            reply_markup: getReplyKeyboard(userId)
+          });
+          return;
+        }
+
+        let available = npvConfigs.filter(c => c.status === 'working');
+
+        if (available.length < qty) {
+          const untested = npvConfigs.filter(c => c.status === 'untested');
+          if (untested.length > 0) {
+            const testIds = untested.slice(0, qty * 3).map(c => c.id);
+            await testConfigsBatch(testIds);
+            available = npvConfigs.filter(c => c.status === 'working');
+          }
+        }
+
+        if (available.length < qty) {
+          const untested = npvConfigs.filter(c => c.status === 'untested');
+          available = [...available, ...untested];
+        }
+
+        if (available.length === 0) {
+          available = npvConfigs.filter(c => c.status !== 'failed');
+        }
+
+        list = available.length > 0 ? available : npvConfigs;
       }
 
       // Shuffle and pick requested quantity

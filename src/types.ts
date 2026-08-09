@@ -11,6 +11,7 @@ export interface ConfigItem {
   status: 'working' | 'failed' | 'untested' | 'checking';
   latency: number | null;
   lastChecked: string | null;
+  isNpv?: boolean;
 }
 
 export interface ProxyItem {
