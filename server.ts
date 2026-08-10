@@ -117,6 +117,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   branding: '🌟 @MyChannelConfig',
   isBotRunning: false,
   autoTest: true,
+  autoTestInterval: 10,
   testBatchLimit: 100,
   autoExtractInterval: 30, // minutes
   iranRelayProxy: '',
@@ -3975,12 +3976,12 @@ async function handleBotUpdate(update: any) {
         const limit = db.settings.testBatchLimit || 100;
         await answerCallback(`⏳ بررسی ${limit} کانفیگ اخیر آغاز شد...`, true);
 
-        const recentConfigs = db.configs.slice(-limit);
+        const recentConfigs = db.configs.slice(0, limit);
         const untestedConfigs = recentConfigs.filter(c => c.status === 'untested');
         const targetConfigs = untestedConfigs.length > 0 ? untestedConfigs : recentConfigs;
         const configIds = targetConfigs.map(c => c.id);
 
-        const recentProxies = (db.proxies || []).slice(-limit);
+        const recentProxies = (db.proxies || []).slice(0, limit);
         const untestedProxies = recentProxies.filter(p => p.status === 'untested');
         const targetProxies = untestedProxies.length > 0 ? untestedProxies : recentProxies;
         const proxyIds = targetProxies.map(p => p.id);
@@ -5260,6 +5261,7 @@ function setupIntervals() {
   }, mins * 60 * 1000);
 
   // Auto test interval (every 10 minutes test untested and stale working ones)
+  const testMins = db.settings.autoTestInterval || 10;
   testIntervalRef = setInterval(() => {
     if (db.settings.autoTest) {
       // 1. Untested configs
@@ -5301,7 +5303,7 @@ function setupIntervals() {
         testProxiesBatch(proxiesToTest);
       }
     }
-  }, 10 * 60 * 1000);
+  }, testMins * 60 * 1000);
 
   // Post monitoring check (every 15 minutes)
   monitorIntervalRef = setInterval(() => {
@@ -5506,6 +5508,7 @@ async function startExpressServer() {
         botToken, 
         branding, 
         autoTest, 
+        autoTestInterval,
         autoExtractInterval, 
         testBatchLimit, 
         iranRelayProxy, 
@@ -5545,6 +5548,7 @@ async function startExpressServer() {
 
       db.settings.branding = branding || '@MyChannelConfigs';
       db.settings.autoTest = !!autoTest;
+      db.settings.autoTestInterval = Number(autoTestInterval) || 10;
       db.settings.autoExtractInterval = Number(autoExtractInterval) || 30;
 
       let reconnectNeeded = false;
@@ -5735,7 +5739,7 @@ async function startExpressServer() {
   // API: Test All Configs
   app.post('/api/configs/test-all', (req, res) => {
     const limit = Number(req.body?.limit || req.query?.limit) || db.settings.testBatchLimit || 100;
-    const recentConfigs = db.configs.slice(-limit);
+    const recentConfigs = db.configs.slice(0, limit);
     const ids = recentConfigs.map(c => c.id);
     if (ids.length === 0) {
       return res.json({ success: true, message: 'هیچ کانفیگی جهت تست موجود نیست.' });
@@ -5811,7 +5815,7 @@ async function startExpressServer() {
   app.post('/api/proxies/test-all', (req, res) => {
     if (!db.proxies) db.proxies = [];
     const limit = Number(req.body?.limit || req.query?.limit) || db.settings.testBatchLimit || 100;
-    const recentProxies = db.proxies.slice(-limit);
+    const recentProxies = db.proxies.slice(0, limit);
     const ids = recentProxies.map(p => p.id);
     if (ids.length === 0) {
       return res.json({ success: true, message: 'هیچ پروکسی جهت تست موجود نیست.' });

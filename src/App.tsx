@@ -29,7 +29,7 @@ import {
   Sliders,
   HelpCircle
 } from 'lucide-react';
-import { Download, Upload } from 'lucide-react';
+import { Download, Upload, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ConfigItem, 
@@ -75,6 +75,7 @@ export default function App() {
     branding: '',
     isBotRunning: false,
     autoTest: true,
+    autoTestInterval: 10,
     testBatchLimit: 100,
     autoExtractInterval: 30,
     autoPost: {
@@ -101,11 +102,14 @@ export default function App() {
   const [configSearch, setConfigSearch] = useState('');
   const [configProtocolFilter, setConfigProtocolFilter] = useState<string>('all');
   const [configStatusFilter, setConfigStatusFilter] = useState<string>('all');
+  const [configPage, setConfigPage] = useState<number>(1);
 
   // Proxy Search & Filter States
   const [proxySearch, setProxySearch] = useState('');
   const [proxyTypeFilter, setProxyTypeFilter] = useState<string>('all');
   const [proxyStatusFilter, setProxyStatusFilter] = useState<string>('all');
+  const [proxyPage, setProxyPage] = useState<number>(1);
+
 
   // Form Input States
   const [newSource, setNewSource] = useState({
@@ -196,6 +200,15 @@ export default function App() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setConfigPage(1);
+  }, [configSearch, configProtocolFilter, configStatusFilter]);
+
+  useEffect(() => {
+    setProxyPage(1);
+  }, [proxySearch, proxyTypeFilter, proxyStatusFilter]);
 
   useEffect(() => {
     const isTesting = (stats.checkingConfigsCount || 0) > 0 || (stats.checkingProxiesCount || 0) > 0 || actionLoading === 'test_all';
@@ -799,6 +812,10 @@ export default function App() {
     return matchesSearch && matchesProtocol && matchesStatus;
   });
 
+  const ITEMS_PER_PAGE = 50;
+  const configTotalPages = Math.max(1, Math.ceil(filteredConfigs.length / ITEMS_PER_PAGE));
+  const paginatedConfigs = filteredConfigs.slice((configPage - 1) * ITEMS_PER_PAGE, configPage * ITEMS_PER_PAGE);
+
   // Filtered proxies calculation
   const filteredProxies = proxies.filter(proxy => {
     const matchesSearch = 
@@ -810,6 +827,9 @@ export default function App() {
 
     return matchesSearch && matchesType && matchesStatus;
   });
+
+  const proxyTotalPages = Math.max(1, Math.ceil(filteredProxies.length / ITEMS_PER_PAGE));
+  const paginatedProxies = filteredProxies.slice((proxyPage - 1) * ITEMS_PER_PAGE, proxyPage * ITEMS_PER_PAGE);
 
   return (
     <div className="min-h-screen bg-[#f8fafc]/90 text-slate-800 font-sans flex flex-col md:flex-row relative overflow-hidden" dir="rtl">
@@ -1747,7 +1767,7 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="divide-y divide-slate-100">
-                        {filteredConfigs.slice(0, 150).map((config) => (
+                        {paginatedConfigs.map((config) => (
                           <div key={config.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/50 transition-colors">
                             
                             {/* Left Column info */}
@@ -1820,9 +1840,48 @@ export default function App() {
                       </div>
                     )}
                     
-                    {filteredConfigs.length > 150 && (
-                      <div className="p-4 text-center bg-slate-50 border-t border-slate-100 text-xs text-slate-500">
-                        نمایش ۱۵۰ کانفیگ اول جهت سرعت‌دهی به مرورگر. از فیلترهای جستجو برای یافتن موارد دیگر استفاده کنید.
+                    {configTotalPages > 1 && (
+                      <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50">
+                        <div className="text-xs text-slate-500 font-medium">
+                          نمایش {(configPage - 1) * ITEMS_PER_PAGE + 1} تا {Math.min(configPage * ITEMS_PER_PAGE, filteredConfigs.length)} از {filteredConfigs.length}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setConfigPage(1)}
+                            disabled={configPage === 1}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all"
+                            title="صفحه اول"
+                          >
+                            <ChevronsRight className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setConfigPage(p => Math.max(1, p - 1))}
+                            disabled={configPage === 1}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all"
+                            title="صفحه قبل"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                          <span className="px-3 py-1 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-lg shadow-sm">
+                            صفحه {configPage} از {configTotalPages}
+                          </span>
+                          <button
+                            onClick={() => setConfigPage(p => Math.min(configTotalPages, p + 1))}
+                            disabled={configPage === configTotalPages}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all"
+                            title="صفحه بعد"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setConfigPage(configTotalPages)}
+                            disabled={configPage === configTotalPages}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all"
+                            title="صفحه آخر"
+                          >
+                            <ChevronsLeft className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2076,7 +2135,7 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="divide-y divide-slate-100">
-                        {filteredProxies.slice(0, 150).map((proxy) => (
+                        {paginatedProxies.map((proxy) => (
                           <div key={proxy.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/50 transition-colors">
                             {/* Left details */}
                             <div className="flex-1 space-y-1.5 min-w-0">
@@ -2139,9 +2198,48 @@ export default function App() {
                       </div>
                     )}
 
-                    {filteredProxies.length > 150 && (
-                      <div className="p-4 text-center bg-slate-50 border-t border-slate-100 text-xs text-slate-500">
-                        نمایش ۱۵۰ پروکسی اول جهت بهینه‌سازی سرعت مرورگر.
+                    {proxyTotalPages > 1 && (
+                      <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50">
+                        <div className="text-xs text-slate-500 font-medium">
+                          نمایش {(proxyPage - 1) * ITEMS_PER_PAGE + 1} تا {Math.min(proxyPage * ITEMS_PER_PAGE, filteredProxies.length)} از {filteredProxies.length}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setProxyPage(1)}
+                            disabled={proxyPage === 1}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all"
+                            title="صفحه اول"
+                          >
+                            <ChevronsRight className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setProxyPage(p => Math.max(1, p - 1))}
+                            disabled={proxyPage === 1}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all"
+                            title="صفحه قبل"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                          <span className="px-3 py-1 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-lg shadow-sm">
+                            صفحه {proxyPage} از {proxyTotalPages}
+                          </span>
+                          <button
+                            onClick={() => setProxyPage(p => Math.min(proxyTotalPages, p + 1))}
+                            disabled={proxyPage === proxyTotalPages}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all"
+                            title="صفحه بعد"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setProxyPage(proxyTotalPages)}
+                            disabled={proxyPage === proxyTotalPages}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all"
+                            title="صفحه آخر"
+                          >
+                            <ChevronsLeft className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2591,6 +2689,26 @@ export default function App() {
                         />
                         <p className="text-[10px] text-slate-400">
                           تست پورت‌ها فقط روی این تعداد از آخرین کانفیگ‌های جدید استخراج‌شده انجام می‌شود تا سرعت تست حداکثری باشد.
+                        </p>
+                      </div>
+
+                      {/* Test Interval Input */}
+                      <div className="space-y-2 mt-4">
+                        <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                          <span>فاصله زمانی تست خودکار (دقیقه)</span>
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="1440"
+                          required
+                          value={settings.autoTestInterval || 10}
+                          onChange={(e) => setSettings(prev => ({ ...prev, autoTestInterval: Number(e.target.value) }))}
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none text-left"
+                          dir="ltr"
+                        />
+                        <p className="text-[10px] text-slate-400">
+                          ربات هر چند دقیقه یک‌بار کانفیگ‌های جدید را بررسی کند.
                         </p>
                       </div>
 

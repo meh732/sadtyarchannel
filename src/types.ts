@@ -71,6 +71,7 @@ export interface SystemSettings {
   branding: string; // e.g., "@MyChannel"
   isBotRunning: boolean;
   autoTest: boolean;
+  autoTestInterval?: number; // Ping test interval in minutes
   testBatchLimit?: number; // Batch limit for config testing (default: 100)
   autoExtractInterval: number; // in minutes
   iranRelayProxy?: string; // Optional SOCKS5/HTTP relay proxy in Iran for 100% accurate Iran-net testing (e.g. socks5://185.x.x.x:1080)
