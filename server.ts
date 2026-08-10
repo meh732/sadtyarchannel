@@ -4,7 +4,7 @@ import fs from 'fs';
 import net from 'net';
 import dns from 'dns';
 import tls from 'tls';
-import { spawn, exec } from 'child_process';
+import { spawn, exec, execSync } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { 
   ConfigItem, 
@@ -5349,6 +5349,43 @@ if (db.settings.botToken) {
 async function startExpressServer() {
   const app = express();
   app.use(express.json({ limit: '50mb' }));
+
+  // Ensure xray is executable, working, and clean up leftover config files
+  try {
+    const xrayPath = path.join(process.cwd(), 'bin/xray');
+    const binDir = path.join(process.cwd(), 'bin');
+    if (!fs.existsSync(binDir)) {
+      fs.mkdirSync(binDir, { recursive: true });
+    }
+
+    let needsDownload = true;
+    if (fs.existsSync(xrayPath)) {
+      try {
+        fs.chmodSync(xrayPath, 0o755);
+        const versionCheck = execSync(`${xrayPath} -version`, { encoding: 'utf-8' });
+        if (versionCheck.includes('Xray')) {
+          needsDownload = false;
+        }
+      } catch (e) {
+        console.warn('Existing Xray binary failed validation. Redownloading...');
+      }
+    }
+
+    if (needsDownload) {
+      console.log('Downloading latest Xray core...');
+      execSync('wget -q https://github.com/XTLS/Xray-core/releases/download/v1.8.24/Xray-linux-64.zip -O /tmp/xray.zip && unzip -o /tmp/xray.zip -d /tmp/xray_extract && mv /tmp/xray_extract/xray bin/xray && chmod +x bin/xray && rm -rf /tmp/xray.zip /tmp/xray_extract', { stdio: 'ignore' });
+      console.log('Xray core downloaded and configured.');
+    }
+
+    const files = fs.readdirSync(binDir);
+    for (const file of files) {
+      if (file.startsWith('xray_config_') && file.endsWith('.json')) {
+        try { fs.unlinkSync(path.join(binDir, file)); } catch (e) {}
+      }
+    }
+  } catch (err) {
+    console.error('Error during xray initialization cleanup:', err);
+  }
 
   // API: Export Database Backup
   app.get('/api/backup/export', (req, res) => {
