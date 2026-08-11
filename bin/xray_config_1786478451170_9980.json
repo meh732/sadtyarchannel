@@ -1,0 +1,34 @@
+{
+  "log": {
+    "loglevel": "none"
+  },
+  "inbounds": [
+    {
+      "port": 19697,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "shadowsocks",
+      "settings": {
+        "servers": [
+          {
+            "address": "104.156.233.234",
+            "port": 27116,
+            "method": "chacha20-ietf-poly1305",
+            "password": "bIOoi5TuImG2KccxV7-jcA7Cez+vun-c_E"
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    }
+  ]
+}

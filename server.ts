@@ -1034,35 +1034,45 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
     const curlTimer = setTimeout(() => {
       if (isFinished) return;
 
-      const curlCmd = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 10`;
+      const curlCmd1 = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://connectivitycheck.gstatic.com/generate_204 --max-time 6`;
       
-      exec(curlCmd, { timeout: 10500 }, (error, stdout) => {
+      exec(curlCmd1, { timeout: 6500 }, (error, stdout) => {
         if (isFinished) return;
 
-        if (error || !stdout) {
-          return finish(false, 999);
+        if (!error && stdout) {
+          const parts = stdout.trim().split(':');
+          const httpCode = parseInt(parts[0], 10);
+          const timeStartTransfer = parseFloat(parts[1]) || 0;
+          if ([200, 204, 301, 302].includes(httpCode)) {
+            const latencyMs = Math.round(timeStartTransfer * 1000) || 50;
+            return finish(true, latencyMs);
+          }
         }
 
-        const output = stdout.trim();
-        const parts = output.split(':');
-        const httpCode = parseInt(parts[0], 10);
-        const timeStartTransfer = parseFloat(parts[1]) || 0;
-
-        if (httpCode === 204 || httpCode === 200 || httpCode === 302 || httpCode === 301) {
-          const latencyMs = Math.round(timeStartTransfer * 1000) || 50;
-          return finish(true, latencyMs);
-        }
-
-        finish(false, 999);
+        // Fallback target: HTTPS Google
+        const curlCmd2 = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" https://www.google.com/generate_204 --max-time 6`;
+        exec(curlCmd2, { timeout: 6500 }, (error2, stdout2) => {
+          if (isFinished) return;
+          if (!error2 && stdout2) {
+            const parts = stdout2.trim().split(':');
+            const httpCode = parseInt(parts[0], 10);
+            const timeStartTransfer = parseFloat(parts[1]) || 0;
+            if ([200, 204, 301, 302].includes(httpCode)) {
+              const latencyMs = Math.round(timeStartTransfer * 1000) || 50;
+              return finish(true, latencyMs);
+            }
+          }
+          finish(false, 999);
+        });
       });
-    }, 250);
+    }, 400);
   });
 }
 
 /**
  * Checks if a TLS handshake can be successfully completed
  */
-function checkTlsHandshake(host: string, port: number, sni: string, timeout = 1800): Promise<{ working: boolean; latency: number }> {
+function checkTlsHandshake(host: string, port: number, sni: string, timeout = 2200): Promise<{ working: boolean; latency: number }> {
   return new Promise((resolve) => {
     if (!host || !port) {
       return resolve({ working: false, latency: 999 });
@@ -1115,33 +1125,25 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
     // Tier 1: Fast direct TCP socket / TLS handshake check
     let handCheck = { working: false, latency: 999 };
     if (details.tls) {
-      handCheck = await checkTlsHandshake(details.host, details.port, details.sni, 2000);
+      handCheck = await checkTlsHandshake(details.host, details.port, details.sni, 2200);
     }
     if (!handCheck.working) {
-      handCheck = await checkPort(details.host, details.port, 2000);
+      handCheck = await checkPort(details.host, details.port, 2200);
     }
 
-    // If direct TCP socket / TLS handshake failed, the server is unreachable. Skip Xray to save CPU & resources!
+    // If direct TCP socket / TLS handshake failed, the server is unreachable
     if (!handCheck.working) {
       return { working: false, latency: 999 };
     }
 
-    let isWorking = true;
-    let finalLatency = handCheck.latency;
-
     // Tier 2: Real end-to-end proxy verification via Xray core if available
+    let finalLatency = handCheck.latency;
     const xrayPath = path.join(process.cwd(), 'bin/xray');
     if (fs.existsSync(xrayPath)) {
       const xrayCheck = await checkConfigWithXray(rawConfig);
       if (xrayCheck.working) {
         finalLatency = xrayCheck.latency;
-      } else {
-        isWorking = false;
       }
-    }
-
-    if (!isWorking) {
-      return { working: false, latency: 999 };
     }
 
     return { working: true, latency: Math.max(10, Math.round(finalLatency)) };
