@@ -127,7 +127,8 @@ const DEFAULT_SETTINGS: SystemSettings = {
   backupIntervalHours: 24,
   lastBackupAt: null,
   botConnectionMode: 'polling',
-  publicUrl: ''
+  publicUrl: '',
+  maxConfigsRetention: 2000
 };
 
 // --- Load/Save Database ---
@@ -1504,6 +1505,20 @@ function filterTelegramHtmlLast3Days(html: string): string {
 }
 
 /**
+ * Enforces max configs retention limit (1 to 10000, default 2000).
+ * Trims excess oldest configs if array length exceeds maxConfigsRetention.
+ */
+function enforceConfigsRetentionLimit() {
+  const maxRetention = Math.max(1, Math.min(10000, Number(db.settings?.maxConfigsRetention) || 2000));
+  if (db.configs && db.configs.length > maxRetention) {
+    const removedCount = db.configs.length - maxRetention;
+    db.configs = db.configs.slice(0, maxRetention);
+    addLog('info', `سقف مجاز نگهداری کانفیگ‌ها در دیتابیس (${maxRetention} مورد) اعمال شد. تعداد ${removedCount} کانفیگ قدیمی‌تر پاکسازی شدند.`);
+    saveDatabase();
+  }
+}
+
+/**
  * Purges stored configs and proxies that are older than 3 days
  */
 function purgeOldConfigsAndProxies() {
@@ -1526,6 +1541,8 @@ function purgeOldConfigsAndProxies() {
       return (now - time) <= THREE_DAYS_MS;
     });
   }
+
+  enforceConfigsRetentionLimit();
 
   if (initialConfigs !== db.configs.length || initialProxies !== (db.proxies || []).length) {
     saveDatabase();
@@ -1909,6 +1926,7 @@ async function scrapeSource(source: SourceItem): Promise<number> {
     if (extracted.length > 0 || extractedProxies.length > 0) {
       if (extracted.length > 0) {
         db.configs.unshift(...extracted);
+        enforceConfigsRetentionLimit();
       }
       if (extractedProxies.length > 0) {
         db.proxies.unshift(...extractedProxies);
@@ -4474,24 +4492,33 @@ async function handleBotUpdate(update: any) {
         await answerCallback('پاکسازی...');
         const workingC = db.configs.filter(c => c.status === 'working').length;
         const failedC = db.configs.filter(c => c.status === 'failed').length;
+        const totalC = db.configs.length;
         const workingP = db.proxies ? db.proxies.filter(p => p.status === 'working').length : 0;
         const failedP = db.proxies ? db.proxies.filter(p => p.status === 'failed').length : 0;
+        const totalP = db.proxies ? db.proxies.length : 0;
+        const totalF = db.npvFiles ? db.npvFiles.length : 0;
 
-        let msg = `🧹 **پاکسازی و تخلیه حافظه کش دیتابیس ربات**\n\n`;
-        msg += `📦 کل کانفیگ‌ها: **${workingC} فعال** | **${failedC} مسدود**\n`;
-        msg += `🔌 کل پروکسی‌ها: **${workingP} فعال** | **${failedP} مسدود**\n\n`;
-        msg += `یکی از گزینه‌های تخلیه را انتخاب کنید:`;
+        let msg = `🧹 **مدیریت تخلیه و پاکسازی آرشیو دیتابیس ربات**\n\n`;
+        msg += `📦 **کل کانفیگ‌های ویتوری:** ${totalC} مورد (${workingC} فعال | ${failedC} مسدود)\n`;
+        msg += `🔌 **کل پروکسی‌های تلگرام:** ${totalP} مورد (${workingP} فعال | ${failedP} مسدود)\n`;
+        msg += `📁 **کل فایل‌های VPN (.npvt, .ovpn):** ${totalF} فایل\n\n`;
+        msg += `سقف مجاز نگهداری فعلی: **${db.settings.maxConfigsRetention || 2000} کانفیگ**\n\n`;
+        msg += `یکی از گزینه‌های تخلیه را انتخاب نمایید:`;
 
         const keyboard = [
           [
-            { text: `🧹 حذف کانفیگ‌های مسدود (${failedC} مورد)`, callback_data: 'admin_clean_failed_configs' }
+            { text: `🧹 حذف کانفیگ‌های مسدود (${failedC})`, callback_data: 'admin_clean_failed_configs' },
+            { text: `🧹 حذف پروکسی‌های مسدود (${failedP})`, callback_data: 'admin_clean_failed_proxies' }
           ],
           [
-            { text: `🧹 حذف پروکسی‌های مسدود (${failedP} مورد)`, callback_data: 'admin_clean_failed_proxies' }
+            { text: `🚨 تخلیه کل کانفیگ‌ها (${totalC})`, callback_data: 'admin_clean_all_configs' },
+            { text: `🚨 تخلیه کل پروکسی‌ها (${totalP})`, callback_data: 'admin_clean_all_proxies' }
           ],
           [
-            { text: `🚨 حذف کل کانفیگ‌ها`, callback_data: 'admin_clean_all_configs' },
-            { text: `🚨 حذف کل پروکسی‌ها`, callback_data: 'admin_clean_all_proxies' }
+            { text: `📁 تخلیه کل فایل‌های VPN (${totalF})`, callback_data: 'admin_clean_all_vpn_files' }
+          ],
+          [
+            { text: `💣 تخلیه کامل آرشیو (کل داده‌ها)`, callback_data: 'admin_clean_everything' }
           ],
           [{ text: '🔙 بازگشت به منوی مدیریت', callback_data: 'admin_menu' }]
         ];
@@ -4510,6 +4537,7 @@ async function handleBotUpdate(update: any) {
         db.configs = db.configs.filter(c => c.status !== 'failed');
         const diff = before - db.configs.length;
         saveDatabase();
+        addLog('warn', `تعداد ${diff} کانفیگ غیرفعال از طریق ربات تلگرام پاکسازی گردید.`);
         await answerCallback(`تعداد ${diff} کانفیگ مسدود با موفقیت حذف گردید.`);
         await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_cleanup_menu' } });
         return;
@@ -4521,23 +4549,52 @@ async function handleBotUpdate(update: any) {
         db.proxies = db.proxies.filter(p => p.status !== 'failed');
         const diff = before - db.proxies.length;
         saveDatabase();
+        addLog('warn', `تعداد ${diff} پروکسی غیرفعال از طریق ربات تلگرام پاکسازی گردید.`);
         await answerCallback(`تعداد ${diff} پروکسی مسدود با موفقیت حذف گردید.`);
         await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_cleanup_menu' } });
         return;
       }
 
       if (callbackData === 'admin_clean_all_configs') {
+        const count = db.configs.length;
         db.configs = [];
         saveDatabase();
-        await answerCallback(`تمامی کانفیگ‌های ویتوری حذف گردید.`);
+        addLog('warn', `تخلیه کامل کانفیگ‌های ویتوری (${count} مورد) از طریق ربات اجرا شد.`);
+        await answerCallback(`تمامی کانفیگ‌های ویتوری (${count} مورد) با موفقیت حذف گردید.`);
         await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_cleanup_menu' } });
         return;
       }
 
       if (callbackData === 'admin_clean_all_proxies') {
+        const count = (db.proxies || []).length;
         db.proxies = [];
         saveDatabase();
-        await answerCallback(`تمامی پروکسی‌های تلگرام حذف گردید.`);
+        addLog('warn', `تخلیه کامل پروکسی‌های تلگرام (${count} مورد) از طریق ربات اجرا شد.`);
+        await answerCallback(`تمامی پروکسی‌های تلگرام (${count} مورد) با موفقیت حذف گردید.`);
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_cleanup_menu' } });
+        return;
+      }
+
+      if (callbackData === 'admin_clean_all_vpn_files') {
+        const count = (db.npvFiles || []).length;
+        db.npvFiles = [];
+        saveDatabase();
+        addLog('warn', `تخلیه کامل فایل‌های VPN (${count} فایل) از طریق ربات اجرا شد.`);
+        await answerCallback(`تمامی فایل‌های VPN (${count} فایل) با موفقیت حذف گردید.`);
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_cleanup_menu' } });
+        return;
+      }
+
+      if (callbackData === 'admin_clean_everything') {
+        const cCount = db.configs.length;
+        const pCount = (db.proxies || []).length;
+        const fCount = (db.npvFiles || []).length;
+        db.configs = [];
+        db.proxies = [];
+        db.npvFiles = [];
+        saveDatabase();
+        addLog('warn', `تخلیه کامل کل آرشیو (کانفیگ‌ها، پروکسی‌ها و فایل‌های VPN) توسط ادمین اجرا شد.`);
+        await answerCallback(`کلیه آرشیوهای کانفیگ (${cCount})، پروکسی (${pCount}) و فایل‌ها (${fCount}) کاملاً تخلیه گردیدند.`);
         await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_cleanup_menu' } });
         return;
       }
@@ -5555,9 +5612,14 @@ async function startExpressServer() {
         backupEnabled, 
         backupIntervalHours,
         botConnectionMode,
-        publicUrl
+        publicUrl,
+        maxConfigsRetention
       } = req.body;
       
+      if (maxConfigsRetention !== undefined) {
+        db.settings.maxConfigsRetention = Math.max(1, Math.min(10000, Number(maxConfigsRetention) || 2000));
+        enforceConfigsRetentionLimit();
+      }
       if (adminId !== undefined) {
         db.settings.adminId = adminId;
       }

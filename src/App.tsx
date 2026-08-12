@@ -163,34 +163,68 @@ export default function App() {
   const fetchData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes] = await Promise.all([
-        fetch('/api/stats').then(r => r.json()),
-        fetch('/api/sources').then(r => r.json()),
-        fetch('/api/force-join').then(r => r.json()),
-        fetch('/api/configs').then(r => r.json()),
-        fetch('/api/proxies').then(r => r.json()),
-        fetch('/api/users').then(r => r.json()),
-        fetch('/api/logs').then(r => r.json()),
-        fetch('/api/settings').then(r => r.json()),
-        fetch('/api/vpn-files').then(r => r.json())
-      ]);
+      if (!silent) {
+        const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes] = await Promise.all([
+          fetch('/api/stats').then(r => r.json()),
+          fetch('/api/sources').then(r => r.json()),
+          fetch('/api/force-join').then(r => r.json()),
+          fetch('/api/configs?limit=500').then(r => r.json()),
+          fetch('/api/proxies?limit=500').then(r => r.json()),
+          fetch('/api/users').then(r => r.json()),
+          fetch('/api/logs').then(r => r.json()),
+          fetch('/api/settings').then(r => r.json()),
+          fetch('/api/vpn-files').then(r => r.json())
+        ]);
 
-      setStats(statsRes);
-      setSources(sourcesRes);
-      setForceJoinChannels(fjRes);
-      setConfigs(configsRes);
-      setProxies(proxiesRes || []);
-      setVpnFiles(vpnRes || []);
-      setUsers(usersRes);
-      setLogs(logsRes);
-      setSettings(settingsRes);
-      
-      if (settingsRes && settingsRes.autoPost) {
-        setAutoPostForm(settingsRes.autoPost);
+        setStats(statsRes);
+        setSources(sourcesRes);
+        setForceJoinChannels(fjRes);
+        setConfigs(configsRes);
+        setProxies(proxiesRes || []);
+        setVpnFiles(vpnRes || []);
+        setUsers(usersRes);
+        setLogs(logsRes);
+        setSettings(settingsRes);
+        
+        if (settingsRes && settingsRes.autoPost) {
+          setAutoPostForm(settingsRes.autoPost);
+        }
+      } else {
+        // Fast lightweight silent poll
+        const promises: Promise<any>[] = [
+          fetch('/api/stats').then(r => r.json()),
+          fetch('/api/logs').then(r => r.json())
+        ];
+
+        const isTesting = (stats.checkingConfigsCount || 0) > 0 || (stats.checkingProxiesCount || 0) > 0 || actionLoading === 'test_all';
+        const fetchConfigsNeeded = activeTab === 'configs' || activeTab === 'dashboard' || isTesting;
+        const fetchProxiesNeeded = activeTab === 'proxies' || activeTab === 'dashboard' || isTesting;
+        const fetchSourcesNeeded = activeTab === 'sources';
+        const fetchVpnNeeded = activeTab === 'vpn_files';
+        const fetchJoinNeeded = activeTab === 'join';
+        const fetchUsersNeeded = activeTab === 'broadcast';
+
+        if (fetchConfigsNeeded) promises.push(fetch('/api/configs?limit=500').then(r => r.json()));
+        if (fetchProxiesNeeded) promises.push(fetch('/api/proxies?limit=500').then(r => r.json()));
+        if (fetchSourcesNeeded) promises.push(fetch('/api/sources').then(r => r.json()));
+        if (fetchVpnNeeded) promises.push(fetch('/api/vpn-files').then(r => r.json()));
+        if (fetchJoinNeeded) promises.push(fetch('/api/force-join').then(r => r.json()));
+        if (fetchUsersNeeded) promises.push(fetch('/api/users').then(r => r.json()));
+
+        const results = await Promise.all(promises);
+        setStats(results[0]);
+        setLogs(results[1]);
+
+        let idx = 2;
+        if (fetchConfigsNeeded) { setConfigs(results[idx]); idx++; }
+        if (fetchProxiesNeeded) { setProxies(results[idx] || []); idx++; }
+        if (fetchSourcesNeeded) { setSources(results[idx]); idx++; }
+        if (fetchVpnNeeded) { setVpnFiles(results[idx] || []); idx++; }
+        if (fetchJoinNeeded) { setForceJoinChannels(results[idx]); idx++; }
+        if (fetchUsersNeeded) { setUsers(results[idx]); idx++; }
       }
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
-      showToast('خطا در دریافت اطلاعات از سرور مخزن', 'error');
     } finally {
       if (!silent) setLoading(false);
     }
@@ -200,6 +234,11 @@ export default function App() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Fetch updated data when switching active tabs
+  useEffect(() => {
+    fetchData(true);
+  }, [activeTab]);
 
   // Reset pagination when filters change
   useEffect(() => {
@@ -2664,6 +2703,33 @@ export default function App() {
                           className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none text-left"
                           dir="ltr"
                         />
+                      </div>
+
+                      {/* Max Configs Retention Limit Input */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                          <span>سقف نگهداری کانفیگ‌ها در دیتابیس (۱ تا ۱۰,۰۰۰)</span>
+                          <span className="text-[10px] text-indigo-600 font-semibold">پیش‌فرض: ۲۰۰۰</span>
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="10000"
+                          required
+                          value={settings.maxConfigsRetention === undefined || settings.maxConfigsRetention === null ? 2000 : settings.maxConfigsRetention}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSettings(prev => ({ 
+                              ...prev, 
+                              maxConfigsRetention: val === '' ? '' as any : Number(val) 
+                            }));
+                          }}
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none text-left"
+                          dir="ltr"
+                        />
+                        <p className="text-[10px] text-slate-400">
+                          هنگامی که ظرفیت کانفیگ‌های ذخیره‌شده به این عدد برسد، موارد قدیمی‌تر به صورت اتوماتیک پاکسازی می‌شوند تا سرعت سیستم و وب‌پنل حفظ گردد.
+                        </p>
                       </div>
 
                       {/* Test Batch Limit Input */}

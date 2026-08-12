@@ -82,6 +82,7 @@ export interface SystemSettings {
   lastBackupAt?: string | null;
   botConnectionMode?: 'polling' | 'webhook';
   publicUrl?: string;
+  maxConfigsRetention?: number; // Maximum retention limit for configs (default: 2000, range: 1-10000)
 }
 
 export interface ChannelPostConfig {
