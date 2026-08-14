@@ -5563,11 +5563,12 @@ async function startExpressServer() {
     }
   });
 
-  // API: Import Database Backup (Restore)
+  // API: Import Database Backup (Restore via JSON Body)
   app.post('/api/backup/import', (req, res) => {
     try {
       const importedData = req.body;
-      const result = restoreDatabaseFromObject(importedData);
+      const skipConfigs = req.query.skipConfigs === 'true' || req.query.mode === 'settings_and_sources';
+      const result = restoreDatabaseFromObject(importedData, { skipConfigs });
       if (!result.success) {
         return res.status(400).json(result);
       }
@@ -5575,6 +5576,41 @@ async function startExpressServer() {
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message || 'خطا در بازگردانی فایل بکاپ' });
     }
+  });
+
+  // API: Streaming upload for large backup files (e.g. 50MB+ without browser main thread lag)
+  app.post('/api/backup/upload-stream', (req, res) => {
+    const mode = req.query.mode as string;
+    const shouldSkipConfigs = mode === 'settings_and_sources' || req.query.skipConfigs === 'true';
+    const chunks: Buffer[] = [];
+
+    req.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+
+    req.on('end', () => {
+      try {
+        const fullBuffer = Buffer.concat(chunks);
+        const text = fullBuffer.toString('utf8');
+        const parsed = JSON.parse(text);
+        const result = restoreDatabaseFromObject(parsed, { 
+          skipConfigs: shouldSkipConfigs,
+          restoreOnlySettingsAndChannels: shouldSkipConfigs
+        });
+        if (!result.success) {
+          return res.status(400).json(result);
+        }
+        res.json({ success: true, message: result.message, counts: result.counts, settings: db.settings });
+      } catch (err: any) {
+        console.error('Error in backup upload-stream:', err);
+        res.status(500).json({ success: false, message: 'خطا در خواندن یا پردازش فایل بکاپ: ' + (err.message || 'فایل نامعتبر است') });
+      }
+    });
+
+    req.on('error', (err) => {
+      console.error('Stream error during backup upload:', err);
+      res.status(500).json({ success: false, message: 'خطای انتقال جریان داده فایل بکاپ' });
+    });
   });
 
   // API: Stats

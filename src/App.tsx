@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Terminal, 
   Settings, 
@@ -265,7 +265,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [stats.checkingConfigsCount, stats.checkingProxiesCount, actionLoading]);
 
-  // Handle Restore Backup
+  // Handle Restore Backup with fast native streaming (no main-thread JSON freeze)
   const handleRestoreBackup = async (e: React.ChangeEvent<HTMLInputElement>, overrideMode?: 'settings_and_sources' | 'full') => {
     const activeMode = overrideMode || restoreMode;
     const file = e.target.files?.[0];
@@ -283,38 +283,16 @@ export default function App() {
 
     try {
       setActionLoading('restore_backup');
-      const text = await file.text();
-      let json: any;
-      try {
-        json = JSON.parse(text);
-      } catch (jsonErr: any) {
-        alert('❌ فایل انتخابی دارای فرمت معتبر JSON نیست.');
-        return;
-      }
 
-      let payload = json;
-      if (activeMode === 'settings_and_sources') {
-        let base = json;
-        if (base.db && typeof base.db === 'object') base = base.db;
-        else if (base.data && typeof base.data === 'object') base = base.data;
-        else if (base.data_store && typeof base.data_store === 'object') base = base.data_store;
-
-        payload = {
-          skipConfigs: true,
-          restoreOnlySettingsAndChannels: true,
-          settings: base.settings || {},
-          sources: Array.isArray(base.sources) ? base.sources : undefined,
-          forceJoinChannels: Array.isArray(base.forceJoinChannels) ? base.forceJoinChannels : undefined,
-          users: Array.isArray(base.users) ? base.users : undefined,
-          postedMessages: Array.isArray(base.postedMessages) ? base.postedMessages : undefined
-        };
-      }
-
-      const res = await fetch('/api/backup/import', {
+      // Direct streaming upload to avoid browser main-thread memory freeze
+      const res = await fetch(`/api/backup/upload-stream?mode=${activeMode}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        headers: {
+          'Content-Type': 'application/octet-stream'
+        },
+        body: file
       });
+      
       const data = await res.json();
       if (data.success) {
         const c = data.counts || {};
@@ -335,7 +313,7 @@ export default function App() {
         alert(`❌ خطا در بازگردانی بکاپ: ${data.message || 'خطای ناشناخته'}`);
       }
     } catch (err: any) {
-      alert(`❌ خطا در خواندن فایل یا ارتباط با سرور: ${err.message}`);
+      alert(`❌ خطا در انتقال فایل یا ارتباط با سرور: ${err.message}`);
     } finally {
       setActionLoading(null);
       e.target.value = '';
@@ -888,37 +866,43 @@ export default function App() {
     }
   };
 
-  // Filtered configurations calculation
-  const filteredConfigs = configs.filter(config => {
-    const matchesSearch = 
-      config.remark.toLowerCase().includes(configSearch.toLowerCase()) ||
-      config.server.toLowerCase().includes(configSearch.toLowerCase()) ||
-      config.source.toLowerCase().includes(configSearch.toLowerCase());
-    
-    const matchesProtocol = configProtocolFilter === 'all' || config.protocol === configProtocolFilter;
-    const matchesStatus = configStatusFilter === 'all' || config.status === configStatusFilter;
+  // Memoized Filtered configurations calculation
+  const filteredConfigs = useMemo(() => {
+    const s = configSearch.toLowerCase();
+    return configs.filter(config => {
+      const matchesSearch = !s ||
+        (config.remark && config.remark.toLowerCase().includes(s)) ||
+        (config.server && config.server.toLowerCase().includes(s)) ||
+        (config.source && config.source.toLowerCase().includes(s));
+      
+      const matchesProtocol = configProtocolFilter === 'all' || config.protocol === configProtocolFilter;
+      const matchesStatus = configStatusFilter === 'all' || config.status === configStatusFilter;
 
-    return matchesSearch && matchesProtocol && matchesStatus;
-  });
+      return matchesSearch && matchesProtocol && matchesStatus;
+    });
+  }, [configs, configSearch, configProtocolFilter, configStatusFilter]);
 
   const ITEMS_PER_PAGE = 50;
-  const configTotalPages = Math.max(1, Math.ceil(filteredConfigs.length / ITEMS_PER_PAGE));
-  const paginatedConfigs = filteredConfigs.slice((configPage - 1) * ITEMS_PER_PAGE, configPage * ITEMS_PER_PAGE);
+  const configTotalPages = useMemo(() => Math.max(1, Math.ceil(filteredConfigs.length / ITEMS_PER_PAGE)), [filteredConfigs.length]);
+  const paginatedConfigs = useMemo(() => filteredConfigs.slice((configPage - 1) * ITEMS_PER_PAGE, configPage * ITEMS_PER_PAGE), [filteredConfigs, configPage]);
 
-  // Filtered proxies calculation
-  const filteredProxies = proxies.filter(proxy => {
-    const matchesSearch = 
-      proxy.server.toLowerCase().includes(proxySearch.toLowerCase()) ||
-      proxy.source.toLowerCase().includes(proxySearch.toLowerCase());
-    
-    const matchesType = proxyTypeFilter === 'all' || proxy.type === proxyTypeFilter;
-    const matchesStatus = proxyStatusFilter === 'all' || proxy.status === proxyStatusFilter;
+  // Memoized Filtered proxies calculation
+  const filteredProxies = useMemo(() => {
+    const s = proxySearch.toLowerCase();
+    return proxies.filter(proxy => {
+      const matchesSearch = !s ||
+        (proxy.server && proxy.server.toLowerCase().includes(s)) ||
+        (proxy.source && proxy.source.toLowerCase().includes(s));
+      
+      const matchesType = proxyTypeFilter === 'all' || proxy.type === proxyTypeFilter;
+      const matchesStatus = proxyStatusFilter === 'all' || proxy.status === proxyStatusFilter;
 
-    return matchesSearch && matchesType && matchesStatus;
-  });
+      return matchesSearch && matchesType && matchesStatus;
+    });
+  }, [proxies, proxySearch, proxyTypeFilter, proxyStatusFilter]);
 
-  const proxyTotalPages = Math.max(1, Math.ceil(filteredProxies.length / ITEMS_PER_PAGE));
-  const paginatedProxies = filteredProxies.slice((proxyPage - 1) * ITEMS_PER_PAGE, proxyPage * ITEMS_PER_PAGE);
+  const proxyTotalPages = useMemo(() => Math.max(1, Math.ceil(filteredProxies.length / ITEMS_PER_PAGE)), [filteredProxies.length]);
+  const paginatedProxies = useMemo(() => filteredProxies.slice((proxyPage - 1) * ITEMS_PER_PAGE, proxyPage * ITEMS_PER_PAGE), [filteredProxies, proxyPage]);
 
   return (
     <div className="min-h-screen bg-[#f8fafc]/90 text-slate-800 font-sans flex flex-col md:flex-row relative overflow-hidden" dir="rtl">
@@ -1188,7 +1172,7 @@ export default function App() {
               <p className="text-sm font-medium text-slate-500">در حال بارگذاری اطلاعات پنل...</p>
             </div>
           ) : (
-            <AnimatePresence mode="wait">
+            <AnimatePresence>
               
               {/* --- TAB: DASHBOARD --- */}
               {activeTab === 'dashboard' && (
