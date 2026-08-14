@@ -145,8 +145,9 @@ export default function App() {
   const [restoreMode, setRestoreMode] = useState<'settings_and_sources' | 'full'>('settings_and_sources');
   const [broadcastProgress, setBroadcastProgress] = useState<{ total: number; done: boolean } | null>(null);
 
-  // Refs for log scrolling
+  // Refs for log scrolling & file input
   const logContainerRef = useRef<HTMLDivElement>(null);
+  const backupFileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll logs to top/bottom
   useEffect(() => {
@@ -905,14 +906,8 @@ export default function App() {
   const paginatedProxies = useMemo(() => filteredProxies.slice((proxyPage - 1) * ITEMS_PER_PAGE, proxyPage * ITEMS_PER_PAGE), [filteredProxies, proxyPage]);
 
   return (
-    <div className="min-h-screen bg-[#f8fafc]/90 text-slate-800 font-sans flex flex-col md:flex-row relative overflow-hidden" dir="rtl">
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col md:flex-row relative" dir="rtl">
       
-      {/* Decorative Floating Colorful Glass Mesh Blobs */}
-      <div className="absolute top-[-10%] right-[-10%] w-[550px] h-[550px] rounded-full bg-indigo-300/25 blur-[120px] pointer-events-none z-0" />
-      <div className="absolute bottom-[-10%] left-[-10%] w-[650px] h-[650px] rounded-full bg-cyan-300/20 blur-[130px] pointer-events-none z-0" />
-      <div className="absolute top-[30%] left-[20%] w-[450px] h-[450px] rounded-full bg-pink-300/15 blur-[110px] pointer-events-none z-0" />
-      <div className="absolute bottom-[20%] right-[15%] w-[400px] h-[400px] rounded-full bg-violet-300/20 blur-[100px] pointer-events-none z-0" />
-
       {/* Toast Notification */}
       <AnimatePresence>
         {toast && (
@@ -2954,19 +2949,26 @@ export default function App() {
                         <span>دانلود فایل پشتیبان دیتابیس (Export JSON)</span>
                       </a>
 
-                      <label className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-sm">
+                      <input
+                        ref={backupFileInputRef}
+                        type="file"
+                        accept=".json"
+                        className="hidden"
+                        onChange={handleRestoreBackup}
+                        disabled={actionLoading === 'restore_backup'}
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => backupFileInputRef.current?.click()}
+                        disabled={actionLoading === 'restore_backup'}
+                        className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-sm"
+                      >
                         <Upload className="w-4 h-4" />
                         <span>
                           {actionLoading === 'restore_backup' ? 'در حال بازگردانی بکاپ...' : 'انتخاب و بارگذاری فایل بکاپ (Restore)'}
                         </span>
-                        <input
-                          type="file"
-                          accept=".json"
-                          className="hidden"
-                          onChange={handleRestoreBackup}
-                          disabled={actionLoading === 'restore_backup'}
-                        />
-                      </label>
+                      </button>
                     </div>
                   </div>
                 </motion.div>
