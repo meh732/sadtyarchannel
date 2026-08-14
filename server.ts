@@ -1702,14 +1702,28 @@ function restoreDatabaseFromObject(raw: any, options?: { skipConfigs?: boolean; 
  * Universal backup parser and restorer from string or Buffer
  */
 function parseAndRestoreBackup(textOrBuffer: string | Buffer, shouldSkipConfigs: boolean) {
-  let text = typeof textOrBuffer === 'string' ? textOrBuffer : textOrBuffer.toString('utf8');
+  let text = '';
+  if (Buffer.isBuffer(textOrBuffer)) {
+    if (textOrBuffer.length >= 2 && textOrBuffer[0] === 0xFF && textOrBuffer[1] === 0xFE) {
+      text = textOrBuffer.slice(2).toString('utf16le');
+    } else if (textOrBuffer.length >= 2 && textOrBuffer[0] === 0xFE && textOrBuffer[1] === 0xFF) {
+      text = textOrBuffer.slice(2).swap16().toString('utf16le');
+    } else if (textOrBuffer.length >= 3 && textOrBuffer[0] === 0xEF && textOrBuffer[1] === 0xBB && textOrBuffer[2] === 0xBF) {
+      text = textOrBuffer.slice(3).toString('utf8');
+    } else {
+      text = textOrBuffer.toString('utf8');
+    }
+  } else {
+    text = String(textOrBuffer || '');
+  }
+
   // Strip UTF-8 BOM if present
   if (text.charCodeAt(0) === 0xFEFF || text.startsWith('\uFEFF')) {
     text = text.replace(/^\uFEFF+/, '');
   }
   text = text.trim();
 
-  // Try standard JSON parse
+  // Try standard JSON parse directly
   if ((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))) {
     try {
       const parsed = JSON.parse(text);
@@ -1718,7 +1732,7 @@ function parseAndRestoreBackup(textOrBuffer: string | Buffer, shouldSkipConfigs:
         restoreOnlySettingsAndChannels: shouldSkipConfigs
       });
     } catch (jsonErr: any) {
-      console.warn('JSON parse warning on backup text:', jsonErr.message);
+      console.warn('JSON parse direct warning on backup text:', jsonErr.message);
     }
   }
 
@@ -1734,10 +1748,25 @@ function parseAndRestoreBackup(textOrBuffer: string | Buffer, shouldSkipConfigs:
     } catch (e) {}
   }
 
+  // Check if text is Base64 encoded
+  const cleanBase64Candidate = text.replace(/\s+/g, '');
+  if (/^[A-Za-z0-9+/=]+$/.test(cleanBase64Candidate) && cleanBase64Candidate.length > 20) {
+    try {
+      const decodedBuf = Buffer.from(cleanBase64Candidate, 'base64');
+      const decodedStr = decodedBuf.toString('utf8').trim();
+      if (decodedStr.startsWith('{') || decodedStr.startsWith('[') || decodedStr.includes('://')) {
+        const subResult = parseAndRestoreBackup(decodedStr, shouldSkipConfigs);
+        if (subResult.success) {
+          return subResult;
+        }
+      }
+    } catch (e) {}
+  }
+
   // Fallback: If not JSON, check if it contains raw configs or proxy links in text format
   const extractedConfigs = extractConfigsFromText(text, 'فایل بکاپ متنی');
   const extractedProxies: ProxyItem[] = [];
-  const proxyLines = text.split('\n');
+  const proxyLines = text.split(/[\r\n]+/);
   for (const line of proxyLines) {
     const match = line.match(/(?:https:\/\/t\.me\/proxy\?|tg:\/\/proxy\?)(server=[^&\s]+&port=\d+&secret=[^&\s]+)/i);
     if (match) {
@@ -1765,6 +1794,7 @@ function parseAndRestoreBackup(textOrBuffer: string | Buffer, shouldSkipConfigs:
     }
   }
 
+  // If configs or proxies found
   if (extractedConfigs.length > 0 || extractedProxies.length > 0) {
     if (!shouldSkipConfigs) {
       if (extractedConfigs.length > 0) db.configs.unshift(...extractedConfigs);
@@ -1774,7 +1804,7 @@ function parseAndRestoreBackup(textOrBuffer: string | Buffer, shouldSkipConfigs:
     }
     return {
       success: true,
-      message: `تعداد ${extractedConfigs.length} کانفیگ و ${extractedProxies.length} پروکسی از متن فایل استخراج گردید.`,
+      message: `تعداد ${extractedConfigs.length} کانفیگ و ${extractedProxies.length} پروکسی از متن فایل استخراج و ذخیره شد.`,
       counts: {
         configs: db.configs.length,
         proxies: db.proxies.length,
@@ -1783,6 +1813,42 @@ function parseAndRestoreBackup(textOrBuffer: string | Buffer, shouldSkipConfigs:
         users: db.users.length
       }
     };
+  }
+
+  // Check if text is a list of Telegram channel sources or usernames
+  const channelMatches = text.match(/(?:https?:\/\/t\.me\/[a-zA-Z0-9_+]+|@[a-zA-Z0-9_]{4,})/g);
+  if (channelMatches && channelMatches.length > 0) {
+    const addedSources: SourceItem[] = [];
+    const uniqueChannels = Array.from(new Set(channelMatches));
+    for (const rawCh of uniqueChannels) {
+      const handle = rawCh.startsWith('@') ? rawCh : `@${rawCh.split('t.me/')[1].replace(/[\/\?].*$/, '')}`;
+      if (handle && handle.length > 3 && !db.sources.some(s => s.urlOrHandle.toLowerCase() === handle.toLowerCase())) {
+        addedSources.push({
+          id: 'src_' + Math.random().toString(36).substring(2, 9),
+          name: handle,
+          urlOrHandle: handle,
+          type: 'telegram',
+          enabled: true,
+          lastExtracted: null,
+          extractedCount: 0
+        });
+      }
+    }
+    if (addedSources.length > 0) {
+      db.sources.push(...addedSources);
+      saveDatabase(true);
+      return {
+        success: true,
+        message: `تعداد ${addedSources.length} منبع و کانال تلگرام به لیست منابع استخراج افزوده شدند.`,
+        counts: {
+          configs: db.configs.length,
+          proxies: db.proxies.length,
+          sources: db.sources.length,
+          forceJoinChannels: db.forceJoinChannels.length,
+          users: db.users.length
+        }
+      };
+    }
   }
 
   return {
@@ -3606,14 +3672,15 @@ async function handleBotUpdate(update: any) {
       }
     }
 
-    // --- Direct User/Admin Document Uploads (.npvt / .npv / .ovpn / .txt) ---
-    if (update.message?.document && chatId) {
+    // --- Direct User Document Uploads (.npvt / .npv / .ovpn / .txt) (Non-Admin only) ---
+    if (!isAdmin && update.message?.document && chatId) {
       const uDoc = update.message.document;
       if (uDoc.file_name && (uDoc.file_name.endsWith('.npvt') || uDoc.file_name.endsWith('.npv') || uDoc.file_name.endsWith('.ovpn') || uDoc.file_name.endsWith('.txt'))) {
         try {
           const fileInfo = await callTelegramApi('getFile', { file_id: uDoc.file_id });
           if (fileInfo?.file_path) {
-            const fRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${fileInfo.file_path}`);
+            const token = (db.settings.botToken || process.env.BOT_TOKEN || '').trim();
+            const fRes = await fetch(`https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`);
             const arrayBuffer = await fRes.arrayBuffer();
             const fContentText = Buffer.from(arrayBuffer).toString('utf-8');
             
@@ -3653,7 +3720,7 @@ async function handleBotUpdate(update: any) {
                     formData.append('disable_notification', 'true');
                   }
                   
-                  await fetch(`https://api.telegram.org/bot${db.settings.botToken}/sendDocument`, {
+                  await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
                     method: 'POST',
                     body: formData
                   });
@@ -3689,6 +3756,7 @@ async function handleBotUpdate(update: any) {
         } catch (e: any) {
           console.error('User document processing error:', e);
         }
+        return;
       }
     }
 
@@ -3737,73 +3805,101 @@ async function handleBotUpdate(update: any) {
       // Backup document restore check for Admin (handles any uploaded or forwarded document by admin)
       if (update.message?.document) {
         const doc = update.message.document;
-        const fn = (doc.file_name || '').toLowerCase();
-        const mime = (doc.mime_type || '').toLowerCase();
-        const caption = (update.message.caption || '').toLowerCase();
-        const isWaitingRestore = adminStates[chatId]?.action === 'await_backup_file';
+        delete adminStates[chatId];
+        try {
+          const fileSizeStr = doc.file_size ? ` (${(doc.file_size / 1024).toFixed(1)} KB)` : '';
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `⏳ **در حال دریافت فایل (\`${doc.file_name || 'backup'}\`${fileSizeStr}) و بازگردانی دیتابیس...**`,
+            parse_mode: 'Markdown'
+          });
 
-        const isJsonOrTextDoc = fn.endsWith('.json') || fn.endsWith('.txt') || fn.endsWith('.bak') || fn.endsWith('.backup') ||
-          mime.includes('json') || mime.includes('text') || mime.includes('octet-stream') ||
-          caption.includes('backup') || caption.includes('بکاپ') || isWaitingRestore;
-
-        if (isJsonOrTextDoc) {
-          delete adminStates[chatId];
-          try {
+          if (doc.file_size && doc.file_size > 20 * 1024 * 1024) {
             await callTelegramApi('sendMessage', {
               chat_id: chatId,
-              text: `⏳ **در حال دریافت فایل (\`${doc.file_name || 'backup'}\`) و بازگردانی دیتابیس...**`,
-              parse_mode: 'Markdown'
+              text: `⚠️ **حجم فایل ارسالی (${(doc.file_size / (1024 * 1024)).toFixed(1)} MB) بیش از سقف مجاز تلگرام (۲۰ مگابایت) است.**\n\nربات‌های تلگرام به دلیل محدودیت API تلگرام امکان دانلود خودکار فایل‌های بالای ۲۰ مگابایت را ندارند.\n\n💡 **روش‌های جایگزین:**\n۱. فایل را از طریق بخش تنظیمات -> پشتیبان‌گیری در **پنل تحت وب** آپلود نمایید (فوق‌العاده سریع و بدون محدودیت حجم).\n۲. یا محتوای متنی آن را کپی و در همین چت ارسال فرمایید.`,
+              parse_mode: 'Markdown',
+              reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به منوی بکاپ', callback_data: 'admin_backup_menu' }]] }
             });
+            return;
+          }
 
-            const fileInfo = await callTelegramApi('getFile', { file_id: doc.file_id });
-            const filePath = fileInfo?.file_path;
-            
-            if (!filePath) {
-              throw new Error('عدم امکان دسترسی به فایل از سرورهای تلگرام.');
-            }
+          const fileInfo = await callTelegramApi('getFile', { file_id: doc.file_id });
+          const filePath = fileInfo?.file_path;
+          
+          if (!filePath) {
+            throw new Error('سرور تلگرام مسیر دانلود فایل را بازنگرداند (احتمالاً فایل منقضی شده یا حجم آن بیش از ۲۰ مگابایت است).');
+          }
 
-            const fileRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${filePath}`);
-            const arrayBuffer = await fileRes.arrayBuffer();
-            const fullBuffer = Buffer.from(arrayBuffer);
-            
-            const res = parseAndRestoreBackup(fullBuffer, false);
-            
-            if (res.success) {
-              const c = res.counts || {};
-              let details = `🔄 **پایگاه داده با موفقیت بازگردانی شد!**\n\n`;
-              details += `📊 **اطلاعات بازیابی شده:**\n`;
-              if (c.configs !== undefined) details += `• تعداد کانفیگ‌های فعال: **${c.configs}**\n`;
-              if (c.proxies !== undefined) details += `• تعداد پروکسی‌ها: **${c.proxies}**\n`;
-              if (c.sources !== undefined) details += `• تعداد منابع و کانال‌ها: **${c.sources}**\n`;
-              if (c.forceJoinChannels !== undefined) details += `• کانال‌های قفل اجباری: **${c.forceJoinChannels}**\n`;
-              if (c.users !== undefined) details += `• تعداد اعضای ثبت‌شده: **${c.users}**\n`;
-              if (c.npvFiles !== undefined && c.npvFiles > 0) details += `• فایل‌های NapsternetV/OpenVPN: **${c.npvFiles}**\n`;
-              details += `\n${res.message}\nکلیه تنظیمات با موفقیت در سیستم اعمال گردیدند.`;
+          const token = (db.settings.botToken || process.env.BOT_TOKEN || '').trim();
+          const fileRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
+          if (!fileRes.ok) {
+            throw new Error(`خطا در دانلود فایل از تلگرام (کد وضعیت: ${fileRes.status} ${fileRes.statusText})`);
+          }
 
-              await callTelegramApi('sendMessage', {
-                chat_id: chatId,
-                text: details,
-                parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: [[{ text: '⚙️ ورود به پنل مدیریت', callback_data: 'admin_menu' }]] }
-              });
-              return;
-            } else {
-              await callTelegramApi('sendMessage', {
-                chat_id: chatId,
-                text: `❌ **خطا در بازگردانی فایل:**\n${res.message}\n\nلطفاً مطمئن شوید فایل خروجی دیتابیس ربات یا فایل حاوی کانفیگ‌های متنی معتبر است.`,
-                parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: [[{ text: '🔙 منوی پشتیبان‌گیری', callback_data: 'admin_backup_menu' }]] }
-              });
-              return;
-            }
-          } catch (err: any) {
+          const arrayBuffer = await fileRes.arrayBuffer();
+          const fullBuffer = Buffer.from(arrayBuffer);
+          
+          const isVpnFormat = doc.file_name && (doc.file_name.endsWith('.npvt') || doc.file_name.endsWith('.npv') || doc.file_name.endsWith('.ovpn'));
+          if (isVpnFormat) {
+            const fContentBase64 = fullBuffer.toString('base64');
+            if (!db.npvFiles) db.npvFiles = [];
+            db.npvFiles.unshift({
+              id: Date.now().toString() + Math.floor(Math.random() * 1000),
+              filename: doc.file_name,
+              content: fContentBase64,
+              status: 'untested',
+              createdAt: new Date().toISOString()
+            });
+            saveDatabase();
+          }
+
+          const res = parseAndRestoreBackup(fullBuffer, false);
+          
+          if (res.success) {
+            const c = res.counts || {};
+            let details = `🔄 **پایگاه داده با موفقیت بازگردانی شد!**\n\n`;
+            details += `📊 **اطلاعات بازیابی شده:**\n`;
+            if (c.configs !== undefined) details += `• تعداد کانفیگ‌های فعال: **${c.configs}**\n`;
+            if (c.proxies !== undefined) details += `• تعداد پروکسی‌ها: **${c.proxies}**\n`;
+            if (c.sources !== undefined) details += `• تعداد منابع و کانال‌ها: **${c.sources}**\n`;
+            if (c.forceJoinChannels !== undefined) details += `• کانال‌های قفل اجباری: **${c.forceJoinChannels}**\n`;
+            if (c.users !== undefined) details += `• تعداد اعضای ثبت‌شده: **${c.users}**\n`;
+            if (c.npvFiles !== undefined && c.npvFiles > 0) details += `• فایل‌های NapsternetV/OpenVPN: **${c.npvFiles}**\n`;
+            details += `\n${res.message}\nکلیه تنظیمات با موفقیت در سیستم اعمال گردیدند.`;
+
             await callTelegramApi('sendMessage', {
               chat_id: chatId,
-              text: `❌ خطا در خواندن یا تحلیل فایل ارسالی: ${err.message || err}`,
+              text: details,
+              parse_mode: 'Markdown',
+              reply_markup: { inline_keyboard: [[{ text: '⚙️ ورود به پنل مدیریت', callback_data: 'admin_menu' }]] }
+            });
+            return;
+          } else if (isVpnFormat) {
+            await callTelegramApi('sendMessage', {
+              chat_id: chatId,
+              text: `✅ **فایل اختصاصی ${doc.file_name} در دیتابیس ثبت گردید.**`,
+              reply_markup: { inline_keyboard: [[{ text: '⚙️ ورود به پنل مدیریت', callback_data: 'admin_menu' }]] }
+            });
+            return;
+          } else {
+            await callTelegramApi('sendMessage', {
+              chat_id: chatId,
+              text: `❌ **خطا در بازگردانی فایل:**\n${res.message}\n\n💡 راهنما: لطفاً مطمئن شوید فایل خروجی دیتابیس ربات یا فایل حاوی کانفیگ‌های متنی معتبر است. همچنین می‌توانید متن فایل را کپی و مستقیماً به همین چت ارسال نمایید.`,
+              parse_mode: 'Markdown',
               reply_markup: { inline_keyboard: [[{ text: '🔙 منوی پشتیبان‌گیری', callback_data: 'admin_backup_menu' }]] }
             });
             return;
           }
+        } catch (err: any) {
+          console.error('Admin backup restore error:', err);
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `❌ **خطا در دریافت یا پردازش فایل ارسالی:**\n\`${err.message || err}\`\n\n💡 پیشنهاد: در صورتی که فایل ارسالی حجیم است، می‌توانید از بخش پشتیبان‌گیری در پنل وب استفاده نمایید یا متن آن را در چت ارسال کنید.`,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 منوی پشتیبان‌گیری', callback_data: 'admin_backup_menu' }]] }
+          });
+          return;
         }
       }
 
@@ -3822,7 +3918,7 @@ async function handleBotUpdate(update: any) {
         }
 
         if (state.action === 'await_backup_file') {
-          if (messageText && (messageText.trim().startsWith('{') || messageText.includes('vless://') || messageText.includes('vmess://') || messageText.includes('tg://proxy?'))) {
+          if (messageText && messageText.trim().length > 0) {
             delete adminStates[chatId];
             await callTelegramApi('sendMessage', {
               chat_id: chatId,
@@ -3831,15 +3927,24 @@ async function handleBotUpdate(update: any) {
             });
             const res = parseAndRestoreBackup(messageText.trim(), false);
             if (res.success) {
+              const c = res.counts || {};
+              let details = `✅ **دیتابیس با موفقیت از متن بازگردانی شد!**\n\n`;
+              if (c.configs !== undefined) details += `• تعداد کانفیگ‌ها: **${c.configs}**\n`;
+              if (c.proxies !== undefined) details += `• تعداد پروکسی‌ها: **${c.proxies}**\n`;
+              if (c.sources !== undefined) details += `• منابع و کانال‌ها: **${c.sources}**\n`;
+              if (c.forceJoinChannels !== undefined) details += `• کانال‌های قفل اجباری: **${c.forceJoinChannels}**\n`;
+              details += `\n${res.message}`;
               await callTelegramApi('sendMessage', {
                 chat_id: chatId,
-                text: `✅ **دیتابیس با موفقیت از متن بازگردانی شد!**\n\n${res.message}`,
+                text: details,
+                parse_mode: 'Markdown',
                 reply_markup: { inline_keyboard: [[{ text: '⚙️ پنل مدیریت', callback_data: 'admin_menu' }]] }
               });
             } else {
               await callTelegramApi('sendMessage', {
                 chat_id: chatId,
-                text: `❌ خطا در پردازش متن بکاپ: ${res.message}`,
+                text: `❌ **خطا در پردازش متن بکاپ:**\n${res.message}`,
+                parse_mode: 'Markdown',
                 reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_backup_menu' }]] }
               });
             }
