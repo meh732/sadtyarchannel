@@ -285,7 +285,7 @@ export default function App() {
     try {
       setActionLoading('restore_backup');
 
-      // Direct streaming upload to avoid browser main-thread memory freeze
+      // Direct streaming upload
       const res = await fetch(`/api/backup/upload-stream?mode=${activeMode}`, {
         method: 'POST',
         headers: {
@@ -294,10 +294,17 @@ export default function App() {
         body: file
       });
       
-      const data = await res.json();
+      let data: any;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        const errText = await res.text().catch(() => '');
+        throw new Error(errText || `خطا در دریافت پاسخ از سرور (کد وضعیت: ${res.status})`);
+      }
+
       if (data.success) {
         const c = data.counts || {};
-        let details = '✅ بازگردانی با موفقیت انجام شد!\n';
+        let details = '✅ بازگردانی دیتابیس با موفقیت انجام شد!\n';
         if (activeMode === 'settings_and_sources') {
           details += `\n• تنظیمات و لیست ${c.sources !== undefined ? c.sources : ''} کانال/منبع و کانال‌های قفل بازیابی شدند.`;
           details += `\n• کانفیگ‌های فعلی دست‌نخورده باقی ماندند.`;
@@ -307,14 +314,15 @@ export default function App() {
           if (c.sources !== undefined) details += `\n• تعداد منابع: ${c.sources}`;
           if (c.users !== undefined) details += `\n• تعداد کاربران: ${c.users}`;
         }
+        showToast(details.split('\n')[0], 'success');
         alert(details);
         await fetchData();
         window.location.reload();
       } else {
-        alert(`❌ خطا در بازگردانی بکاپ: ${data.message || 'خطای ناشناخته'}`);
+        alert(`❌ خطا در بازگردانی بکاپ:\n${data.message || 'فایل ارسالی نامعتبر است'}`);
       }
     } catch (err: any) {
-      alert(`❌ خطا در انتقال فایل یا ارتباط با سرور: ${err.message}`);
+      alert(`❌ خطا در انتقال فایل یا پردازش در سرور:\n${err.message}`);
     } finally {
       setActionLoading(null);
       e.target.value = '';
@@ -932,7 +940,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Sidebar Navigation */}
-      <aside className="w-full md:w-80 bg-slate-900/90 backdrop-blur-md text-slate-100 flex flex-col shrink-0 border-l border-slate-800/50 relative z-10">
+      <aside className="w-full md:w-80 bg-slate-900 text-slate-100 flex flex-col shrink-0 border-l border-slate-800 relative z-10">
         <div className="p-6 border-b border-slate-800 flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
             <Radio className="w-6 h-6 text-white animate-pulse" />
@@ -1111,7 +1119,7 @@ export default function App() {
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto relative z-10">
         
         {/* Header Bar */}
-        <header className="bg-white/65 backdrop-blur-md border-b border-slate-200/50 px-6 py-5 shrink-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <header className="bg-white border-b border-slate-200 px-6 py-5 shrink-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-slate-900 tracking-tight">
               {activeTab === 'dashboard' && 'داشبورد کنترل مرکزی'}
@@ -2592,13 +2600,7 @@ export default function App() {
 
               {/* --- TAB: SETTINGS --- */}
               {activeTab === 'settings' && (
-                <motion.div
-                  key="settings"
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -15 }}
-                  className="max-w-2xl mx-auto"
-                >
+                <div key="settings" className="max-w-2xl mx-auto space-y-6">
                   <form onSubmit={handleSaveSettings} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
                     <div>
                       <h3 className="font-bold text-slate-900 text-base">پیکربندی کلیدها و سیستم ربات</h3>
@@ -2877,7 +2879,7 @@ export default function App() {
                   </form>
 
                   {/* --- DATABASE BACKUP & RESTORE CARD --- */}
-                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5 mt-6">
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600">
                         <Database className="w-5 h-5" />
@@ -2971,7 +2973,7 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                </motion.div>
+                </div>
               )}
 
               {/* --- TAB: BROADCAST --- */}

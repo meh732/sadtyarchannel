@@ -1514,17 +1514,19 @@ function restoreDatabaseFromObject(raw: any, options?: { skipConfigs?: boolean; 
 
   const shouldSkipConfigs = options?.skipConfigs || options?.restoreOnlySettingsAndChannels || raw.skipConfigs || raw.restoreOnlySettingsAndChannels;
 
-  // Handle wrapped structures like { db: ... } or { data: ... } or { data_store: ... }
+  // Handle wrapped structures like { db: ... } or { data: ... } or { data_store: ... } or { backup: ... }
   let target = raw;
   if (target.db && typeof target.db === 'object') {
     target = target.db;
-  } else if (target.data && typeof target.data === 'object' && (target.data.settings || target.data.configs || target.data.sources)) {
+  } else if (target.data && typeof target.data === 'object' && (target.data.settings || target.data.configs || target.data.sources || target.data.channels)) {
     target = target.data;
   } else if (target.data_store && typeof target.data_store === 'object') {
     target = target.data_store;
+  } else if (target.backup && typeof target.backup === 'object') {
+    target = target.backup;
   }
 
-  // Handle raw array of items
+  // Handle raw array of items (configs or proxies)
   if (Array.isArray(target)) {
     if (shouldSkipConfigs) {
       return { success: true, message: 'فایل فقط حاوی آرایه کانفیگ بود و با توجه به انتخاب شما نادیده گرفته شد.' };
@@ -1556,22 +1558,106 @@ function restoreDatabaseFromObject(raw: any, options?: { skipConfigs?: boolean; 
   const currentAdminId = db.settings?.adminId || envAdminId;
   const currentBotToken = db.settings?.botToken || envBotToken;
 
+  const rawSettings = target.settings || target.config || target.bot_settings || target.botConfig || target.options || {};
   const newSettings = {
     ...DEFAULT_SETTINGS,
-    ...(target.settings || {}),
-    adminId: (target.settings?.adminId && target.settings.adminId !== '') ? target.settings.adminId : currentAdminId,
-    botToken: (target.settings?.botToken && target.settings.botToken !== '') ? target.settings.botToken : currentBotToken,
-    autoPost: { ...DEFAULT_AUTO_POST, ...(target.settings?.autoPost || {}) }
+    ...rawSettings,
+    adminId: (rawSettings.adminId && rawSettings.adminId !== '') ? rawSettings.adminId : currentAdminId,
+    botToken: (rawSettings.botToken && rawSettings.botToken !== '') ? rawSettings.botToken : currentBotToken,
+    autoPost: { ...DEFAULT_AUTO_POST, ...(rawSettings.autoPost || {}) }
   };
 
-  const newSources = Array.isArray(target.sources) ? target.sources : db.sources;
-  const newForceJoin = Array.isArray(target.forceJoinChannels) ? target.forceJoinChannels : db.forceJoinChannels;
+  // Extract and normalize Sources (handles object list or string array)
+  const rawSources = target.sources || target.channels || target.source_channels || target.channel_sources || target.sourceChannels || target.telegram_sources || target.subscriptions;
+  let newSources: SourceItem[] = db.sources;
+  if (Array.isArray(rawSources)) {
+    newSources = rawSources.map((item: any, idx: number) => {
+      if (typeof item === 'string') {
+        const isTelegram = item.startsWith('@') || item.includes('t.me/');
+        const urlOrHandle = item.startsWith('@') ? item : (item.includes('t.me/') ? `@${item.split('t.me/')[1].replace(/[\/\?].*$/, '')}` : item);
+        const name = isTelegram ? item : `منبع ساب ${idx + 1}`;
+        return {
+          id: 'src_' + Math.random().toString(36).substring(2, 9),
+          name,
+          urlOrHandle,
+          type: isTelegram ? 'telegram' : 'sub',
+          enabled: true,
+          lastExtracted: null,
+          extractedCount: 0
+        };
+      }
+      return {
+        id: item.id || ('src_' + Math.random().toString(36).substring(2, 9)),
+        name: item.name || item.title || item.urlOrHandle || item.url || `منبع ${idx + 1}`,
+        urlOrHandle: item.urlOrHandle || item.url || item.link || item.handle || '',
+        type: (item.type === 'telegram' || item.type === 'github' || item.type === 'sub') ? item.type : (item.urlOrHandle?.includes('t.me/') ? 'telegram' : 'sub'),
+        enabled: item.enabled !== false,
+        lastExtracted: typeof item.lastExtracted === 'string' ? item.lastExtracted : null,
+        extractedCount: Number(item.extractedCount) || 0
+      };
+    });
+  }
+
+  // Extract and normalize ForceJoinChannels (handles object list or string array)
+  const rawForceJoin = target.forceJoinChannels || target.forceJoin || target.force_join || target.lockChannels || target.lock_channels || target.lockedChannels || target.mandatory_channels || target.mandatoryChannels;
+  let newForceJoin: ForceJoinChannel[] = db.forceJoinChannels;
+  if (Array.isArray(rawForceJoin)) {
+    newForceJoin = rawForceJoin.map((item: any, idx: number) => {
+      if (typeof item === 'string') {
+        const handle = item.startsWith('@') ? item : (item.includes('t.me/') ? `@${item.split('t.me/')[1].replace(/[\/\?].*$/, '')}` : `@${item}`);
+        return {
+          id: 'fj_' + Math.random().toString(36).substring(2, 9),
+          username: handle,
+          title: handle,
+          inviteLink: `https://t.me/${handle.replace(/^@+/, '')}`,
+          enabled: true
+        };
+      }
+      const username = item.username || item.handle || item.channel || '';
+      return {
+        id: item.id || ('fj_' + Math.random().toString(36).substring(2, 9)),
+        username,
+        title: item.title || item.name || username || `کانال ${idx + 1}`,
+        inviteLink: item.inviteLink || item.link || (username ? `https://t.me/${username.replace(/^@+/, '')}` : ''),
+        enabled: item.enabled !== false
+      };
+    });
+  }
+
+  // Extract and normalize Users
+  const rawUsers = target.users || target.members || target.subscribers || target.user_list;
+  let newUsers: BotUser[] = db.users;
+  if (Array.isArray(rawUsers)) {
+    newUsers = rawUsers.map((u: any) => {
+      const nowStr = new Date().toISOString();
+      if (typeof u === 'number' || typeof u === 'string') {
+        const cid = Number(u);
+        return {
+          chatId: cid,
+          username: null,
+          firstName: null,
+          joinedAt: nowStr,
+          lastActive: nowStr,
+          configsFetched: 0
+        };
+      }
+      return {
+        chatId: Number(u.chatId || u.id || u.userId || u.chat_id || 0),
+        username: u.username || null,
+        firstName: u.firstName || u.first_name || null,
+        joinedAt: typeof u.joinedAt === 'string' ? u.joinedAt : nowStr,
+        lastActive: typeof u.lastActive === 'string' ? u.lastActive : nowStr,
+        configsFetched: Number(u.configsFetched || u.configsReceived || 0)
+      };
+    }).filter(u => u.chatId > 0);
+  }
   
   // If skipping configs, retain existing configs, proxies, and npv files in database!
-  const newConfigs = shouldSkipConfigs ? db.configs : (Array.isArray(target.configs) ? target.configs : db.configs);
-  const newProxies = shouldSkipConfigs ? db.proxies : (Array.isArray(target.proxies) ? target.proxies : db.proxies);
+  const rawConfigs = target.configs || target.configurations || target.v2ray_configs || target.items;
+  const rawProxies = target.proxies || target.mtproto || target.proxyList;
+  const newConfigs = shouldSkipConfigs ? db.configs : (Array.isArray(rawConfigs) ? rawConfigs : db.configs);
+  const newProxies = shouldSkipConfigs ? db.proxies : (Array.isArray(rawProxies) ? rawProxies : db.proxies);
   const newNpvFiles = shouldSkipConfigs ? (db.npvFiles || []) : (Array.isArray(target.npvFiles) ? target.npvFiles : (db.npvFiles || []));
-  const newUsers = Array.isArray(target.users) ? target.users : db.users;
   const newLogs = shouldSkipConfigs ? db.logs : (Array.isArray(target.logs) ? target.logs : db.logs);
   const newPosted = Array.isArray(target.postedMessages) ? target.postedMessages : (db.postedMessages || []);
 
@@ -1609,6 +1695,99 @@ function restoreDatabaseFromObject(raw: any, options?: { skipConfigs?: boolean; 
       npvFiles: (db.npvFiles || []).length,
       users: db.users.length
     }
+  };
+}
+
+/**
+ * Universal backup parser and restorer from string or Buffer
+ */
+function parseAndRestoreBackup(textOrBuffer: string | Buffer, shouldSkipConfigs: boolean) {
+  let text = typeof textOrBuffer === 'string' ? textOrBuffer : textOrBuffer.toString('utf8');
+  // Strip UTF-8 BOM if present
+  if (text.charCodeAt(0) === 0xFEFF || text.startsWith('\uFEFF')) {
+    text = text.replace(/^\uFEFF+/, '');
+  }
+  text = text.trim();
+
+  // Try standard JSON parse
+  if ((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))) {
+    try {
+      const parsed = JSON.parse(text);
+      return restoreDatabaseFromObject(parsed, {
+        skipConfigs: shouldSkipConfigs,
+        restoreOnlySettingsAndChannels: shouldSkipConfigs
+      });
+    } catch (jsonErr: any) {
+      console.warn('JSON parse warning on backup text:', jsonErr.message);
+    }
+  }
+
+  // If text contains JSON embedded inside markdown code blocks ```json ... ```
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    try {
+      const parsed = JSON.parse(codeBlockMatch[1].trim());
+      return restoreDatabaseFromObject(parsed, {
+        skipConfigs: shouldSkipConfigs,
+        restoreOnlySettingsAndChannels: shouldSkipConfigs
+      });
+    } catch (e) {}
+  }
+
+  // Fallback: If not JSON, check if it contains raw configs or proxy links in text format
+  const extractedConfigs = extractConfigsFromText(text, 'فایل بکاپ متنی');
+  const extractedProxies: ProxyItem[] = [];
+  const proxyLines = text.split('\n');
+  for (const line of proxyLines) {
+    const match = line.match(/(?:https:\/\/t\.me\/proxy\?|tg:\/\/proxy\?)(server=[^&\s]+&port=\d+&secret=[^&\s]+)/i);
+    if (match) {
+      try {
+        const params = new URLSearchParams(match[1]);
+        const server = params.get('server') || '';
+        const port = parseInt(params.get('port') || '0', 10);
+        const secret = params.get('secret') || '';
+        if (server && port && secret) {
+          extractedProxies.push({
+            id: 'prx_' + Math.random().toString(36).substring(2, 9),
+            raw: `tg://proxy?server=${server}&port=${port}&secret=${secret}`,
+            type: 'mtproto',
+            server,
+            port,
+            secret,
+            latency: null,
+            status: 'untested',
+            lastChecked: null,
+            createdAt: new Date().toISOString(),
+            source: 'فایل بکاپ متنی'
+          });
+        }
+      } catch (e) {}
+    }
+  }
+
+  if (extractedConfigs.length > 0 || extractedProxies.length > 0) {
+    if (!shouldSkipConfigs) {
+      if (extractedConfigs.length > 0) db.configs.unshift(...extractedConfigs);
+      if (extractedProxies.length > 0) db.proxies.unshift(...extractedProxies);
+      enforceConfigsRetentionLimit();
+      saveDatabase(true);
+    }
+    return {
+      success: true,
+      message: `تعداد ${extractedConfigs.length} کانفیگ و ${extractedProxies.length} پروکسی از متن فایل استخراج گردید.`,
+      counts: {
+        configs: db.configs.length,
+        proxies: db.proxies.length,
+        sources: db.sources.length,
+        forceJoinChannels: db.forceJoinChannels.length,
+        users: db.users.length
+      }
+    };
+  }
+
+  return {
+    success: false,
+    message: 'ساختار فایل پشتیبان شناخته نشد. لطفاً فایل JSON دیتابیس یا فایل حاوی کانفیگ‌های متنی را انتخاب فرمایید.'
   };
 }
 
@@ -5568,7 +5747,10 @@ async function startExpressServer() {
     try {
       const importedData = req.body;
       const skipConfigs = req.query.skipConfigs === 'true' || req.query.mode === 'settings_and_sources';
-      const result = restoreDatabaseFromObject(importedData, { skipConfigs });
+      const result = typeof importedData === 'string' || Buffer.isBuffer(importedData)
+        ? parseAndRestoreBackup(importedData, skipConfigs)
+        : restoreDatabaseFromObject(importedData, { skipConfigs, restoreOnlySettingsAndChannels: skipConfigs });
+
       if (!result.success) {
         return res.status(400).json(result);
       }
@@ -5582,6 +5764,23 @@ async function startExpressServer() {
   app.post('/api/backup/upload-stream', (req, res) => {
     const mode = req.query.mode as string;
     const shouldSkipConfigs = mode === 'settings_and_sources' || req.query.skipConfigs === 'true';
+
+    // If body-parser already processed the body (e.g. JSON or object)
+    if (req.body && Object.keys(req.body).length > 0 && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+      try {
+        const result = restoreDatabaseFromObject(req.body, { 
+          skipConfigs: shouldSkipConfigs,
+          restoreOnlySettingsAndChannels: shouldSkipConfigs
+        });
+        if (!result.success) {
+          return res.status(400).json(result);
+        }
+        return res.json({ success: true, message: result.message, counts: result.counts, settings: db.settings });
+      } catch (err: any) {
+        return res.status(500).json({ success: false, message: 'خطا در پردازش داده‌های بکاپ: ' + (err.message || err) });
+      }
+    }
+
     const chunks: Buffer[] = [];
 
     req.on('data', (chunk) => {
@@ -5591,12 +5790,7 @@ async function startExpressServer() {
     req.on('end', () => {
       try {
         const fullBuffer = Buffer.concat(chunks);
-        const text = fullBuffer.toString('utf8');
-        const parsed = JSON.parse(text);
-        const result = restoreDatabaseFromObject(parsed, { 
-          skipConfigs: shouldSkipConfigs,
-          restoreOnlySettingsAndChannels: shouldSkipConfigs
-        });
+        const result = parseAndRestoreBackup(fullBuffer, shouldSkipConfigs);
         if (!result.success) {
           return res.status(400).json(result);
         }
