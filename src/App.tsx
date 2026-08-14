@@ -24,12 +24,16 @@ import {
   Play,
   Github,
   Check,
-  ChevronRight,
   TrendingUp,
   Sliders,
-  HelpCircle
+  HelpCircle,
+  Download,
+  Upload,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react';
-import { Download, Upload, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ConfigItem, 
