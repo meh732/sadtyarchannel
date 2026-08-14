@@ -2919,20 +2919,48 @@ async function monitorChannelPosts() {
 }
 
 // --- Automated Local DB Backup Systems ---
-async function sendBackupToAdmin(): Promise<boolean> {
+function getCleanDatabaseBackup(includeConfigsAndFiles: boolean = false) {
+  if (includeConfigsAndFiles) {
+    return db;
+  }
+  // Lightweight backup: ONLY settings, sources, forceJoinChannels, and users (NO bulky configs, proxies, npvFiles, postsHistory, logs)
+  return {
+    version: '2.0',
+    type: 'lightweight_backup',
+    createdAt: new Date().toISOString(),
+    settings: { ...db.settings },
+    sources: (db.sources || []).map(s => ({ ...s })),
+    forceJoinChannels: (db.forceJoinChannels || []).map(c => ({ ...c })),
+    users: (db.users || []).map(u => ({ ...u })),
+    configs: [],
+    proxies: [],
+    npvFiles: [],
+    postsHistory: [],
+    logs: []
+  };
+}
+
+async function sendBackupToAdmin(includeConfigsAndFiles: boolean = false): Promise<boolean> {
   const adminId = db.settings.adminId;
-  const token = db.settings.botToken;
+  const token = (db.settings.botToken || process.env.BOT_TOKEN || '').trim();
   if (!adminId || !token) return false;
   try {
-    if (!fs.existsSync(DB_FILE)) return false;
-    const content = fs.readFileSync(DB_FILE, 'utf8');
+    const backupObj = getCleanDatabaseBackup(includeConfigsAndFiles);
+    const content = JSON.stringify(backupObj, null, 2);
     const formData = new FormData();
     formData.append('chat_id', adminId);
     
-    const filename = `db_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    const prefix = includeConfigsAndFiles ? 'full_db_backup' : 'light_db_backup';
+    const filename = `${prefix}_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
     const blob = new Blob([content], { type: 'application/json' });
     formData.append('document', blob, filename);
-    formData.append('caption', `📦 **نسخه پشتیبان خودکار دیتابیس ربات**\n\n🕒 زمان: **${new Date().toLocaleString('fa-IR')}**\n💾 حجم فایل: **${(content.length / 1024).toFixed(2)} کیلوبایت**`);
+    
+    const sizeKb = (content.length / 1024).toFixed(1);
+    const desc = includeConfigsAndFiles
+      ? `📦 **نسخه پشتیبان کامل دیتابیس (شامل کانفیگ‌ها و فایل‌ها)**`
+      : `📦 **نسخه پشتیبان دیتابیس (شامل تنظیمات، منابع، کانال‌ها و کاربران)**`;
+      
+    formData.append('caption', `${desc}\n\n🕒 زمان: **${new Date().toLocaleString('fa-IR')}**\n💾 حجم فایل: **${sizeKb} KB**\n📁 بدون فایل‌ها و کانفیگ‌ها (فوق‌العاده کم‌حجم و سریع)`);
 
     const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
       method: 'POST',
@@ -2943,7 +2971,7 @@ async function sendBackupToAdmin(): Promise<boolean> {
     if (resData.ok) {
       db.settings.lastBackupAt = new Date().toISOString();
       saveDatabase();
-      addLog('success', `نسخه پشتیبان دیتابیس با موفقیت برای ادمین ارسال گردید.`);
+      addLog('success', `نسخه پشتیبان دیتابیس (بدون کانفیگ‌ها و فایل‌های سنگین) با موفقیت برای ادمین ارسال گردید.`);
       return true;
     } else {
       addLog('error', `خطا در ارسال بکاپ به تلگرام: ${resData.description}`);
@@ -3773,7 +3801,7 @@ async function handleBotUpdate(update: any) {
         if (success) {
           await callTelegramApi('sendMessage', {
             chat_id: chatId,
-            text: `✅ **فایل پشتیبان کامل دیتابیس با موفقیت ارسال گردید.**\n\nبرای بازگردانی در آینده، کافیست همین فایل را به ربات ارسال یا فوروارد فرمایید.`,
+            text: `✅ **فایل پشتیبان دیتابیس (شامل تنظیمات، منابع، کانال‌های قفل و کاربران - بدون فایل‌ها و کانفیگ‌ها) با موفقیت ارسال گردید.**\n\nبرای بازگردانی در آینده، کافیست همین فایل را به ربات ارسال یا فوروارد فرمایید.`,
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: [[{ text: '⚙️ پنل مدیریت', callback_data: 'admin_menu' }]] }
           });
@@ -5934,9 +5962,15 @@ async function startExpressServer() {
   // API: Export Database Backup
   app.get('/api/backup/export', (req, res) => {
     try {
-      res.setHeader('Content-Disposition', `attachment; filename=data_store_backup_${Date.now()}.json`);
+      const mode = (req.query.mode as string) || 'light';
+      const isFull = mode === 'full' || req.query.includeConfigs === 'true';
+      const backupData = getCleanDatabaseBackup(isFull);
+      const filename = isFull
+        ? `data_store_full_backup_${Date.now()}.json`
+        : `data_store_light_backup_${Date.now()}.json`;
+      res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
       res.setHeader('Content-Type', 'application/json');
-      res.send(JSON.stringify(db, null, 2));
+      res.send(JSON.stringify(backupData, null, 2));
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }

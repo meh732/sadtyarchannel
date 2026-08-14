@@ -3023,13 +3023,25 @@ export default function App() {
                     {/* Action buttons */}
                     <div className="pt-1 flex flex-wrap items-center gap-3">
                       <a
-                        href="/api/backup/export"
+                        href="/api/backup/export?mode=light"
                         target="_blank"
                         rel="noreferrer"
-                        className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                        className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors shadow-sm"
+                        title="شامل تنظیمات، لیست منابع، کانال‌های قفل و کاربران (بدون فایل‌ها و کانفیگ‌های سنگین)"
                       >
-                        <Download className="w-4 h-4" />
-                        <span>دانلود فایل پشتیبان دیتابیس (Export JSON)</span>
+                        <Download className="w-4 h-4 text-indigo-600" />
+                        <span>دانلود بکاپ سبک (بدون کانفیگ و فایل)</span>
+                      </a>
+
+                      <a
+                        href="/api/backup/export?mode=full"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
+                        title="شامل تمام کانفیگ‌ها و فایل‌های دیتابیس"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>دانلود فول بکاپ (کامل)</span>
                       </a>
 
                       <input
@@ -3049,7 +3061,7 @@ export default function App() {
                       >
                         <Upload className="w-4 h-4" />
                         <span>
-                          {actionLoading === 'restore_backup' ? 'در حال بازگردانی بکاپ...' : 'انتخاب و آپلود فایل بکاپ (Restore File)'}
+                          {actionLoading === 'restore_backup' ? 'در حال بازگردانی بکاپ...' : 'آپلود فایل بکاپ (Restore File)'}
                         </span>
                       </button>
 
@@ -3059,7 +3071,7 @@ export default function App() {
                         className="px-4 py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
                       >
                         <FileText className="w-4 h-4 text-slate-500" />
-                        <span>{showPasteBackup ? 'بستن کادر چسباندن متن' : 'یا چسباندن مستقیم متن JSON / کانفیگ'}</span>
+                        <span>{showPasteBackup ? 'بستن کادر متن' : 'چسباندن متن JSON'}</span>
                       </button>
                     </div>
 
