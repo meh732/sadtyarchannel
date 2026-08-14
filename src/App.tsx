@@ -271,7 +271,14 @@ export default function App() {
     try {
       setActionLoading('restore_backup');
       const text = await file.text();
-      const json = JSON.parse(text);
+      let json: any;
+      try {
+        json = JSON.parse(text);
+      } catch (jsonErr: any) {
+        alert('❌ فایل انتخابی دارای فرمت معتبر JSON نیست.');
+        return;
+      }
+
       const res = await fetch('/api/backup/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -279,10 +286,17 @@ export default function App() {
       });
       const data = await res.json();
       if (data.success) {
-        alert('✅ دیتابیس با موفقیت بازگردانی شد!');
+        const c = data.counts || {};
+        let details = '✅ دیتابیس با موفقیت بازگردانی شد!\n';
+        if (c.configs !== undefined) details += `\n• تعداد کانفیگ‌ها: ${c.configs}`;
+        if (c.proxies !== undefined) details += `\n• تعداد پروکسی‌ها: ${c.proxies}`;
+        if (c.sources !== undefined) details += `\n• تعداد منابع: ${c.sources}`;
+        if (c.users !== undefined) details += `\n• تعداد کاربران: ${c.users}`;
+        alert(details);
+        await fetchData();
         window.location.reload();
       } else {
-        alert(`❌ خطا در بازگردانی بکاپ: ${data.message}`);
+        alert(`❌ خطا در بازگردانی بکاپ: ${data.message || 'خطای ناشناخته'}`);
       }
     } catch (err: any) {
       alert(`❌ خطا در خواندن فایل یا ارتباط با سرور: ${err.message}`);

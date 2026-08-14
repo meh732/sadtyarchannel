@@ -1505,6 +1505,99 @@ function filterTelegramHtmlLast3Days(html: string): string {
 }
 
 /**
+ * Restores database from parsed backup object or array of configs
+ */
+function restoreDatabaseFromObject(raw: any): { success: boolean; message: string; counts?: any } {
+  if (!raw || (typeof raw !== 'object' && !Array.isArray(raw))) {
+    return { success: false, message: 'محتوای فایل پشتیبان نامعتبر است (فرمت JSON معتبر نیست).' };
+  }
+
+  // Handle wrapped structures like { db: ... } or { data: ... } or { data_store: ... }
+  let target = raw;
+  if (target.db && typeof target.db === 'object') {
+    target = target.db;
+  } else if (target.data && typeof target.data === 'object' && (target.data.settings || target.data.configs || target.data.sources)) {
+    target = target.data;
+  } else if (target.data_store && typeof target.data_store === 'object') {
+    target = target.data_store;
+  }
+
+  // Handle raw array of items
+  if (Array.isArray(target)) {
+    const isConfigArray = target.some((item: any) => item && (item.link || item.server || item.protocol));
+    const isProxyArray = target.some((item: any) => item && (item.host || item.port || item.type === 'mtproto'));
+    
+    if (isConfigArray || isProxyArray) {
+      if (isConfigArray) {
+        db.configs = target.filter((c: any) => c && typeof c === 'object');
+      }
+      if (isProxyArray) {
+        db.proxies = target.filter((p: any) => p && typeof p === 'object');
+      }
+      enforceConfigsRetentionLimit();
+      saveDatabase(true);
+      addLog('success', `تعداد ${target.length} رکورد از آرایه فایل بکاپ بازگردانی شد.`);
+      return { 
+        success: true, 
+        message: `تعداد ${target.length} رکورد با موفقیت بازگردانی شد.`, 
+        counts: { configs: db.configs.length, proxies: (db.proxies || []).length } 
+      };
+    }
+  }
+
+  const envAdminId = process.env.ADMIN_ID ? process.env.ADMIN_ID.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+  const envBotToken = process.env.BOT_TOKEN ? process.env.BOT_TOKEN.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+  
+  const currentAdminId = db.settings?.adminId || envAdminId;
+  const currentBotToken = db.settings?.botToken || envBotToken;
+
+  const newSettings = {
+    ...DEFAULT_SETTINGS,
+    ...(target.settings || {}),
+    adminId: (target.settings?.adminId && target.settings.adminId !== '') ? target.settings.adminId : currentAdminId,
+    botToken: (target.settings?.botToken && target.settings.botToken !== '') ? target.settings.botToken : currentBotToken,
+    autoPost: { ...DEFAULT_AUTO_POST, ...(target.settings?.autoPost || {}) }
+  };
+
+  const newSources = Array.isArray(target.sources) ? target.sources : db.sources;
+  const newForceJoin = Array.isArray(target.forceJoinChannels) ? target.forceJoinChannels : db.forceJoinChannels;
+  const newConfigs = Array.isArray(target.configs) ? target.configs : db.configs;
+  const newProxies = Array.isArray(target.proxies) ? target.proxies : db.proxies;
+  const newNpvFiles = Array.isArray(target.npvFiles) ? target.npvFiles : (db.npvFiles || []);
+  const newUsers = Array.isArray(target.users) ? target.users : db.users;
+  const newLogs = Array.isArray(target.logs) ? target.logs : db.logs;
+  const newPosted = Array.isArray(target.postedMessages) ? target.postedMessages : (db.postedMessages || []);
+
+  db = {
+    settings: newSettings,
+    sources: newSources,
+    forceJoinChannels: newForceJoin,
+    configs: newConfigs,
+    proxies: newProxies,
+    npvFiles: newNpvFiles,
+    users: newUsers,
+    logs: newLogs,
+    postedMessages: newPosted
+  };
+
+  enforceConfigsRetentionLimit();
+  saveDatabase(true); // write immediately synchronously to disk
+  addLog('success', `دیتابیس ربات با موفقیت بازگردانی شد (${newConfigs.length} کانفیگ، ${newProxies.length} پروکسی، ${newSources.length} منبع، ${newUsers.length} کاربر).`);
+
+  return {
+    success: true,
+    message: 'دیتابیس با موفقیت بازگردانی شد.',
+    counts: {
+      configs: db.configs.length,
+      proxies: db.proxies.length,
+      sources: db.sources.length,
+      npvFiles: db.npvFiles.length,
+      users: db.users.length
+    }
+  };
+}
+
+/**
  * Enforces max configs retention limit (1 to 10000, default 2000).
  * Trims excess oldest configs if array length exceeds maxConfigsRetention.
  */
@@ -3407,14 +3500,18 @@ async function handleBotUpdate(update: any) {
 
     // --- ADMIN CONTROLS BYPASS ---
     if (isAdmin) {
-      // Backup document restore check
+      // Backup document restore check for Admin
       if (update.message?.document) {
         const doc = update.message.document;
-        if (doc.file_name && doc.file_name.endsWith('.json')) {
+        const fn = (doc.file_name || '').toLowerCase();
+        const mime = (doc.mime_type || '').toLowerCase();
+        const isJsonBackup = fn.endsWith('.json') || mime.includes('json') || (update.message.caption || '').includes('backup') || (update.message.caption || '').includes('بکاپ');
+
+        if (isJsonBackup) {
           try {
             await callTelegramApi('sendMessage', {
               chat_id: chatId,
-              text: '⏳ **در حال دریافت فایل نسخه پشتیبان و تحلیل ساختار دیتابیس...**',
+              text: '⏳ **در حال دریافت فایل نسخه پشتیبان و بازگردانی دیتابیس...**',
               parse_mode: 'Markdown'
             });
 
@@ -3425,44 +3522,37 @@ async function handleBotUpdate(update: any) {
             const fileContent = await fileRes.text();
             
             const parsed = JSON.parse(fileContent);
+            const res = restoreDatabaseFromObject(parsed);
             
-            if (parsed && (parsed.settings || parsed.sources || parsed.configs)) {
-              db = {
-                settings: {
-                  ...DEFAULT_SETTINGS,
-                  ...parsed.settings,
-                  adminId: db.settings.adminId, // Keep current adminId
-                  botToken: db.settings.botToken // Keep current botToken
-                },
-                sources: Array.isArray(parsed.sources) ? parsed.sources : db.sources,
-                forceJoinChannels: Array.isArray(parsed.forceJoinChannels) ? parsed.forceJoinChannels : db.forceJoinChannels,
-                configs: Array.isArray(parsed.configs) ? parsed.configs : db.configs,
-                proxies: Array.isArray(parsed.proxies) ? parsed.proxies : db.proxies,
-                users: Array.isArray(parsed.users) ? parsed.users : db.users,
-                logs: Array.isArray(parsed.logs) ? parsed.logs : db.logs,
-                postedMessages: Array.isArray(parsed.postedMessages) ? parsed.postedMessages : (db.postedMessages || [])
-              };
-              saveDatabase();
-              
+            if (res.success) {
+              const c = res.counts || {};
+              let details = `🔄 **پایگاه داده با موفقیت بازگردانی شد!**\n\n`;
+              details += `📊 **اطلاعات بازیابی شده:**\n`;
+              if (c.configs !== undefined) details += `• تعداد کانفیگ‌ها: **${c.configs}**\n`;
+              if (c.proxies !== undefined) details += `• تعداد پروکسی‌ها: **${c.proxies}**\n`;
+              if (c.sources !== undefined) details += `• تعداد منابع: **${c.sources}**\n`;
+              if (c.users !== undefined) details += `• تعداد کاربران: **${c.users}**\n`;
+              if (c.npvFiles !== undefined && c.npvFiles > 0) details += `• فایل‌های NapsternetV/OpenVPN: **${c.npvFiles}**\n`;
+              details += `\nکلیه تنظیمات و اطلاعات با موفقیت بازیابی شدند.`;
+
               await callTelegramApi('sendMessage', {
                 chat_id: chatId,
-                text: '🔄 **پایگاه داده با موفقیت بازگردانی شد!**\n\nتنظیمات، لیست منابع، کانفیگ‌ها و کاربران ربات با موفقیت به تاریخ نسخه پشتیبان بازیابی شدند.',
+                text: details,
                 parse_mode: 'Markdown',
                 reply_markup: { inline_keyboard: [[{ text: '🔙 ورود به پنل مدیریت', callback_data: 'admin_menu' }]] }
               });
-              addLog('success', `پایگاه داده ربات به صورت دستی توسط ادمین از روی فایل بکاپ بازگردانی شد.`);
               return;
             } else {
               await callTelegramApi('sendMessage', {
                 chat_id: chatId,
-                text: '❌ ساختار فایل پشتیبان ارسالی نامعتبر است یا با این ربات همخوانی ندارد.'
+                text: `❌ خطا در بازگردانی فایل بکاپ: ${res.message}`
               });
               return;
             }
           } catch (err: any) {
             await callTelegramApi('sendMessage', {
               chat_id: chatId,
-              text: `❌ خطا در بازگردانی فایل بکاپ: ${err.message || err}`
+              text: `❌ خطا در خواندن یا تحلیل ساختار فایل بکاپ: ${err.message || err}`
             });
             return;
           }
@@ -5461,34 +5551,13 @@ async function startExpressServer() {
   app.post('/api/backup/import', (req, res) => {
     try {
       const importedData = req.body;
-      if (!importedData || typeof importedData !== 'object' || !importedData.settings) {
-        return res.status(400).json({ success: false, message: 'فایل بکاپ نامعتبر است یا ساختار دیتابیس را ندارد.' });
+      const result = restoreDatabaseFromObject(importedData);
+      if (!result.success) {
+        return res.status(400).json(result);
       }
-
-      const envAdminId = db.settings.adminId;
-      const envBotToken = db.settings.botToken;
-
-      db = {
-        settings: {
-          ...DEFAULT_SETTINGS,
-          ...(importedData.settings || {}),
-          adminId: importedData.settings?.adminId || envAdminId,
-          botToken: importedData.settings?.botToken || envBotToken
-        },
-        sources: Array.isArray(importedData.sources) ? importedData.sources : DEFAULT_SOURCES,
-        forceJoinChannels: Array.isArray(importedData.forceJoinChannels) ? importedData.forceJoinChannels : [],
-        configs: Array.isArray(importedData.configs) ? importedData.configs : [],
-        proxies: Array.isArray(importedData.proxies) ? importedData.proxies : [],
-        users: Array.isArray(importedData.users) ? importedData.users : [],
-        logs: Array.isArray(importedData.logs) ? importedData.logs : [],
-        postedMessages: Array.isArray(importedData.postedMessages) ? importedData.postedMessages : []
-      };
-
-      saveDatabase();
-      addLog('success', 'دیتابیس سیستم با موفقیت از روی فایل بکاپ بازیابی (Restore) شد.');
-      res.json({ success: true, message: 'بکاپ با موفقیت بازگردانی شد.', settings: db.settings });
+      res.json({ success: true, message: result.message, counts: result.counts, settings: db.settings });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(500).json({ success: false, message: err.message || 'خطا در بازگردانی فایل بکاپ' });
     }
   });
 
