@@ -138,6 +138,7 @@ export default function App() {
   });
 
   const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [restoreMode, setRestoreMode] = useState<'settings_and_sources' | 'full'>('settings_and_sources');
   const [broadcastProgress, setBroadcastProgress] = useState<{ total: number; done: boolean } | null>(null);
 
   // Refs for log scrolling
@@ -261,13 +262,21 @@ export default function App() {
   }, [stats.checkingConfigsCount, stats.checkingProxiesCount, actionLoading]);
 
   // Handle Restore Backup
-  const handleRestoreBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleRestoreBackup = async (e: React.ChangeEvent<HTMLInputElement>, overrideMode?: 'settings_and_sources' | 'full') => {
+    const activeMode = overrideMode || restoreMode;
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!window.confirm('آیا مطمئن هستید که می‌خواهید دیتابیس را از روی این فایل بکاپ بازگردانی (Restore) کنید؟ اطلاعات فعلی جایگزین خواهد شد.')) {
+
+    const fileSizeMb = (file.size / (1024 * 1024)).toFixed(1);
+    const modeLabel = activeMode === 'settings_and_sources'
+      ? 'فقط تنظیمات و لیست کانال‌ها/منابع (بدون تغییر کانفیگ‌ها)'
+      : 'کامل (همراه با تمام کانفیگ‌ها و لاگ‌ها)';
+
+    if (!window.confirm(`آیا مطمئن هستید که می‌خواهید دیتابیس را بازگردانی (Restore) کنید؟\n\nحالت انتخابی: ${modeLabel}\nحجم فایل: ${fileSizeMb} مگابایت`)) {
       e.target.value = '';
       return;
     }
+
     try {
       setActionLoading('restore_backup');
       const text = await file.text();
@@ -279,19 +288,42 @@ export default function App() {
         return;
       }
 
+      let payload = json;
+      if (activeMode === 'settings_and_sources') {
+        let base = json;
+        if (base.db && typeof base.db === 'object') base = base.db;
+        else if (base.data && typeof base.data === 'object') base = base.data;
+        else if (base.data_store && typeof base.data_store === 'object') base = base.data_store;
+
+        payload = {
+          skipConfigs: true,
+          restoreOnlySettingsAndChannels: true,
+          settings: base.settings || {},
+          sources: Array.isArray(base.sources) ? base.sources : undefined,
+          forceJoinChannels: Array.isArray(base.forceJoinChannels) ? base.forceJoinChannels : undefined,
+          users: Array.isArray(base.users) ? base.users : undefined,
+          postedMessages: Array.isArray(base.postedMessages) ? base.postedMessages : undefined
+        };
+      }
+
       const res = await fetch('/api/backup/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(json)
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (data.success) {
         const c = data.counts || {};
-        let details = '✅ دیتابیس با موفقیت بازگردانی شد!\n';
-        if (c.configs !== undefined) details += `\n• تعداد کانفیگ‌ها: ${c.configs}`;
-        if (c.proxies !== undefined) details += `\n• تعداد پروکسی‌ها: ${c.proxies}`;
-        if (c.sources !== undefined) details += `\n• تعداد منابع: ${c.sources}`;
-        if (c.users !== undefined) details += `\n• تعداد کاربران: ${c.users}`;
+        let details = '✅ بازگردانی با موفقیت انجام شد!\n';
+        if (activeMode === 'settings_and_sources') {
+          details += `\n• تنظیمات و لیست ${c.sources !== undefined ? c.sources : ''} کانال/منبع و کانال‌های قفل بازیابی شدند.`;
+          details += `\n• کانفیگ‌های فعلی دست‌نخورده باقی ماندند.`;
+        } else {
+          if (c.configs !== undefined) details += `\n• تعداد کانفیگ‌ها: ${c.configs}`;
+          if (c.proxies !== undefined) details += `\n• تعداد پروکسی‌ها: ${c.proxies}`;
+          if (c.sources !== undefined) details += `\n• تعداد منابع: ${c.sources}`;
+          if (c.users !== undefined) details += `\n• تعداد کاربران: ${c.users}`;
+        }
         alert(details);
         await fetchData();
         window.location.reload();
@@ -2862,7 +2894,7 @@ export default function App() {
                   </form>
 
                   {/* --- DATABASE BACKUP & RESTORE CARD --- */}
-                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 mt-6">
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5 mt-6">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600">
                         <Database className="w-5 h-5" />
@@ -2873,7 +2905,57 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="pt-2 flex flex-col sm:flex-row items-center gap-4">
+                    {/* Mode selection for Restore */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
+                      <span className="text-xs font-bold text-slate-700 block">حالت بازگردانی فایل بکاپ (Restore Mode):</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setRestoreMode('settings_and_sources')}
+                          className={`p-3 rounded-lg border text-right transition-all flex items-start gap-2.5 ${
+                            restoreMode === 'settings_and_sources'
+                              ? 'bg-indigo-50/70 border-indigo-300 text-indigo-900 ring-1 ring-indigo-400/50'
+                              : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className={`w-4 h-4 rounded-full border mt-0.5 flex items-center justify-center shrink-0 ${
+                            restoreMode === 'settings_and_sources' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-300'
+                          }`}>
+                            {restoreMode === 'settings_and_sources' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold block">فقط تنظیمات و لیست کانال‌ها (توصیه‌شده)</span>
+                            <span className="text-[11px] text-slate-500 leading-relaxed block mt-0.5">
+                              فقط منابع، کانال‌های قفل و تنظیمات را بازیابی می‌کند. کانفیگ‌های قبلی حفظ شده و فایل‌های حجیم (۵۰+ مگابایت) فوراً در کسری از ثانیه آپلود می‌شوند.
+                            </span>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setRestoreMode('full')}
+                          className={`p-3 rounded-lg border text-right transition-all flex items-start gap-2.5 ${
+                            restoreMode === 'full'
+                              ? 'bg-indigo-50/70 border-indigo-300 text-indigo-900 ring-1 ring-indigo-400/50'
+                              : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className={`w-4 h-4 rounded-full border mt-0.5 flex items-center justify-center shrink-0 ${
+                            restoreMode === 'full' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-300'
+                          }`}>
+                            {restoreMode === 'full' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold block">بازگردانی کامل (شامل کانفیگ‌ها)</span>
+                            <span className="text-[11px] text-slate-500 leading-relaxed block mt-0.5">
+                              تمام کانفیگ‌ها، پروکسی‌ها، کاربران و تنظیمات را عینا جایگزین می‌کند.
+                            </span>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="pt-1 flex flex-col sm:flex-row items-center gap-3">
                       <a
                         href="/api/backup/export"
                         target="_blank"
@@ -2884,9 +2966,11 @@ export default function App() {
                         <span>دانلود فایل پشتیبان دیتابیس (Export JSON)</span>
                       </a>
 
-                      <label className="w-full sm:w-auto px-5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer">
+                      <label className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-sm">
                         <Upload className="w-4 h-4" />
-                        <span>بارگذاری و بازگردانی فایل بکاپ (Restore)</span>
+                        <span>
+                          {actionLoading === 'restore_backup' ? 'در حال بازگردانی بکاپ...' : 'انتخاب و بارگذاری فایل بکاپ (Restore)'}
+                        </span>
                         <input
                           type="file"
                           accept=".json"

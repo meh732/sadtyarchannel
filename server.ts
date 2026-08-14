@@ -1507,10 +1507,12 @@ function filterTelegramHtmlLast3Days(html: string): string {
 /**
  * Restores database from parsed backup object or array of configs
  */
-function restoreDatabaseFromObject(raw: any): { success: boolean; message: string; counts?: any } {
+function restoreDatabaseFromObject(raw: any, options?: { skipConfigs?: boolean; restoreOnlySettingsAndChannels?: boolean }): { success: boolean; message: string; counts?: any } {
   if (!raw || (typeof raw !== 'object' && !Array.isArray(raw))) {
     return { success: false, message: 'محتوای فایل پشتیبان نامعتبر است (فرمت JSON معتبر نیست).' };
   }
+
+  const shouldSkipConfigs = options?.skipConfigs || options?.restoreOnlySettingsAndChannels || raw.skipConfigs || raw.restoreOnlySettingsAndChannels;
 
   // Handle wrapped structures like { db: ... } or { data: ... } or { data_store: ... }
   let target = raw;
@@ -1524,6 +1526,9 @@ function restoreDatabaseFromObject(raw: any): { success: boolean; message: strin
 
   // Handle raw array of items
   if (Array.isArray(target)) {
+    if (shouldSkipConfigs) {
+      return { success: true, message: 'فایل فقط حاوی آرایه کانفیگ بود و با توجه به انتخاب شما نادیده گرفته شد.' };
+    }
     const isConfigArray = target.some((item: any) => item && (item.link || item.server || item.protocol));
     const isProxyArray = target.some((item: any) => item && (item.host || item.port || item.type === 'mtproto'));
     
@@ -1561,11 +1566,13 @@ function restoreDatabaseFromObject(raw: any): { success: boolean; message: strin
 
   const newSources = Array.isArray(target.sources) ? target.sources : db.sources;
   const newForceJoin = Array.isArray(target.forceJoinChannels) ? target.forceJoinChannels : db.forceJoinChannels;
-  const newConfigs = Array.isArray(target.configs) ? target.configs : db.configs;
-  const newProxies = Array.isArray(target.proxies) ? target.proxies : db.proxies;
-  const newNpvFiles = Array.isArray(target.npvFiles) ? target.npvFiles : (db.npvFiles || []);
+  
+  // If skipping configs, retain existing configs, proxies, and npv files in database!
+  const newConfigs = shouldSkipConfigs ? db.configs : (Array.isArray(target.configs) ? target.configs : db.configs);
+  const newProxies = shouldSkipConfigs ? db.proxies : (Array.isArray(target.proxies) ? target.proxies : db.proxies);
+  const newNpvFiles = shouldSkipConfigs ? (db.npvFiles || []) : (Array.isArray(target.npvFiles) ? target.npvFiles : (db.npvFiles || []));
   const newUsers = Array.isArray(target.users) ? target.users : db.users;
-  const newLogs = Array.isArray(target.logs) ? target.logs : db.logs;
+  const newLogs = shouldSkipConfigs ? db.logs : (Array.isArray(target.logs) ? target.logs : db.logs);
   const newPosted = Array.isArray(target.postedMessages) ? target.postedMessages : (db.postedMessages || []);
 
   db = {
@@ -1580,18 +1587,26 @@ function restoreDatabaseFromObject(raw: any): { success: boolean; message: strin
     postedMessages: newPosted
   };
 
-  enforceConfigsRetentionLimit();
+  if (!shouldSkipConfigs) {
+    enforceConfigsRetentionLimit();
+  }
   saveDatabase(true); // write immediately synchronously to disk
-  addLog('success', `دیتابیس ربات با موفقیت بازگردانی شد (${newConfigs.length} کانفیگ، ${newProxies.length} پروکسی، ${newSources.length} منبع، ${newUsers.length} کاربر).`);
+  
+  if (shouldSkipConfigs) {
+    addLog('success', `تنظیمات و لیست کانال‌ها/منابع با موفقیت از بکاپ بازگردانی شدند (${newSources.length} منبع، ${newForceJoin.length} کانال عضویت اجباری - کانفیگ‌های فعلی حفظ شدند).`);
+  } else {
+    addLog('success', `دیتابیس ربات با موفقیت بازگردانی شد (${newConfigs.length} کانفیگ، ${newProxies.length} پروکسی، ${newSources.length} منبع، ${newUsers.length} کاربر).`);
+  }
 
   return {
     success: true,
-    message: 'دیتابیس با موفقیت بازگردانی شد.',
+    message: shouldSkipConfigs ? 'تنظیمات و لیست کانال‌ها با موفقیت بازگردانی شدند.' : 'دیتابیس با موفقیت بازگردانی شد.',
     counts: {
       configs: db.configs.length,
-      proxies: db.proxies.length,
+      proxies: (db.proxies || []).length,
       sources: db.sources.length,
-      npvFiles: db.npvFiles.length,
+      forceJoinChannels: (db.forceJoinChannels || []).length,
+      npvFiles: (db.npvFiles || []).length,
       users: db.users.length
     }
   };
@@ -5497,7 +5512,8 @@ if (db.settings.botToken) {
 // --- API Routing Logic ---
 async function startExpressServer() {
   const app = express();
-  app.use(express.json({ limit: '50mb' }));
+  app.use(express.json({ limit: '250mb' }));
+  app.use(express.urlencoded({ limit: '250mb', extended: true }));
 
   // Ensure xray is executable, working, and clean up leftover config files
   try {
