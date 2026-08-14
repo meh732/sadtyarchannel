@@ -1,10 +1,9 @@
 #!/bin/bash
 
-# ==========================================
-# Telegram V2Ray Extractor Bot Setup Script
-# Sanaei-style Interactive Linux Installer
-# English Language Edition
-# ==========================================
+# ==============================================================================
+# Telegram V2Ray & Proxy Extractor Bot - Sanaei Style Installer & Manager
+# GitHub: https://github.com/meh732/sadtyarchannel.git
+# ==============================================================================
 
 # Color Codes
 RED='\033[0;31m'
@@ -13,19 +12,19 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
-NC='\033[0;0m' # No Color
-
-# Font styles
+PLAIN='\033[0m'
 BOLD='\033[1m'
 
 # Paths
-INSTALL_DIR="/opt/v2ray-extractor-bot"
-SERVICE_NAME="v2ray-extractor-bot"
+INSTALL_DIR="/opt/sadtyar-bot"
+SERVICE_NAME="sadtyar-bot"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+BIN_CMD="/usr/local/bin/sadtyar"
+REPO_URL="https://github.com/meh732/sadtyarchannel.git"
 
 # Check root privileges
 if [ "$EUID" -ne 0 ]; then
-    echo -e "${RED}${BOLD}Error: Please run this script with root privileges (sudo bash install.sh).${NC}"
+    echo -e "${RED}${BOLD}خطا: لطفاً این اسکریپت را با دسترسی روت اجرا کنید (sudo bash).${PLAIN}"
     exit 1
 fi
 
@@ -33,48 +32,43 @@ show_banner() {
     clear
     echo -e "${CYAN}${BOLD}"
     echo "=================================================================="
-    echo "  ██╗   ██╗██████╗ ██████╗  █████╗ ██╗   ██╗    ██████╗  ██████╗ ████████╗"
-    echo "  ██║   ██║╚════██╗██╔══██╗██╔══██╗╚██╗ ██╔╝    ██╔══██╗██╔═══██╗╚══██╔══╝"
-    echo "  ██║   ██║ █████╔╝██████╔╝███████║ ╚████╔╝     ██████╔╝██║   ██║   ██║   "
-    echo "  ╚██╗ ██╔╝██╔═══╝ ██╔══██╗██╔══██║  ╚██╔╝      ██╔══██╗██║   ██║   ██║   "
-    echo "   ╚████╔╝ ███████╗██║  ██║██║  ██║   ██║       ██████╔╝╚██████╔╝   ██║   "
-    echo "    ╚═══╝  ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝       ╚═════╝  ╚═════╝    ╚═╝   "
+    echo "  ███████╗ █████╗ ██████╗ ████████╗██╗   ██╗ █████╗ ██████╗ "
+    echo "  ██╔════╝██╔══██╗██╔══██╗╚══██╔══╝╚██╗ ██╔╝██╔══██╗██╔══██╗"
+    echo "  ███████╗███████║██║  ██║   ██║    ╚████╔╝ ███████║██████╔╝"
+    echo "  ╚════██║██╔══██║██║  ██║   ██║     ╚██╔╝  ██╔══██║██╔══██╗"
+    echo "  ███████║██║  ██║██████╔╝   ██║      ██║   ██║  ██║██║  ██║"
+    echo "  ╚══════╝╚═╝  ╚═╝╚═════╝    ╚═╝      ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝"
     echo "=================================================================="
-    echo -e "       V2Ray Config Extractor & Telegram Auto-Posting Bot         "
-    echo -e "               Sanaei-Style Premium Installer v1.0.0               "
-    echo -e "==================================================================${NC}"
+    echo -e "       ربات هوشمند استخراج و مدیریت کانفیگ ویتوری و تلگرام         "
+    echo -e "              Sanaei Style Installer & Manager v2.0               "
+    echo -e "==================================================================${PLAIN}"
     echo ""
 }
 
-# Check and Install System Dependencies
+# Install System Dependencies
 install_system_deps() {
-    echo -e "${BLUE}[1/4] Checking and installing system dependencies...${NC}"
+    echo -e "${BLUE}[1/5] در حال بررسی و نصب نیازمندی‌های سیستم...${PLAIN}"
     
-    # Detect Package Manager
     if [ -f /etc/debian_version ]; then
         PM="apt-get"
-        echo -e "${GREEN}Detected Debian/Ubuntu system.${NC}"
+        echo -e "${GREEN}سیستم عامل شناسایی شده: دبیان / اوبونتو${PLAIN}"
+        apt-get update -y >/dev/null 2>&1
+        apt-get install -y curl git wget unzip build-essential tar socat >/dev/null 2>&1
     elif [ -f /etc/redhat-release ]; then
         PM="yum"
-        echo -e "${GREEN}Detected CentOS/RHEL/Fedora system.${NC}"
-    else
-        echo -e "${YELLOW}Unknown OS distribution. Attempting to use apt-get...${NC}"
-        PM="apt-get"
-    fi
-
-    # Update repositories
-    if [ "$PM" = "apt-get" ]; then
-        apt-get update -y >/dev/null 2>&1
-        apt-get install -y curl git build-essential >/dev/null 2>&1
-    else
+        echo -e "${GREEN}سیستم عامل شناسایی شده: سنت‌او‌اس / ردهت / فدورا${PLAIN}"
         yum update -y >/dev/null 2>&1
         yum groupinstall -y "Development Tools" >/dev/null 2>&1
-        yum install -y curl git >/dev/null 2>&1
+        yum install -y curl git wget unzip tar socat >/dev/null 2>&1
+    else
+        PM="apt-get"
+        apt-get update -y >/dev/null 2>&1
+        apt-get install -y curl git wget unzip build-essential tar >/dev/null 2>&1
     fi
 
-    # Check for Node.js & NPM
+    # Check for Node.js (v20 LTS recommended)
     if ! command -v node >/dev/null 2>&1; then
-        echo -e "${YELLOW}Node.js is not installed. Installing Node.js LTS...${NC}"
+        echo -e "${YELLOW}نود جی‌اس نصب نیست. در حال نصب Node.js v20 LTS...${PLAIN}"
         if [ "$PM" = "apt-get" ]; then
             curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
             apt-get install -y nodejs >/dev/null 2>&1
@@ -84,46 +78,72 @@ install_system_deps() {
         fi
     fi
 
-    echo -e "Node.js Version: ${GREEN}$(node -v)${NC}"
-    echo -e "NPM Version:     ${GREEN}$(npm -v)${NC}"
-    echo -e "${GREEN}System dependencies are up to date!${NC}"
+    echo -e "نسخه نود جی‌اس: ${GREEN}$(node -v 2>/dev/null || echo 'نامشخص')${PLAIN}"
+    echo -e "نسخه ان‌پی‌ام:   ${GREEN}$(npm -v 2>/dev/null || echo 'نامشخص')${PLAIN}"
+    echo ""
+}
+
+# Install / Download Xray Core
+install_xray_core() {
+    echo -e "${BLUE}[2/5] در حال دانلود و تنظیم هسته Xray Core...${PLAIN}"
+    mkdir -p "$INSTALL_DIR/bin"
+    if [ ! -f "$INSTALL_DIR/bin/xray" ]; then
+        ARCH=$(uname -m)
+        XRAY_ARCH="64"
+        if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+            XRAY_ARCH="arm64-v8a"
+        fi
+        
+        echo -e "در حال دانلود هسته Xray نسخه Linux ${XRAY_ARCH}..."
+        wget -q "https://github.com/XTLS/Xray-core/releases/download/v1.8.24/Xray-linux-${XRAY_ARCH}.zip" -O /tmp/xray.zip
+        if [ -f /tmp/xray.zip ]; then
+            unzip -q -o /tmp/xray.zip -d /tmp/xray_extract
+            mv /tmp/xray_extract/xray "$INSTALL_DIR/bin/xray" 2>/dev/null || true
+            chmod +x "$INSTALL_DIR/bin/xray" 2>/dev/null || true
+            rm -rf /tmp/xray.zip /tmp/xray_extract
+            echo -e "${GREEN}هسته Xray Core با موفقیت دانلود و تنظیم شد.${PLAIN}"
+        fi
+    else
+        chmod +x "$INSTALL_DIR/bin/xray" 2>/dev/null || true
+        echo -e "${GREEN}هسته Xray Core از قبل موجود است.${PLAIN}"
+    fi
     echo ""
 }
 
 # Prompt user for credentials
 prompt_credentials() {
-    echo -e "${BLUE}[2/4] Configuration Wizard${NC}"
+    echo -e "${BLUE}[3/5] پیکربندی و ورود اطلاعات مدیریت ربات${PLAIN}"
     
     # Prompt for Admin Telegram ID
     while true; do
-        read -p "Enter your Telegram Account Numerical User ID (Admin ID): " admin_id
+        read -p "آیدی عددی تلگرام ادمین (Admin Numerical ID): " admin_id
         if [[ "$admin_id" =~ ^[0-9]+$ ]]; then
             break
         else
-            echo -e "${RED}Invalid ID. Telegram User ID must contain only numbers.${NC}"
+            echo -e "${RED}خطا: آیدی عددی باید فقط شامل ارقام باشد.${PLAIN}"
         fi
     done
 
     # Prompt for Telegram Bot Token
     while true; do
-        read -p "Enter your Telegram Bot Token (from @BotFather): " bot_token
+        read -p "توکن ربات تلگرام (از @BotFather): " bot_token
         if [[ "$bot_token" =~ ^[0-9]+:[a-zA-Z0-9_-]+$ ]]; then
             break
         else
-            echo -e "${RED}Invalid Bot Token format. Example: 123456789:ABCDefGhIJKlmNoPQRsTUVwxyZ${NC}"
+            echo -e "${RED}خطا: فرمت توکن نامعتبر است (مثال: 123456789:ABCDefGhIJKlmNoPQRsTUVwxyZ).${PLAIN}"
         fi
     done
 
     # Prompt for Web Panel Port
     while true; do
-        read -p "Enter Web Panel Port [Default: 3000]: " web_port
+        read -p "پورت وب‌پنل مدیریت [پیش‌فرض: 3000]: " web_port
         if [ -z "$web_port" ]; then
             web_port="3000"
             break
         elif [[ "$web_port" =~ ^[0-9]+$ ]] && [ "$web_port" -ge 1 ] && [ "$web_port" -le 65535 ]; then
             break
         else
-            echo -e "${RED}Invalid Port. Please enter a valid number between 1 and 65535.${NC}"
+            echo -e "${RED}خطا: پورت باید عددی بین ۱ تا ۶۵۵۳۵ باشد.${PLAIN}"
         fi
     done
     echo ""
@@ -132,39 +152,41 @@ prompt_credentials() {
 # Install or Reinstall Bot
 install_bot() {
     show_banner
-    echo -e "${YELLOW}${BOLD}Starting Installation Process...${NC}\n"
+    echo -e "${YELLOW}${BOLD}شروع فرآیند نصب سدتیار...${PLAIN}\n"
     
-    # Install dependencies
+    # 1. Dependencies
     install_system_deps
     
-    # Prompt credentials
-    prompt_credentials
-
-    # Stop existing service if any
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-        echo -e "${YELLOW}Stopping existing $SERVICE_NAME service...${NC}"
-        systemctl stop "$SERVICE_NAME"
-    fi
-
-    # Setup Directory
-    echo -e "${BLUE}[3/4] Copying repository files...${NC}"
+    # 2. Directory Setup & Clone
+    echo -e "${BLUE}[3/5] دریافت سورس پروژه از گیت‌هاب...${PLAIN}"
     mkdir -p "$INSTALL_DIR"
     
-    # If the installer is run from the project root, copy current files. Otherwise, clone
     if [ -f "./package.json" ] && [ -f "./server.ts" ]; then
-        echo -e "Copying project files from current workspace..."
-        cp -r ./* "$INSTALL_DIR/" 2>/dev/null || true
-        cp -r ./.* "$INSTALL_DIR/" 2>/dev/null || true
+        echo -e "کپی فایل‌ها از دایرکتوری جاری..."
+        cp -rf ./* "$INSTALL_DIR/" 2>/dev/null || true
+        cp -rf ./.* "$INSTALL_DIR/" 2>/dev/null || true
     else
-        echo -e "Cloning latest source files to $INSTALL_DIR..."
+        echo -e "کلون کردن آخرین نسخه مخزن از گیت‌هاب..."
         rm -rf "$INSTALL_DIR"
-        git clone https://github.com/meh732/sadtyarchannel.git "$INSTALL_DIR"
+        git clone "$REPO_URL" "$INSTALL_DIR"
     fi
 
     cd "$INSTALL_DIR" || exit 1
 
-    # Create .env File
-    echo -e "Writing configuration environment variables..."
+    # 3. Setup Xray Core
+    install_xray_core
+
+    # 4. Prompt Credentials
+    prompt_credentials
+
+    # 5. Stop existing service
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo -e "${YELLOW}در حال متوقف‌سازی سرویس قبلی...${PLAIN}"
+        systemctl stop "$SERVICE_NAME"
+    fi
+
+    # 6. Write Environment File
+    echo -e "${BLUE}[4/5] ایجاد فایل تنظیمات محیطی (.env)...${PLAIN}"
     cat <<EOF > "$INSTALL_DIR/.env"
 NODE_ENV=production
 ADMIN_ID="${admin_id}"
@@ -172,16 +194,16 @@ BOT_TOKEN="${bot_token}"
 PORT="${web_port}"
 EOF
 
-    # Install packages and build
-    echo -e "${BLUE}[4/4] Installing npm packages and compiling application...${NC}"
-    npm install
+    # 7. Build and Compile
+    echo -e "${BLUE}[5/5] نصب پکیج‌ها و کامپایل برنامه...${PLAIN}"
+    npm install --production=false
     npm run build
 
-    # Configure Systemd Daemon Service
-    echo -e "Setting up systemd service daemon..."
+    # 8. Create Systemd Service
+    echo -e "ایجاد سرویس سیستمی Systemd (${SERVICE_NAME})..."
     cat <<EOF > "$SERVICE_FILE"
 [Unit]
-Description=Telegram V2Ray Config Extractor & Auto-Poster Bot
+Description=Sadtyar Telegram V2Ray Extractor & Auto-Poster Bot
 After=network.target
 
 [Service]
@@ -190,120 +212,137 @@ User=root
 WorkingDirectory=${INSTALL_DIR}
 ExecStart=/usr/bin/npm start
 Restart=always
+RestartSec=3
 EnvironmentFile=${INSTALL_DIR}/.env
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # Reload systemd and start service
+    # 9. Register shortcut CLI command
+    cat <<'EOF' > "$BIN_CMD"
+#!/bin/bash
+if [ -f "/opt/sadtyar-bot/install.sh" ]; then
+    bash /opt/sadtyar-bot/install.sh
+else
+    echo "Sadtyar installation not found."
+fi
+EOF
+    chmod +x "$BIN_CMD"
+    chmod +x "$INSTALL_DIR/install.sh" 2>/dev/null || true
+
+    # 10. Start and Enable Service
     systemctl daemon-reload
-    systemctl enable "$SERVICE_NAME"
-    systemctl start "$SERVICE_NAME"
+    systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
+    systemctl restart "$SERVICE_NAME"
+
+    # Get Server IP
+    SERVER_IP=$(curl -s4 ifconfig.me || curl -s4 api.ipify.org || echo "آی‌پی سرور")
 
     echo ""
     echo -e "=================================================================="
-    echo -e "${GREEN}${BOLD}🎉 Installation Completed Successfully!${NC}"
+    echo -e "${GREEN}${BOLD}🎉 فرآیند نصب با موفقیت به اتمام رسید!${PLAIN}"
     echo -e "=================================================================="
-    echo -e "Admin ID:      ${CYAN}${admin_id}${NC}"
-    echo -e "Bot Service:   ${GREEN}Active & Auto-start Enabled${NC}"
-    echo -e "Directory:     ${YELLOW}${INSTALL_DIR}${NC}"
-    echo -e "Web Panel:     ${CYAN}http://localhost:${web_port}${NC}"
+    echo -e "آیدی ادمین:      ${CYAN}${admin_id}${PLAIN}"
+    echo -e "وضعیت سرویس:     ${GREEN}فعال و استارت خودکار هنگام بوت (Active)${PLAIN}"
+    echo -e "مسیر نصب:        ${YELLOW}${INSTALL_DIR}${PLAIN}"
+    echo -e "آدرس وب‌پنل:      ${CYAN}http://${SERVER_IP}:${web_port}${PLAIN}"
+    echo -e "دستور مدیریت:    ${PURPLE}${BOLD}sadtyar${PLAIN}"
     echo -e "=================================================================="
-    echo -e "Send ${GREEN}/admin${NC} inside your Telegram Bot to manage features!"
+    echo -e "با ارسال دستور ${GREEN}/admin${PLAIN} در ربات تلگرام می‌توانید آن را مدیریت کنید."
+    echo -e "هر زمان در ترمینال دستور ${CYAN}sadtyar${PLAIN} را وارد کنید این منو نمایش داده می‌شود."
     echo -e "=================================================================="
-    read -p "Press [Enter] to return to the main menu."
+    read -p "جهت بازگشت به منو دکمه اینتر را بزنید..."
 }
 
-# Update existing Bot installation
+# Update Bot
 update_bot() {
     show_banner
-    echo -e "${YELLOW}${BOLD}Checking for Bot Updates...${NC}\n"
+    echo -e "${YELLOW}${BOLD}بروزرسانی ربات سدتیار به آخرین نسخه...${PLAIN}\n"
 
     if [ ! -d "$INSTALL_DIR" ]; then
-        echo -e "${RED}Error: Bot is not installed at $INSTALL_DIR.${NC}"
-        echo -e "Please run Option [1] to perform a clean installation."
-        read -p "Press [Enter] to return to the main menu."
+        echo -e "${RED}خطا: ربات در مسیر $INSTALL_DIR نصب نیست.${PLAIN}"
+        echo -e "لطفاً ابتدا گزینه [1] (نصب) را اجرا کنید."
+        read -p "اینتر بزنید..."
         return
     fi
 
     cd "$INSTALL_DIR" || exit 1
 
-    echo -e "${BLUE}Stopping bot daemon...${NC}"
+    echo -e "${BLUE}متوقف‌سازی موقت سرویس...${PLAIN}"
     systemctl stop "$SERVICE_NAME"
 
-    echo -e "${BLUE}Pulling and copying latest updates...${NC}"
+    echo -e "${BLUE}دریافت آخرین کدهای مخزن گیت‌هاب...${PLAIN}"
     if [ -d ".git" ]; then
-        git pull
+        git reset --hard HEAD
+        git pull origin main || git pull origin master
     else
-        echo -e "Local directory detected. Refreshing source directory files..."
-        cp -r /workspace/* "$INSTALL_DIR/" 2>/dev/null || true
+        git clone "$REPO_URL" /tmp/sadtyar_update
+        cp -rf /tmp/sadtyar_update/* "$INSTALL_DIR/"
+        rm -rf /tmp/sadtyar_update
     fi
 
-    echo -e "${BLUE}Re-installing packages and compiling...${NC}"
-    npm install
+    install_xray_core
+
+    echo -e "${BLUE}نصب نیازمندی‌ها و ساخت مجدد بیلد...${PLAIN}"
+    npm install --production=false
     npm run build
 
-    echo -e "${BLUE}Starting bot daemon...${NC}"
+    echo -e "${BLUE}راه‌اندازی مجدد سرویس...${PLAIN}"
     systemctl start "$SERVICE_NAME"
 
-    echo -e "${GREEN}${BOLD}🎉 Bot updated and restarted successfully!${NC}"
-    read -p "Press [Enter] to return to the main menu."
+    echo -e "${GREEN}${BOLD}🎉 بروزرسانی با موفقیت انجام شد و سرویس مجدداً فعال گردید!${PLAIN}"
+    read -p "جهت بازگشت اینتر بزنید..."
 }
 
 # Uninstall Bot
 uninstall_bot() {
     show_banner
-    echo -e "${RED}${BOLD}🚨 Uninstallation Process${NC}"
-    read -p "Are you absolutely sure you want to completely uninstall the Bot? (y/n): " confirm
+    echo -e "${RED}${BOLD}🚨 حذف کامل ربات و سرویس${PLAIN}"
+    read -p "آیا از حذف کامل ربات و کلیه فایل‌های آن اطمینان دارید؟ (y/n): " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo -e "${YELLOW}Uninstallation cancelled.${NC}"
-        read -p "Press [Enter] to return to the main menu."
+        echo -e "${YELLOW}عملیات حذف لغو شد.${PLAIN}"
+        read -p "اینتر بزنید..."
         return
     fi
 
-    echo -e "${BLUE}Stopping and disabling service daemon...${NC}"
+    echo -e "${BLUE}توقف و غیرفعال‌سازی سرویس...${PLAIN}"
     systemctl stop "$SERVICE_NAME" >/dev/null 2>&1
     systemctl disable "$SERVICE_NAME" >/dev/null 2>&1
 
-    echo -e "${BLUE}Removing systemd service files...${NC}"
+    echo -e "${BLUE}حذف سرویس و فایل‌های اجرایی...${PLAIN}"
     rm -f "$SERVICE_FILE"
+    rm -f "$BIN_CMD"
     systemctl daemon-reload
 
-    echo -e "${BLUE}Deleting installation directory $INSTALL_DIR...${NC}"
+    echo -e "${BLUE}حذف دایرکتوری نصب $INSTALL_DIR...${PLAIN}"
     rm -rf "$INSTALL_DIR"
 
-    echo -e "${GREEN}${BOLD}🗑️ Bot completely uninstalled from your server.${NC}"
-    read -p "Press [Enter] to return to the main menu."
+    echo -e "${GREEN}${BOLD}🗑️ ربات سدتیار با موفقیت از سرور حذف گردید.${PLAIN}"
+    read -p "اینتر بزنید..."
 }
 
-# Modify Bot settings & credentials
+# Modify Credentials
 configure_credentials() {
     show_banner
-    echo -e "${YELLOW}${BOLD}Edit Bot Credentials & Administrator ID${NC}\n"
+    echo -e "${YELLOW}${BOLD}تغییر تنظیمات، توکن ربات و آیدی ادمین${PLAIN}\n"
 
     if [ ! -f "$INSTALL_DIR/.env" ]; then
-        echo -e "${RED}Error: Configuration file not found at $INSTALL_DIR/.env.${NC}"
-        read -p "Press [Enter] to return to the main menu."
+        echo -e "${RED}خطا: فایل تنظیمات در $INSTALL_DIR/.env یافت نشد.${PLAIN}"
+        read -p "اینتر بزنید..."
         return
     fi
 
-    # Read current env
-    current_admin=$(grep -oP 'ADMIN_ID="\K[^"]+' "$INSTALL_DIR/.env")
-    current_token=$(grep -oP 'BOT_TOKEN="\K[^"]+' "$INSTALL_DIR/.env")
-    current_port=$(grep -oP 'PORT="\K[^"]+' "$INSTALL_DIR/.env")
-    if [ -z "$current_port" ]; then
-        current_port="3000"
-    fi
+    current_admin=$(grep -oP 'ADMIN_ID="\K[^"]+' "$INSTALL_DIR/.env" || echo "")
+    current_token=$(grep -oP 'BOT_TOKEN="\K[^"]+' "$INSTALL_DIR/.env" || echo "")
+    current_port=$(grep -oP 'PORT="\K[^"]+' "$INSTALL_DIR/.env" || echo "3000")
 
-    echo -e "Current Admin ID:  ${CYAN}$current_admin${NC}"
-    echo -e "Current Bot Token: ${CYAN}$current_token${NC}"
-    echo -e "Current Port:      ${CYAN}$current_port${NC}\n"
+    echo -e "آیدی ادمین فعلی:   ${CYAN}$current_admin${PLAIN}"
+    echo -e "توکن ربات فعلی:    ${CYAN}$current_token${PLAIN}"
+    echo -e "پورت وب‌پنل فعلی:  ${CYAN}$current_port${PLAIN}\n"
 
-    # Prompt new values
     prompt_credentials
 
-    # Write new env
     cat <<EOF > "$INSTALL_DIR/.env"
 NODE_ENV=production
 ADMIN_ID="${admin_id}"
@@ -311,49 +350,90 @@ BOT_TOKEN="${bot_token}"
 PORT="${web_port}"
 EOF
 
-    echo -e "${BLUE}Restarting bot service to apply changes...${NC}"
+    echo -e "${BLUE}اعمال تنظیمات جدید و راه‌اندازی مجدد سرویس...${PLAIN}"
     systemctl restart "$SERVICE_NAME"
 
-    echo -e "${GREEN}${BOLD}✅ Bot credentials successfully updated and service restarted!${NC}"
-    read -p "Press [Enter] to return to the main menu."
+    echo -e "${GREEN}${BOLD}✅ تنظیمات با موفقیت ذخیره شد و سرویس ری‌استارت گردید.${PLAIN}"
+    read -p "اینتر بزنید..."
 }
 
-# Display daemon status and log stream
+# Service Management Functions
+start_service() {
+    systemctl start "$SERVICE_NAME"
+    echo -e "${GREEN}سرویس با موفقیت استارت شد.${PLAIN}"
+    sleep 1.5
+}
+
+stop_service() {
+    systemctl stop "$SERVICE_NAME"
+    echo -e "${YELLOW}سرویس متوقف گردید.${PLAIN}"
+    sleep 1.5
+}
+
+restart_service() {
+    systemctl restart "$SERVICE_NAME"
+    echo -e "${GREEN}سرویس مجدداً راه‌اندازی شد.${PLAIN}"
+    sleep 1.5
+}
+
+# View Logs
 view_logs() {
     show_banner
-    echo -e "${YELLOW}${BOLD}Systemd Daemon Status:${NC}"
+    echo -e "${YELLOW}${BOLD}وضعیت سرویس ربات در Systemd:${PLAIN}"
     systemctl status "$SERVICE_NAME" --no-pager
     echo ""
-    echo -e "${YELLOW}${BOLD}Recent Bot Activity Logs (Press Ctrl+C to exit log streaming):${NC}"
+    echo -e "${YELLOW}${BOLD}لاگ‌های زنده ربات (برای خروج Ctrl+C را فشار دهید):${PLAIN}"
     journalctl -u "$SERVICE_NAME" -n 50 -f
 }
 
-# Main Event Loop Menu
+# Main Menu Loop
 while true; do
     show_banner
-    echo -e "${BOLD}Please select an action to execute:${NC}"
-    echo -e "  ${CYAN}1)${NC} ${BOLD}Install / Re-install Bot${NC}"
-    echo -e "  ${CYAN}2)${NC} Update Bot to Latest Version"
-    echo -e "  ${CYAN}3)${NC} ${RED}Uninstall Bot completely${NC}"
-    echo -e "  ${CYAN}4)${NC} Configure Admin Telegram ID & Token"
-    echo -e "  ${CYAN}5)${NC} Check Bot Status & View Log Stream"
-    echo -e "  ${CYAN}6)${NC} Exit Installer"
-    echo ""
-    read -p "Enter menu selection [1-6]: " choice
+    
+    # Check if service is active
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        STATUS_LABEL="${GREEN}فعال (Running)${PLAIN}"
+    else
+        STATUS_LABEL="${RED}غیرفعال (Stopped)${PLAIN}"
+    fi
+
+    echo -e "وضعیت ربات: ${STATUS_LABEL}"
+    echo -e "دستور میانبر مدیریت در لینوکس: ${PURPLE}${BOLD}sadtyar${PLAIN}"
+    echo "------------------------------------------------------------------"
+    echo -e "  ${CYAN}1)${PLAIN} ${BOLD}نصب / نصب مجدد ربات (Install)${PLAIN}"
+    echo -e "  ${CYAN}2)${PLAIN} بروزرسانی ربات به آخرین نسخه (Update)"
+    echo -e "  ${CYAN}3)${PLAIN} ویرایش توکن ربات، آیدی ادمین و پورت وب‌پنل"
+    echo -e "  ${CYAN}4)${PLAIN} ${GREEN}روشن کردن ربات (Start)${PLAIN}"
+    echo -e "  ${CYAN}5)${PLAIN} ${YELLOW}خاموش کردن ربات (Stop)${PLAIN}"
+    echo -e "  ${CYAN}6)${PLAIN} راه‌اندازی مجدد ربات (Restart)"
+    echo -e "  ${CYAN}7)${PLAIN} مشاهده وضعیت و لاگ‌های زنده ربات (Logs)"
+    echo -e "  ${CYAN}8)${PLAIN} دانلود / بروزرسانی مجدد هسته Xray Core"
+    echo -e "  ${CYAN}9)${PLAIN} ${RED}حذف کامل ربات از سرور (Uninstall)${PLAIN}"
+    echo -e "  ${CYAN}0)${PLAIN} خروج از منو (Exit)"
+    echo "------------------------------------------------------------------"
+    read -p "لطفاً یک گزینه را انتخاب کنید [0-9]: " choice
 
     case "$choice" in
         1) install_bot ;;
         2) update_bot ;;
-        3) uninstall_bot ;;
-        4) configure_credentials ;;
-        5) view_logs ;;
-        6) 
-            echo -e "${GREEN}Thank you for using V2Ray Extractor Bot! Goodbye.${NC}"
+        3) configure_credentials ;;
+        4) start_service ;;
+        5) stop_service ;;
+        6) restart_service ;;
+        7) view_logs ;;
+        8) 
+            install_xray_core
+            restart_service
+            read -p "اینتر بزنید..."
+            ;;
+        9) uninstall_bot ;;
+        0) 
+            echo -e "${GREEN}با تشکر، خروج از اسکریپت.${PLAIN}"
             exit 0
             ;;
         *) 
-            echo -e "${RED}Invalid selection. Please enter a number between 1 and 6.${NC}"
-            sleep 1.5
+            echo -e "${RED}گزینه نامعتبر است.${PLAIN}"
+            sleep 1
             ;;
     esac
 done
