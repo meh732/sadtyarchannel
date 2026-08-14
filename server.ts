@@ -3694,59 +3694,113 @@ async function handleBotUpdate(update: any) {
 
     // --- ADMIN CONTROLS BYPASS ---
     if (isAdmin) {
-      // Backup document restore check for Admin
+      // 0. Direct Backup Commands (/backup, /restore, /export)
+      if (messageText === '/backup' || messageText === '/export') {
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: '⏳ **در حال استخراج دیتابیس و آماده‌سازی فایل پشتیبان...**',
+          parse_mode: 'Markdown'
+        });
+        const success = await sendBackupToAdmin();
+        if (success) {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `✅ **فایل پشتیبان کامل دیتابیس با موفقیت ارسال گردید.**\n\nبرای بازگردانی در آینده، کافیست همین فایل را به ربات ارسال یا فوروارد فرمایید.`,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '⚙️ پنل مدیریت', callback_data: 'admin_menu' }]] }
+          });
+        } else {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `❌ خطا در استخراج یا ارسال فایل بکاپ به تلگرام. لطفا تنظیمات توکن را بررسی فرمایید.`,
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_menu' }]] }
+          });
+        }
+        return;
+      }
+
+      if (messageText === '/restore') {
+        adminStates[chatId] = { action: 'await_backup_file' };
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `📥 **بازگردانی پایگاه داده از فایل پشتیبان (Restore Database)**\n\nلطفاً همین الان فایل بکاپ دیتابیس (با پسوند \`.json\` یا \`.txt\`) را به این چت بفرستید یا فوروارد کنید.\n\nهمچنین می‌توانید متن JSON یا لینک‌های کانفیگ را مستقیماً در این چت ارسال نمایید.`,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '❌ انصراف و بازگشت به منو', callback_data: 'admin_backup_menu' }]
+            ]
+          }
+        });
+        return;
+      }
+
+      // Backup document restore check for Admin (handles any uploaded or forwarded document by admin)
       if (update.message?.document) {
         const doc = update.message.document;
         const fn = (doc.file_name || '').toLowerCase();
         const mime = (doc.mime_type || '').toLowerCase();
-        const isJsonBackup = fn.endsWith('.json') || mime.includes('json') || (update.message.caption || '').includes('backup') || (update.message.caption || '').includes('بکاپ');
+        const caption = (update.message.caption || '').toLowerCase();
+        const isWaitingRestore = adminStates[chatId]?.action === 'await_backup_file';
 
-        if (isJsonBackup) {
+        const isJsonOrTextDoc = fn.endsWith('.json') || fn.endsWith('.txt') || fn.endsWith('.bak') || fn.endsWith('.backup') ||
+          mime.includes('json') || mime.includes('text') || mime.includes('octet-stream') ||
+          caption.includes('backup') || caption.includes('بکاپ') || isWaitingRestore;
+
+        if (isJsonOrTextDoc) {
+          delete adminStates[chatId];
           try {
             await callTelegramApi('sendMessage', {
               chat_id: chatId,
-              text: '⏳ **در حال دریافت فایل نسخه پشتیبان و بازگردانی دیتابیس...**',
+              text: `⏳ **در حال دریافت فایل (\`${doc.file_name || 'backup'}\`) و بازگردانی دیتابیس...**`,
               parse_mode: 'Markdown'
             });
 
             const fileInfo = await callTelegramApi('getFile', { file_id: doc.file_id });
-            const filePath = fileInfo.file_path;
+            const filePath = fileInfo?.file_path;
             
+            if (!filePath) {
+              throw new Error('عدم امکان دسترسی به فایل از سرورهای تلگرام.');
+            }
+
             const fileRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${filePath}`);
-            const fileContent = await fileRes.text();
+            const arrayBuffer = await fileRes.arrayBuffer();
+            const fullBuffer = Buffer.from(arrayBuffer);
             
-            const parsed = JSON.parse(fileContent);
-            const res = restoreDatabaseFromObject(parsed);
+            const res = parseAndRestoreBackup(fullBuffer, false);
             
             if (res.success) {
               const c = res.counts || {};
               let details = `🔄 **پایگاه داده با موفقیت بازگردانی شد!**\n\n`;
               details += `📊 **اطلاعات بازیابی شده:**\n`;
-              if (c.configs !== undefined) details += `• تعداد کانفیگ‌ها: **${c.configs}**\n`;
+              if (c.configs !== undefined) details += `• تعداد کانفیگ‌های فعال: **${c.configs}**\n`;
               if (c.proxies !== undefined) details += `• تعداد پروکسی‌ها: **${c.proxies}**\n`;
-              if (c.sources !== undefined) details += `• تعداد منابع: **${c.sources}**\n`;
-              if (c.users !== undefined) details += `• تعداد کاربران: **${c.users}**\n`;
+              if (c.sources !== undefined) details += `• تعداد منابع و کانال‌ها: **${c.sources}**\n`;
+              if (c.forceJoinChannels !== undefined) details += `• کانال‌های قفل اجباری: **${c.forceJoinChannels}**\n`;
+              if (c.users !== undefined) details += `• تعداد اعضای ثبت‌شده: **${c.users}**\n`;
               if (c.npvFiles !== undefined && c.npvFiles > 0) details += `• فایل‌های NapsternetV/OpenVPN: **${c.npvFiles}**\n`;
-              details += `\nکلیه تنظیمات و اطلاعات با موفقیت بازیابی شدند.`;
+              details += `\n${res.message}\nکلیه تنظیمات با موفقیت در سیستم اعمال گردیدند.`;
 
               await callTelegramApi('sendMessage', {
                 chat_id: chatId,
                 text: details,
                 parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: [[{ text: '🔙 ورود به پنل مدیریت', callback_data: 'admin_menu' }]] }
+                reply_markup: { inline_keyboard: [[{ text: '⚙️ ورود به پنل مدیریت', callback_data: 'admin_menu' }]] }
               });
               return;
             } else {
               await callTelegramApi('sendMessage', {
                 chat_id: chatId,
-                text: `❌ خطا در بازگردانی فایل بکاپ: ${res.message}`
+                text: `❌ **خطا در بازگردانی فایل:**\n${res.message}\n\nلطفاً مطمئن شوید فایل خروجی دیتابیس ربات یا فایل حاوی کانفیگ‌های متنی معتبر است.`,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: [[{ text: '🔙 منوی پشتیبان‌گیری', callback_data: 'admin_backup_menu' }]] }
               });
               return;
             }
           } catch (err: any) {
             await callTelegramApi('sendMessage', {
               chat_id: chatId,
-              text: `❌ خطا در خواندن یا تحلیل ساختار فایل بکاپ: ${err.message || err}`
+              text: `❌ خطا در خواندن یا تحلیل فایل ارسالی: ${err.message || err}`,
+              reply_markup: { inline_keyboard: [[{ text: '🔙 منوی پشتیبان‌گیری', callback_data: 'admin_backup_menu' }]] }
             });
             return;
           }
@@ -3761,10 +3815,36 @@ async function handleBotUpdate(update: any) {
           delete adminStates[chatId];
           await callTelegramApi('sendMessage', {
             chat_id: chatId,
-            text: `❌ عملیات ویرایش لغو گردید.`,
+            text: `❌ عملیات لغو گردید.`,
             reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به منوی مدیریت', callback_data: 'admin_menu' }]] }
           });
           return;
+        }
+
+        if (state.action === 'await_backup_file') {
+          if (messageText && (messageText.trim().startsWith('{') || messageText.includes('vless://') || messageText.includes('vmess://') || messageText.includes('tg://proxy?'))) {
+            delete adminStates[chatId];
+            await callTelegramApi('sendMessage', {
+              chat_id: chatId,
+              text: '⏳ **در حال پردازش داده‌های متنی بکاپ...**',
+              parse_mode: 'Markdown'
+            });
+            const res = parseAndRestoreBackup(messageText.trim(), false);
+            if (res.success) {
+              await callTelegramApi('sendMessage', {
+                chat_id: chatId,
+                text: `✅ **دیتابیس با موفقیت از متن بازگردانی شد!**\n\n${res.message}`,
+                reply_markup: { inline_keyboard: [[{ text: '⚙️ پنل مدیریت', callback_data: 'admin_menu' }]] }
+              });
+            } else {
+              await callTelegramApi('sendMessage', {
+                chat_id: chatId,
+                text: `❌ خطا در پردازش متن بکاپ: ${res.message}`,
+                reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_backup_menu' }]] }
+              });
+            }
+            return;
+          }
         }
 
         if (state.action === 'await_branding') {
@@ -4099,17 +4179,18 @@ async function handleBotUpdate(update: any) {
         msg += `بازه زمانی بکاپ خودکار: **هر ${interval} ساعت**\n`;
         msg += `آخرین پشتیبان‌گیری موفق: **${lastBackup ? new Date(lastBackup).toLocaleString('fa-IR') : 'هنوز ثبت نشده'}**\n\n`;
         msg += `🔄 **راهنمای بازگردانی دیتابیس:**\n`;
-        msg += `کافیست فایل بکاپ \`.json\` که قبلا ربات برای شما ارسال کرده را مستقیماً به چت ربات فوروارد کرده یا بفرستید. ربات آن را بررسی و دیتابیس را بازگردانی می‌کند.\n\n`;
-        msg += `تنظیمات زیر را انتخاب کنید:`;
+        msg += `کافیست فایل بکاپ \`.json\` یا فایل متنی حاوی کانفیگ‌ها را مستقیماً به همین چت ارسال یا فوروارد فرمایید.\n\n`;
+        msg += `یکی از گزینه‌های زیر را انتخاب فرمایید:`;
 
         const keyboard = {
           inline_keyboard: [
             [
-              { text: `${enabled ? '🔴 غیرفعال‌سازی بکاپ' : '🟢 فعال‌سازی بکاپ'}`, callback_data: 'admin_backup_toggle' },
-              { text: `🕒 فاصله: ${interval} ساعت`, callback_data: 'admin_backup_interval_menu' }
+              { text: `📥 دانلود فایل بکاپ (Export)`, callback_data: 'admin_backup_trigger' },
+              { text: `📤 ارسال فایل و بازگردانی (Restore)`, callback_data: 'admin_backup_request_file' }
             ],
             [
-              { text: `📥 دریافت فوری بکاپ همین حالا`, callback_data: 'admin_backup_trigger' }
+              { text: `${enabled ? '🔴 غیرفعال‌سازی بکاپ خودکار' : '🟢 فعال‌سازی بکاپ خودکار'}`, callback_data: 'admin_backup_toggle' },
+              { text: `🕒 فاصله: ${interval} ساعت`, callback_data: 'admin_backup_interval_menu' }
             ],
             [{ text: '🔙 بازگشت به منوی مدیریت', callback_data: 'admin_menu' }]
           ]
@@ -4120,6 +4201,20 @@ async function handleBotUpdate(update: any) {
           text: msg,
           parse_mode: 'Markdown',
           reply_markup: keyboard
+        });
+        return;
+      }
+
+      if (callbackData === 'admin_backup_request_file') {
+        adminStates[chatId] = { action: 'await_backup_file' };
+        await answerCallback('لطفاً فایل را ارسال فرمایید');
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `📥 **آماده دریافت فایل نسخه پشتیبان**\n\nلطفاً همین الان فایل بکاپ (\`.json\` یا \`.txt\`) را به همین چت ارسال کرده یا از کانال/چت دیگری فوروارد نمایید.\n\nربات به محض دریافت، اطلاعات را بازگردانی و گزارش آن را اعلام می‌کند.`,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[{ text: '🔙 انصراف و بازگشت', callback_data: 'admin_backup_menu' }]]
+          }
         });
         return;
       }

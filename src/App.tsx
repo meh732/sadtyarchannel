@@ -29,6 +29,7 @@ import {
   HelpCircle,
   Download,
   Upload,
+  Bot,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -143,6 +144,8 @@ export default function App() {
 
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [restoreMode, setRestoreMode] = useState<'settings_and_sources' | 'full'>('settings_and_sources');
+  const [showPasteBackup, setShowPasteBackup] = useState(false);
+  const [pasteBackupText, setPasteBackupText] = useState('');
   const [broadcastProgress, setBroadcastProgress] = useState<{ total: number; done: boolean } | null>(null);
 
   // Refs for log scrolling & file input
@@ -326,6 +329,67 @@ export default function App() {
     } finally {
       setActionLoading(null);
       e.target.value = '';
+    }
+  };
+
+  // Handle Restore Backup from pasted text/JSON
+  const handleRestorePasteText = async (overrideMode?: 'settings_and_sources' | 'full') => {
+    const activeMode = overrideMode || restoreMode;
+    if (!pasteBackupText.trim()) {
+      alert('لطفاً ابتدا متن JSON یا لینک‌های کانفیگ را در کادر وارد نمایید.');
+      return;
+    }
+
+    const modeLabel = activeMode === 'settings_and_sources'
+      ? 'فقط تنظیمات و لیست کانال‌ها/منابع (بدون تغییر کانفیگ‌ها)'
+      : 'کامل (همراه با تمام کانفیگ‌ها و لاگ‌ها)';
+
+    if (!window.confirm(`آیا مطمئن هستید که می‌خواهید دیتابیس را از متن وارد شده بازگردانی (Restore) کنید؟\n\nحالت انتخابی: ${modeLabel}`)) {
+      return;
+    }
+
+    try {
+      setActionLoading('restore_backup_text');
+
+      const res = await fetch(`/api/backup/upload-stream?mode=${activeMode}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream'
+        },
+        body: pasteBackupText.trim()
+      });
+
+      let data: any;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        const errText = await res.text().catch(() => '');
+        throw new Error(errText || `خطا در دریافت پاسخ از سرور (کد وضعیت: ${res.status})`);
+      }
+
+      if (data.success) {
+        const c = data.counts || {};
+        let details = '✅ بازگردانی دیتابیس با موفقیت انجام شد!\n';
+        if (activeMode === 'settings_and_sources') {
+          details += `\n• تنظیمات و لیست ${c.sources !== undefined ? c.sources : ''} کانال/منبع و کانال‌های قفل بازیابی شدند.`;
+          details += `\n• کانفیگ‌های فعلی دست‌نخورده باقی ماندند.`;
+        } else {
+          if (c.configs !== undefined) details += `\n• تعداد کانفیگ‌ها: ${c.configs}`;
+          if (c.proxies !== undefined) details += `\n• تعداد پروکسی‌ها: ${c.proxies}`;
+          if (c.sources !== undefined) details += `\n• تعداد منابع: ${c.sources}`;
+          if (c.users !== undefined) details += `\n• تعداد کاربران: ${c.users}`;
+        }
+        showToast(details.split('\n')[0], 'success');
+        alert(details);
+        await fetchData();
+        window.location.reload();
+      } else {
+        alert(`❌ خطا در بازگردانی بکاپ:\n${data.message || 'متن وارد شده نامعتبر است'}`);
+      }
+    } catch (err: any) {
+      alert(`❌ خطا در پردازش متن بکاپ در سرور:\n${err.message}`);
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -2886,7 +2950,23 @@ export default function App() {
                       </div>
                       <div>
                         <h3 className="font-bold text-slate-900 text-base">پشتیبان‌گیری و بازگردانی دیتابیس (Backup & Restore)</h3>
-                        <p className="text-xs text-slate-500 mt-0.5">می‌توانید از تمام اطلاعات دیتابیس فایل پشتیبان بگیرید یا فایل بکاپ قبلی خود را بارگذاری کنید.</p>
+                        <p className="text-xs text-slate-500 mt-0.5">امکان دانلود نسخه پشتیبان کامل، بازگردانی از فایل، یا بازگردانی مستقیم و آسان از طریق ربات تلگرام</p>
+                      </div>
+                    </div>
+
+                    {/* Telegram Bot Direct Restore Notice */}
+                    <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-xl p-4 flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                        <Bot className="w-4 h-4" />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-xs font-bold text-emerald-950 block">⚡ بازگردانی آسان و فوری از طریق خود ربات تلگرام فعال است:</span>
+                        <p className="text-[12px] text-emerald-800 leading-relaxed">
+                          شما می‌توانید به عنوان ادمین، فایل بکاپ (<code className="font-mono bg-emerald-100/70 px-1 py-0.5 rounded text-emerald-900">.json</code> یا <code className="font-mono bg-emerald-100/70 px-1 py-0.5 rounded text-emerald-900">.txt</code>) را <strong>مستقیماً در چت خصوصی ربات تلگرام ارسال یا فوروارد فرمایید</strong>، یا دستور <code className="font-mono bg-emerald-100/70 px-1 py-0.5 rounded font-bold text-emerald-950">/restore</code> را به ربات بفرستید. ربات بلافاصله فایل را پردازش، دیتابیس را بازگردانی و گزارش دقیق آن را به شما اعلام می‌کند.
+                        </p>
+                        <p className="text-[11px] text-emerald-700 font-medium">
+                          همچنین با ارسال دستور <code className="font-mono bg-emerald-100/70 px-1 py-0.5 rounded text-emerald-900">/backup</code> در پیوی ربات، فایل بکاپ همان لحظه برای شما صادر و فرستاده می‌شود.
+                        </p>
                       </div>
                     </div>
 
@@ -2911,7 +2991,7 @@ export default function App() {
                           <div>
                             <span className="text-xs font-bold block">فقط تنظیمات و لیست کانال‌ها (توصیه‌شده)</span>
                             <span className="text-[11px] text-slate-500 leading-relaxed block mt-0.5">
-                              فقط منابع، کانال‌های قفل و تنظیمات را بازیابی می‌کند. کانفیگ‌های قبلی حفظ شده و فایل‌های حجیم (۵۰+ مگابایت) فوراً در کسری از ثانیه آپلود می‌شوند.
+                              فقط منابع، کانال‌های قفل و تنظیمات را بازیابی می‌کند. کانفیگ‌های فعلی حفظ شده و عملیات در کسری از ثانیه انجام می‌شود.
                             </span>
                           </div>
                         </button>
@@ -2933,19 +3013,20 @@ export default function App() {
                           <div>
                             <span className="text-xs font-bold block">بازگردانی کامل (شامل کانفیگ‌ها)</span>
                             <span className="text-[11px] text-slate-500 leading-relaxed block mt-0.5">
-                              تمام کانفیگ‌ها، پروکسی‌ها، کاربران و تنظیمات را عینا جایگزین می‌کند.
+                              تمام کانفیگ‌ها، پروکسی‌ها، اعضا و تنظیمات را عینا جایگزین می‌کند.
                             </span>
                           </div>
                         </button>
                       </div>
                     </div>
 
-                    <div className="pt-1 flex flex-col sm:flex-row items-center gap-3">
+                    {/* Action buttons */}
+                    <div className="pt-1 flex flex-wrap items-center gap-3">
                       <a
                         href="/api/backup/export"
                         target="_blank"
                         rel="noreferrer"
-                        className="w-full sm:w-auto px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                        className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors"
                       >
                         <Download className="w-4 h-4" />
                         <span>دانلود فایل پشتیبان دیتابیس (Export JSON)</span>
@@ -2954,7 +3035,7 @@ export default function App() {
                       <input
                         ref={backupFileInputRef}
                         type="file"
-                        accept=".json"
+                        accept=".json,.txt"
                         className="hidden"
                         onChange={handleRestoreBackup}
                         disabled={actionLoading === 'restore_backup'}
@@ -2964,14 +3045,56 @@ export default function App() {
                         type="button"
                         onClick={() => backupFileInputRef.current?.click()}
                         disabled={actionLoading === 'restore_backup'}
-                        className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-sm"
+                        className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-sm"
                       >
                         <Upload className="w-4 h-4" />
                         <span>
-                          {actionLoading === 'restore_backup' ? 'در حال بازگردانی بکاپ...' : 'انتخاب و بارگذاری فایل بکاپ (Restore)'}
+                          {actionLoading === 'restore_backup' ? 'در حال بازگردانی بکاپ...' : 'انتخاب و آپلود فایل بکاپ (Restore File)'}
                         </span>
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowPasteBackup(!showPasteBackup)}
+                        className="px-4 py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                      >
+                        <FileText className="w-4 h-4 text-slate-500" />
+                        <span>{showPasteBackup ? 'بستن کادر چسباندن متن' : 'یا چسباندن مستقیم متن JSON / کانفیگ'}</span>
+                      </button>
                     </div>
+
+                    {/* Direct Paste Box */}
+                    {showPasteBackup && (
+                      <div className="mt-3 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                        <label className="text-xs font-bold text-slate-700 block">
+                          محتوای متن JSON بکاپ یا لیست کانفیگ‌ها/پروکسی‌ها را در کادر زیر جای‌گذاری (Paste) کنید:
+                        </label>
+                        <textarea
+                          rows={6}
+                          dir="ltr"
+                          value={pasteBackupText}
+                          onChange={(e) => setPasteBackupText(e.target.value)}
+                          placeholder='{"settings": {...}, "sources": [...]} یا متن لینک‌های vless:// و tg://proxy?...'
+                          className="w-full text-xs font-mono p-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-slate-500">
+                            {pasteBackupText.length > 0 ? `${pasteBackupText.length.toLocaleString('fa-IR')} کاراکتر وارد شده` : 'کادر خالی است'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRestorePasteText()}
+                            disabled={actionLoading === 'restore_backup_text' || !pasteBackupText.trim()}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer shadow-sm"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>
+                              {actionLoading === 'restore_backup_text' ? 'در حال بازگردانی دیتابیس...' : 'بازگردانی دیتابیس از متن'}
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
