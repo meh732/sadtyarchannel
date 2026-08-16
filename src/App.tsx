@@ -833,10 +833,21 @@ export default function App() {
   const handleTriggerAutoPost = async () => {
     setActionLoading('trigger_autopost');
     try {
+      // Save current form settings first so the test post uses the latest values
+      const saveRes = await fetch('/api/settings/auto-post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(autoPostForm)
+      });
+      const saveData = await saveRes.json();
+      if (saveData.success && saveData.autoPost) {
+        setAutoPostForm(saveData.autoPost);
+      }
+
       const res = await fetch('/api/bot/auto-post/trigger', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        showToast('پست به صورت آزمایشی با موفقیت به کانال ارسال گردید.', 'success');
+        showToast('پست آزمایشی با موفقیت طبق تنظیمات به کانال ارسال گردید.', 'success');
       } else {
         showToast(data.message || 'خطا در ارسال پست', 'error');
       }

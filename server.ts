@@ -2445,35 +2445,56 @@ async function triggerBulkScrape(): Promise<number> {
 }
 
 // --- Geolocation & Flag Helpers ---
+const ipLocationCache = new Map<string, { country: string; countryCode: string }>();
+
 async function getIpLocation(host: string): Promise<{ country: string; countryCode: string }> {
+  if (!host || typeof host !== 'string' || !host.trim()) {
+    return { country: 'نامشخص', countryCode: '' };
+  }
+  const cleanHost = host.trim().toLowerCase();
+  if (ipLocationCache.has(cleanHost)) {
+    return ipLocationCache.get(cleanHost)!;
+  }
+
   try {
-    let ip = host;
-    if (!net.isIP(host)) {
-      const ips = await new Promise<string[]>((resolve, reject) => {
-        dns.resolve4(host, (err, addresses) => {
+    let ip = cleanHost;
+    if (!net.isIP(cleanHost)) {
+      const dnsPromise = new Promise<string[]>((resolve, reject) => {
+        dns.resolve4(cleanHost, (err, addresses) => {
           if (err || !addresses || addresses.length === 0) reject(err);
           else resolve(addresses);
         });
       });
+      const timeoutPromise = new Promise<string[]>((_, reject) =>
+        setTimeout(() => reject(new Error('DNS Timeout')), 1200)
+      );
+      const ips = await Promise.race([dnsPromise, timeoutPromise]);
       ip = ips[0];
     }
     
-    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,countryCode`, {
-      signal: AbortSignal.timeout(3000)
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.status === 'success') {
-        return {
-          country: data.country || 'Unknown',
-          countryCode: data.countryCode || ''
-        };
+    if (ip && net.isIP(ip)) {
+      const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,countryCode`, {
+        signal: AbortSignal.timeout(2000)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.status === 'success') {
+          const resObj = {
+            country: data.country || 'نامشخص',
+            countryCode: data.countryCode || ''
+          };
+          ipLocationCache.set(cleanHost, resObj);
+          return resObj;
+        }
       }
     }
   } catch (e) {
     // Silent
   }
-  return { country: 'نامشخص', countryCode: '' };
+
+  const defaultObj = { country: 'نامشخص', countryCode: '' };
+  ipLocationCache.set(cleanHost, defaultObj);
+  return defaultObj;
 }
 
 function getFlagEmoji(countryCode: string): string {
@@ -2492,6 +2513,30 @@ function escapeHtml(str: string): string {
     .replace(/>/g, '&gt;');
 }
 
+// Helper to safely truncate and balance HTML tags to respect Telegram 4096 character limits
+function safeTelegramHtmlLength(text: string, maxLen: number = 3800): string {
+  if (!text || text.length <= maxLen) return text;
+  
+  let truncated = text.substring(0, maxLen);
+  // If we cut inside an HTML tag, trim back to opening bracket
+  const lastOpen = truncated.lastIndexOf('<');
+  const lastClose = truncated.lastIndexOf('>');
+  if (lastOpen > lastClose) {
+    truncated = truncated.substring(0, lastOpen);
+  }
+
+  // Ensure unclosed tags are closed
+  const tags = ['code', 'blockquote', 'b', 'i', 'a'];
+  for (const tag of tags) {
+    const openCount = (truncated.match(new RegExp(`<${tag}[^>]*>`, 'gi')) || []).length;
+    const closeCount = (truncated.match(new RegExp(`</${tag}>`, 'gi')) || []).length;
+    if (openCount > closeCount) {
+      truncated += `</${tag}>`;
+    }
+  }
+  return truncated;
+}
+
 // --- Auto-Posting Logic ---
 async function executeAutoPost(): Promise<boolean> {
   const settings = db.settings.autoPost;
@@ -2507,8 +2552,10 @@ async function executeAutoPost(): Promise<boolean> {
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست خودکار به کانال ${settings.targetChannel}...`);
 
-    // Get configs
-    const configLimit = (typeof settings.configCount === 'number' && settings.configCount >= 0) ? settings.configCount : 1;
+    // Get requested configs count (supports 0, 1, 2, 3, 5, 10, 15, 20, 30, 50, etc.)
+    const rawConfCount = typeof settings.configCount === 'number' ? settings.configCount : parseInt(String(settings.configCount), 10);
+    const configLimit = !isNaN(rawConfCount) && rawConfCount >= 0 ? rawConfCount : 10;
+    
     let availableConfigs = db.configs.filter(c => c.status === 'working');
     if (availableConfigs.length < configLimit) {
       const untested = db.configs.filter(c => c.status === 'untested');
@@ -2521,8 +2568,10 @@ async function executeAutoPost(): Promise<boolean> {
     const shuffledConfigs = [...availableConfigs].sort(() => 0.5 - Math.random());
     const selectedConfigs = configLimit === 0 ? [] : shuffledConfigs.slice(0, Math.min(configLimit, shuffledConfigs.length));
 
-    // Get proxies
-    const proxyLimit = (typeof settings.proxyCount === 'number' && settings.proxyCount >= 0) ? settings.proxyCount : 1;
+    // Get requested proxies count
+    const rawProxyCount = typeof settings.proxyCount === 'number' ? settings.proxyCount : parseInt(String(settings.proxyCount), 10);
+    const proxyLimit = !isNaN(rawProxyCount) && rawProxyCount >= 0 ? rawProxyCount : 0;
+    
     let availableProxies = (db.proxies || []).filter(p => p.status === 'working');
     if (availableProxies.length < proxyLimit) {
       const untestedProxies = (db.proxies || []).filter(p => p.status === 'untested');
@@ -2536,50 +2585,88 @@ async function executeAutoPost(): Promise<boolean> {
     const selectedProxies = proxyLimit === 0 ? [] : shuffledProxies.slice(0, Math.min(proxyLimit, shuffledProxies.length));
 
     if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
-      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی در دیتابیس یافت نشد.');
+      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی در دیتابیس یافت نشد. لطفاً از منوی استخراج، منابع را بروزرسانی نمایید.');
       return false;
     }
 
     let text = `🚀 <b>${escapeHtml(settings.customText || '💎 کانفیگ‌ها و پروکسی‌های جدید تقدیم به شما:')}</b>\n\n`;
 
+    let needsFullPackFile = false;
+    let fullPackConfigsContent = '';
+
     if (selectedConfigs.length > 0) {
       text += `📥 <b>پک ${selectedConfigs.length} کانفیگ جدید V2Ray:</b>\n`;
-      if (selectedConfigs.length <= 5) {
-        for (let i = 0; i < selectedConfigs.length; i++) {
-          const conf = selectedConfigs[i];
-          const loc = await getIpLocation(conf.server);
-          const flag = getFlagEmoji(loc.countryCode);
-          const pingText = conf.latency ? `پینگ: ${conf.latency}ms` : 'فعال 🟢';
-          text += `🔹 کانفیگ ${i + 1} [${conf.protocol.toUpperCase()}] | ${pingText} | ${loc.country} ${flag}\n`;
+      
+      // Detailed item listing for up to 6 configs
+      const previewCount = Math.min(selectedConfigs.length, 6);
+      for (let i = 0; i < previewCount; i++) {
+        const conf = selectedConfigs[i];
+        const loc = await getIpLocation(conf.server || '');
+        const flag = getFlagEmoji(loc.countryCode);
+        const pingText = conf.latency ? `پینگ: ${conf.latency}ms` : 'فعال 🟢';
+        const proto = (conf.protocol || 'V2RAY').toUpperCase();
+        text += `🔹 کانفیگ ${i + 1} [${proto}] | ${pingText} | ${loc.country} ${flag}\n`;
+      }
+
+      if (selectedConfigs.length > previewCount) {
+        text += `<i>و ${selectedConfigs.length - previewCount} کانفیگ دیگر در بسته زیر...</i>\n`;
+      }
+
+      // Generate all branded configs
+      const allBrandedList = selectedConfigs.map(conf => applyBrandingToConfig(conf.raw, db.settings.branding));
+      fullPackConfigsContent = allBrandedList.join('\n');
+
+      // Check if all configs fit safely inside Telegram 4096 character limit
+      // Telegram blockquote character budget ~ 2500 chars to leave space for headers & proxies
+      let inlineBatch = '';
+      let inlineCount = 0;
+      for (const confStr of allBrandedList) {
+        if ((inlineBatch + confStr + '\n').length < 2400) {
+          inlineBatch += (inlineBatch ? '\n' : '') + confStr;
+          inlineCount++;
+        } else {
+          break;
         }
       }
 
-      const allBrandedCombined = selectedConfigs
-        .map(conf => applyBrandingToConfig(conf.raw, db.settings.branding))
-        .join('\n');
+      if (inlineCount < selectedConfigs.length) {
+        needsFullPackFile = true;
+      }
 
-      text += `\n📋 <b>کپی یکجای تمامی ${selectedConfigs.length} کانفیگ (جهت ایمپورت روی کادر زیر لمس کنید):</b>\n`;
-      text += `<blockquote expandable><code>${escapeHtml(allBrandedCombined)}</code></blockquote>\n\n`;
+      if (inlineBatch) {
+        const copyTitle = inlineCount === selectedConfigs.length 
+          ? `کپی یکجای تمامی ${selectedConfigs.length} کانفیگ (جهت ایمپورت روی کادر زیر لمس کنید):`
+          : `کپی یکجای برترین کانفیگ‌ها (${inlineCount} از ${selectedConfigs.length} عدد):`;
+        text += `\n📋 <b>${copyTitle}</b>\n`;
+        text += `<blockquote expandable><code>${escapeHtml(inlineBatch)}</code></blockquote>\n\n`;
+      }
     }
 
     // Append proxies
     if (selectedProxies.length > 0) {
       text += `🔌 <b>لیست پروکسی‌های جدید تلگرام:</b>\n`;
-      for (let i = 0; i < selectedProxies.length; i++) {
+      const proxyPreviewCount = Math.min(selectedProxies.length, 6);
+      for (let i = 0; i < proxyPreviewCount; i++) {
         const proxy = selectedProxies[i];
-        const loc = await getIpLocation(proxy.server);
+        const loc = await getIpLocation(proxy.server || '');
         const flag = getFlagEmoji(loc.countryCode);
         const pingText = proxy.latency ? `پینگ: ${proxy.latency}ms` : 'فعال 🟢';
-        text += `🔹 پروکسی ${proxy.type.toUpperCase()} | ${pingText} | ${loc.country} ${flag}\n`;
+        const pType = (proxy.type || 'MTPROTO').toUpperCase();
+        text += `🔹 پروکسی ${pType} | ${pingText} | ${loc.country} ${flag}\n`;
       }
       text += `\n👇 برای اتصال به پروکسی‌ها، روی دکمه‌های شیشه‌ای زیر کلیک کنید:\n`;
+    }
+
+    if (needsFullPackFile) {
+      text += `\n📁 <i>فایل متنی شامل تمام ${selectedConfigs.length} کانفیگ نیز ضمیمه شد.</i>\n`;
     }
 
     text += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
 
     const inlineButtons: any[] = [];
     selectedProxies.forEach((p, idx) => {
-      const label = `🔌 اتصال به پروکسی ${p.type.toUpperCase()} شماره ${idx + 1}`;
+      const pType = (p.type || 'MTPROTO').toUpperCase();
+      const label = `🔌 اتصال به پروکسی ${pType} شماره ${idx + 1}`;
       inlineButtons.push([{
         text: label,
         url: p.raw,
@@ -2602,18 +2689,48 @@ async function executeAutoPost(): Promise<boolean> {
       }]);
     }
 
+    // Ensure the message length strictly adheres to Telegram constraints
+    const safeText = safeTelegramHtmlLength(text, 3900);
+
     const channelHandle = settings.targetChannel.startsWith('@') ? settings.targetChannel : `@${settings.targetChannel.replace('@', '')}`;
     const sentMsg = await callTelegramApi('sendMessage', {
       chat_id: channelHandle,
-      text: text,
+      text: safeText,
       parse_mode: 'HTML',
       reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
       disable_notification: !!settings.silentMode
     });
 
-    // Try to post an NPV/OVPN file alongside the configs
+    // If config pack has large count (e.g. 15, 20, 30, 50), upload the full .txt pack file
+    if (needsFullPackFile && fullPackConfigsContent) {
+      try {
+        const formData = new FormData();
+        formData.append('chat_id', channelHandle);
+        const fileBuffer = Buffer.from(fullPackConfigsContent, 'utf8');
+        const blob = new Blob([fileBuffer], { type: 'text/plain;charset=utf-8' });
+        
+        let packFilename = `V2Ray_Pack_${selectedConfigs.length}_Configs.txt`;
+        if (db.settings.branding) {
+          const cleanBranding = db.settings.branding.replace('@', '').replace(/[^a-zA-Z0-9_-]/g, '');
+          if (cleanBranding) packFilename = `V2Ray_${cleanBranding}_${selectedConfigs.length}_Configs.txt`;
+        }
+        
+        formData.append('document', blob, packFilename);
+        formData.append('caption', `📦 <b>فایل کامل ${selectedConfigs.length} کانفیگ V2Ray</b>\n\n🆔 ${escapeHtml(db.settings.branding || '')}`);
+        formData.append('parse_mode', 'HTML');
+        if (settings.silentMode) formData.append('disable_notification', 'true');
+
+        await fetch(`https://api.telegram.org/bot${db.settings.botToken}/sendDocument`, {
+          method: 'POST',
+          body: formData
+        });
+      } catch (err) {
+        console.error('Failed to send auto-post configs text file:', err);
+      }
+    }
+
+    // Try to post an NPV/OVPN file alongside the configs if enabled
     if (settings.postFiles && db.npvFiles && db.npvFiles.length > 0) {
-      // Get a recent npv file
       const npvFile = db.npvFiles[Math.floor(Math.random() * Math.min(db.npvFiles.length, 10))];
       if (npvFile) {
         try {
@@ -2624,7 +2741,7 @@ async function executeAutoPost(): Promise<boolean> {
           
           let brandedFilename = npvFile.filename;
           if (db.settings.branding) {
-            const cleanBranding = db.settings.branding.replace('@', '');
+            const cleanBranding = db.settings.branding.replace('@', '').replace(/[^a-zA-Z0-9_-]/g, '');
             brandedFilename = brandedFilename.replace(/\.(npv(t)?|ovpn)$/i, `_${cleanBranding}.$1`);
           }
           
@@ -2655,20 +2772,20 @@ async function executeAutoPost(): Promise<boolean> {
     const postConfigs = selectedConfigs.map((c, idx) => ({
       id: c.id,
       raw: c.raw,
-      protocol: c.protocol,
-      remark: c.remark,
-      server: c.server,
-      port: c.port,
+      protocol: (c.protocol || 'unknown') as ProtocolType,
+      remark: c.remark || '',
+      server: c.server || '',
+      port: c.port || 443,
       index: idx + 1
     }));
 
     const postProxies = selectedProxies.map((p, idx) => ({
       id: p.id,
       raw: p.raw,
-      type: p.type,
-      server: p.server,
-      port: p.port,
-      secret: p.secret,
+      type: p.type || 'mtproto',
+      server: p.server || '',
+      port: p.port || 443,
+      secret: p.secret || '',
       index: idx + 1
     }));
 
@@ -2678,7 +2795,7 @@ async function executeAutoPost(): Promise<boolean> {
       messageId: sentMsg.message_id,
       chatId: channelHandle,
       postedAt: new Date().toISOString(),
-      originalText: text,
+      originalText: safeText,
       configs: postConfigs,
       proxies: postProxies,
       repliedMessageId: null
@@ -2686,7 +2803,7 @@ async function executeAutoPost(): Promise<boolean> {
 
     settings.lastPostedAt = new Date().toISOString();
     saveDatabase();
-    addLog('success', `پست خودکار با موفقیت به کانال ${settings.targetChannel} ارسال گردید.`);
+    addLog('success', `پست خودکار با موفقیت به کانال ${settings.targetChannel} ارسال گردید (${selectedConfigs.length} کانفیگ، ${selectedProxies.length} پروکسی).`);
     return true;
   } catch (err: any) {
     addLog('error', `خطا در ارسال پست خودکار به کانال: ${err.message || err}`);
@@ -2701,50 +2818,73 @@ async function generatePostText(post: ChannelPost): Promise<string> {
   
   if (post.configs && post.configs.length > 0) {
     text += `📥 <b>پک ${post.configs.length} کانفیگ V2Ray:</b>\n`;
-    if (post.configs.length <= 5) {
-      for (let i = 0; i < post.configs.length; i++) {
-        const conf = post.configs[i];
-        const dbConf = db.configs.find(c => c.id === conf.id || c.raw === conf.raw);
-        const status = dbConf ? dbConf.status : 'failed';
-        const latency = dbConf ? dbConf.latency : null;
-        
-        const loc = await getIpLocation(conf.server);
-        const flag = getFlagEmoji(loc.countryCode);
-        
-        if (status === 'working') {
-          const pingText = latency ? `پینگ: ${latency}ms` : 'فعال 🟢';
-          text += `🟢 کانفیگ ${conf.index} [${conf.protocol.toUpperCase()}] | ${pingText} | ${loc.country} ${flag}\n`;
-        } else {
-          text += `🔴 کانفیگ ${conf.index} [${conf.protocol.toUpperCase()}] | (غیرفعال ❌) | ${loc.country} ${flag}\n`;
-        }
+    const previewCount = Math.min(post.configs.length, 6);
+    for (let i = 0; i < previewCount; i++) {
+      const conf = post.configs[i];
+      const dbConf = db.configs.find(c => c.id === conf.id || c.raw === conf.raw);
+      const status = dbConf ? dbConf.status : 'failed';
+      const latency = dbConf ? dbConf.latency : null;
+      
+      const loc = await getIpLocation(conf.server || '');
+      const flag = getFlagEmoji(loc.countryCode);
+      const proto = (conf.protocol || 'V2RAY').toUpperCase();
+      
+      if (status === 'working') {
+        const pingText = latency ? `پینگ: ${latency}ms` : 'فعال 🟢';
+        text += `🟢 کانفیگ ${conf.index} [${proto}] | ${pingText} | ${loc.country} ${flag}\n`;
+      } else {
+        text += `🔴 کانفیگ ${conf.index} [${proto}] | (غیرفعال ❌) | ${loc.country} ${flag}\n`;
       }
+    }
+
+    if (post.configs.length > previewCount) {
+      text += `<i>و ${post.configs.length - previewCount} کانفیگ دیگر در بسته...</i>\n`;
     }
 
     const allBrandedCombined = post.configs
       .map(conf => applyBrandingToConfig(conf.raw, db.settings.branding))
       .join('\n');
 
-    text += `\n📋 <b>کپی یکجای تمامی ${post.configs.length} کانفیگ (جهت ایمپورت روی کادر زیر لمس کنید):</b>\n`;
-    text += `<blockquote expandable><code>${escapeHtml(allBrandedCombined)}</code></blockquote>\n\n`;
+    let inlineBatch = '';
+    let inlineCount = 0;
+    for (const conf of post.configs) {
+      const confStr = applyBrandingToConfig(conf.raw, db.settings.branding);
+      if ((inlineBatch + confStr + '\n').length < 2400) {
+        inlineBatch += (inlineBatch ? '\n' : '') + confStr;
+        inlineCount++;
+      } else {
+        break;
+      }
+    }
+
+    if (inlineBatch) {
+      const copyTitle = inlineCount === post.configs.length 
+        ? `کپی یکجای تمامی ${post.configs.length} کانفیگ (جهت ایمپورت روی کادر زیر لمس کنید):`
+        : `کپی یکجای برترین کانفیگ‌ها (${inlineCount} از ${post.configs.length} عدد):`;
+      text += `\n📋 <b>${copyTitle}</b>\n`;
+      text += `<blockquote expandable><code>${escapeHtml(inlineBatch)}</code></blockquote>\n\n`;
+    }
   }
 
   // Proxies
   if (post.proxies && post.proxies.length > 0) {
     text += `🔌 <b>لیست پروکسی‌های جدید تلگرام:</b>\n`;
-    for (let i = 0; i < post.proxies.length; i++) {
+    const proxyPreviewCount = Math.min(post.proxies.length, 6);
+    for (let i = 0; i < proxyPreviewCount; i++) {
       const p = post.proxies[i];
       const dbProxy = db.proxies.find(pr => pr.id === p.id || pr.raw === p.raw);
       const status = dbProxy ? dbProxy.status : 'failed';
       const latency = dbProxy ? dbProxy.latency : null;
 
-      const loc = await getIpLocation(p.server);
+      const loc = await getIpLocation(p.server || '');
       const flag = getFlagEmoji(loc.countryCode);
+      const pType = (p.type || 'MTPROTO').toUpperCase();
 
       if (status === 'working') {
         const pingText = latency ? `پینگ: ${latency}ms` : 'فعال 🟢';
-        text += `🟢 پروکسی ${p.type.toUpperCase()} | ${pingText} | ${loc.country} ${flag}\n`;
+        text += `🟢 پروکسی ${pType} | ${pingText} | ${loc.country} ${flag}\n`;
       } else {
-        text += `🔴 پروکسی ${p.type.toUpperCase()} | (غیرفعال ❌) | ${loc.country} ${flag}\n`;
+        text += `🔴 پروکسی ${pType} | (غیرفعال ❌) | ${loc.country} ${flag}\n`;
       }
     }
     text += `\n👇 برای اتصال، روی دکمه‌های شیشه‌ای زیر کلیک کنید:\n`;
@@ -2752,7 +2892,7 @@ async function generatePostText(post: ChannelPost): Promise<string> {
 
   text += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
 
-  return text;
+  return safeTelegramHtmlLength(text, 3900);
 }
 
 async function monitorChannelPosts() {
@@ -2788,7 +2928,8 @@ async function monitorChannelPosts() {
         const dbProxy = db.proxies.find(pr => pr.id === p.id || pr.raw === p.raw);
         const status = dbProxy ? dbProxy.status : 'failed';
         if (status === 'working') {
-          const label = `🔌 اتصال به پروکسی ${p.type.toUpperCase()} شماره ${p.index}`;
+          const pType = (p.type || 'MTPROTO').toUpperCase();
+          const label = `🔌 اتصال به پروکسی ${pType} شماره ${p.index || (idx + 1)}`;
           inlineButtons.push([{
             text: label,
             url: p.raw,
