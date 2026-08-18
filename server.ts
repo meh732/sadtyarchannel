@@ -22,6 +22,66 @@ import {
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const DB_FILE = path.join(process.cwd(), 'data_store.json');
+const SETTINGS_FILE = path.join(process.cwd(), 'system_settings.json');
+
+// --- Helpers for Atomic File Storage & Corruption Prevention ---
+function writeJsonAtomic(filePath: string, data: any) {
+  const tmpPath = `${filePath}.${Math.random().toString(36).substring(2, 9)}.tmp`;
+  const bakPath = `${filePath}.bak`;
+  try {
+    const jsonStr = JSON.stringify(data, null, 2);
+    fs.writeFileSync(tmpPath, jsonStr, 'utf8');
+
+    // Make backup copy of existing file if valid
+    if (fs.existsSync(filePath)) {
+      try {
+        const stats = fs.statSync(filePath);
+        if (stats.size > 0) {
+          fs.copyFileSync(filePath, bakPath);
+        }
+      } catch (e) {
+        // Ignore backup copy non-fatal errors
+      }
+    }
+
+    // Atomic replace
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    console.error(`Atomic write failed for ${filePath}:`, err);
+    if (fs.existsSync(tmpPath)) {
+      try { fs.unlinkSync(tmpPath); } catch (e) {}
+    }
+  }
+}
+
+function safeReadJson(filePath: string): any {
+  const bakPath = `${filePath}.bak`;
+
+  if (fs.existsSync(filePath)) {
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      if (content && content.trim()) {
+        return JSON.parse(content);
+      }
+    } catch (err) {
+      console.error(`Failed to parse primary file ${filePath}:`, err);
+    }
+  }
+
+  if (fs.existsSync(bakPath)) {
+    try {
+      console.log(`Attempting recovery from backup file: ${bakPath}`);
+      const bakContent = fs.readFileSync(bakPath, 'utf8');
+      if (bakContent && bakContent.trim()) {
+        return JSON.parse(bakContent);
+      }
+    } catch (bakErr) {
+      console.error(`Failed to parse backup file ${bakPath}:`, bakErr);
+    }
+  }
+
+  return null;
+}
 
 // --- Helper: Generate unique ID ---
 function generateId(): string {
@@ -154,44 +214,80 @@ let db: DatabaseSchema = {
 
 function loadDatabase() {
   try {
-    if (fs.existsSync(DB_FILE)) {
-      const content = fs.readFileSync(DB_FILE, 'utf8');
-      const loaded = JSON.parse(content);
-      
-      const envAdminId = process.env.ADMIN_ID ? process.env.ADMIN_ID.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
-      const envBotToken = process.env.BOT_TOKEN ? process.env.BOT_TOKEN.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+    const envAdminId = process.env.ADMIN_ID ? process.env.ADMIN_ID.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+    const envBotToken = process.env.BOT_TOKEN ? process.env.BOT_TOKEN.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
 
-      db = {
-        settings: { 
-          ...DEFAULT_SETTINGS, 
-          ...loaded.settings,
-          adminId: envAdminId || loaded.settings?.adminId || '',
-          botToken: envBotToken || loaded.settings?.botToken || '',
-          autoPost: { ...DEFAULT_AUTO_POST, ...(loaded.settings?.autoPost || {}) }
-        },
-        sources: Array.isArray(loaded.sources) ? loaded.sources : DEFAULT_SOURCES,
-        forceJoinChannels: Array.isArray(loaded.forceJoinChannels) ? loaded.forceJoinChannels : [],
-        configs: Array.isArray(loaded.configs) ? loaded.configs : [],
-        proxies: Array.isArray(loaded.proxies) ? loaded.proxies : [],
-        npvFiles: Array.isArray(loaded.npvFiles) ? loaded.npvFiles : [],
-        users: Array.isArray(loaded.users) ? loaded.users : [],
-        logs: Array.isArray(loaded.logs) ? loaded.logs : [],
-        postedMessages: Array.isArray(loaded.postedMessages) ? loaded.postedMessages : []
+    // 1. Try loading system_settings.json first
+    let loadedSettings = safeReadJson(SETTINGS_FILE);
+
+    // 2. Try loading data_store.json
+    let loadedDataStore = safeReadJson(DB_FILE);
+
+    // If system_settings.json was missing, check if settings exist in data_store.json
+    if (!loadedSettings && loadedDataStore && loadedDataStore.settings) {
+      loadedSettings = {
+        settings: loadedDataStore.settings,
+        sources: loadedDataStore.sources,
+        forceJoinChannels: loadedDataStore.forceJoinChannels,
+        users: loadedDataStore.users
       };
-
-      // Reset any stuck 'checking' items on database load
-      for (const c of db.configs) {
-        if (c.status === 'checking') c.status = 'untested';
-      }
-      for (const p of db.proxies) {
-        if (p.status === 'checking') p.status = 'untested';
-      }
-    } else {
-      saveDatabase();
     }
+
+    const finalSettings = { 
+      ...DEFAULT_SETTINGS, 
+      ...(loadedSettings?.settings || {}),
+      adminId: envAdminId || loadedSettings?.settings?.adminId || loadedDataStore?.settings?.adminId || '',
+      botToken: envBotToken || loadedSettings?.settings?.botToken || loadedDataStore?.settings?.botToken || '',
+      autoPost: { ...DEFAULT_AUTO_POST, ...(loadedSettings?.settings?.autoPost || loadedDataStore?.settings?.autoPost || {}) }
+    };
+
+    const finalSources = Array.isArray(loadedSettings?.sources) 
+      ? loadedSettings.sources 
+      : (Array.isArray(loadedDataStore?.sources) ? loadedDataStore.sources : DEFAULT_SOURCES);
+
+    const finalForceJoin = Array.isArray(loadedSettings?.forceJoinChannels)
+      ? loadedSettings.forceJoinChannels
+      : (Array.isArray(loadedDataStore?.forceJoinChannels) ? loadedDataStore.forceJoinChannels : []);
+
+    const finalUsers = Array.isArray(loadedSettings?.users)
+      ? loadedSettings.users
+      : (Array.isArray(loadedDataStore?.users) ? loadedDataStore.users : []);
+
+    const finalConfigs = Array.isArray(loadedDataStore?.configs) ? loadedDataStore.configs : [];
+    const finalProxies = Array.isArray(loadedDataStore?.proxies) ? loadedDataStore.proxies : [];
+    const finalNpvFiles = Array.isArray(loadedDataStore?.npvFiles) ? loadedDataStore.npvFiles : [];
+    const finalLogs = Array.isArray(loadedDataStore?.logs) ? loadedDataStore.logs : [];
+    const finalPosted = Array.isArray(loadedDataStore?.postedMessages) ? loadedDataStore.postedMessages : [];
+
+    db = {
+      settings: finalSettings,
+      sources: finalSources,
+      forceJoinChannels: finalForceJoin,
+      configs: finalConfigs,
+      proxies: finalProxies,
+      npvFiles: finalNpvFiles,
+      users: finalUsers,
+      logs: finalLogs,
+      postedMessages: finalPosted
+    };
+
+    // Reset any stuck 'checking' items on database load
+    for (const c of db.configs) {
+      if (c.status === 'checking') c.status = 'untested';
+    }
+    for (const p of db.proxies) {
+      if (p.status === 'checking') p.status = 'untested';
+    }
+
+    // Persist system_settings.json immediately so it is guaranteed to exist
+    writeJsonAtomic(SETTINGS_FILE, {
+      settings: db.settings,
+      sources: db.sources,
+      forceJoinChannels: db.forceJoinChannels,
+      users: db.users
+    });
   } catch (err) {
-    console.error('Failed to load database:', err);
-    addLog('error', 'خطا در بارگذاری پایگاه داده محلی، تنظیمات پیش‌فرض اعمال شد.');
+    console.error('Critical error loading database:', err);
   }
 }
 
@@ -199,14 +295,35 @@ let saveTimer: NodeJS.Timeout | null = null;
 let savePending = false;
 
 function saveDatabase(immediate = false) {
+  const doSave = () => {
+    try {
+      // 1. Save critical system settings separately (lightweight, isolated)
+      const systemData = {
+        settings: db.settings,
+        sources: db.sources,
+        forceJoinChannels: db.forceJoinChannels,
+        users: db.users
+      };
+      writeJsonAtomic(SETTINGS_FILE, systemData);
+
+      // 2. Save heavy data store (configs, proxies, npvFiles, logs, postedMessages)
+      const storeData = {
+        configs: db.configs,
+        proxies: db.proxies,
+        npvFiles: db.npvFiles,
+        logs: db.logs,
+        postedMessages: db.postedMessages
+      };
+      writeJsonAtomic(DB_FILE, storeData);
+    } catch (err) {
+      console.error('Failed to save database:', err);
+    }
+  };
+
   if (immediate) {
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     savePending = false;
-    try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
-    } catch (err) {
-      console.error('Failed to save database immediately:', err);
-    }
+    doSave();
     return;
   }
 
@@ -216,11 +333,7 @@ function saveDatabase(immediate = false) {
       saveTimer = null;
       if (savePending) {
         savePending = false;
-        try {
-          fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
-        } catch (err) {
-          console.error('Failed to save database:', err);
-        }
+        doSave();
       }
     }, 400);
   }
