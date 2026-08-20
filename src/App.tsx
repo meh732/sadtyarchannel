@@ -33,7 +33,15 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  Sparkles,
+  Lightbulb,
+  Flame,
+  BookOpen,
+  Smartphone,
+  ShieldCheck,
+  Eye,
+  Award
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -46,12 +54,15 @@ import {
   BotLog,
   DashboardStats,
   ProtocolType,
-  AutoPostSettings
+  AutoPostSettings,
+  TechItem,
+  TechItemCategory,
+  TechImportance
 } from './types';
 
 export default function App() {
   // Navigation & View State
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'configs' | 'proxies' | 'vpn_files' | 'join' | 'settings' | 'autopost' | 'broadcast'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'configs' | 'proxies' | 'vpn_files' | 'tech' | 'join' | 'settings' | 'autopost' | 'broadcast'>('dashboard');
   
   // Data States
   const [stats, setStats] = useState<DashboardStats>({
@@ -71,6 +82,7 @@ export default function App() {
   const [configs, setConfigs] = useState<ConfigItem[]>([]);
   const [proxies, setProxies] = useState<ProxyItem[]>([]);
   const [vpnFiles, setVpnFiles] = useState<any[]>([]);
+  const [techItems, setTechItems] = useState<TechItem[]>([]);
   const [users, setUsers] = useState<BotUser[]>([]);
   const [logs, setLogs] = useState<BotLog[]>([]);
   const [settings, setSettings] = useState<SystemSettings>({
@@ -87,13 +99,18 @@ export default function App() {
       enabled: false,
       targetChannel: '',
       postIntervalHours: 4,
-      configCount: 1,
+      configCount: 5,
       proxyCount: 1,
       customText: '',
       adText: '',
       postFiles: false,
       silentMode: false,
-      lastPostedAt: null
+      lastPostedAt: null,
+      techNewsCount: 0,
+      techTricksCount: 0,
+      techPostMode: 'combined',
+      autoPurgeOldTechDays: 7,
+      includeTechImportanceBadge: true
     }
   });
 
@@ -115,6 +132,17 @@ export default function App() {
   const [proxyStatusFilter, setProxyStatusFilter] = useState<string>('all');
   const [proxyPage, setProxyPage] = useState<number>(1);
 
+  // Tech Items Search & Filter States
+  const [techSearch, setTechSearch] = useState('');
+  const [techCategoryFilter, setTechCategoryFilter] = useState<'all' | 'news' | 'trick' | 'secret'>('all');
+  const [techImportanceFilter, setTechImportanceFilter] = useState<string>('all');
+  const [showAddTechModal, setShowAddTechModal] = useState(false);
+  const [newTechForm, setNewTechForm] = useState({
+    title: '',
+    summary: '',
+    category: 'trick' as TechItemCategory,
+    importance: 'high' as TechImportance
+  });
 
   // Form Input States
   const [newSource, setNewSource] = useState({
@@ -133,13 +161,18 @@ export default function App() {
     enabled: false,
     targetChannel: '',
     postIntervalHours: 4,
-    configCount: 1,
+    configCount: 5,
     proxyCount: 1,
     customText: '',
     adText: '',
     postFiles: false,
     silentMode: false,
-    lastPostedAt: null
+    lastPostedAt: null,
+    techNewsCount: 0,
+    techTricksCount: 0,
+    techPostMode: 'combined',
+    autoPurgeOldTechDays: 7,
+    includeTechImportanceBadge: true
   });
 
   const [broadcastMessage, setBroadcastMessage] = useState('');
@@ -173,7 +206,7 @@ export default function App() {
     if (!silent) setLoading(true);
     try {
       if (!silent) {
-        const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes] = await Promise.all([
+        const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes, techRes] = await Promise.all([
           fetch('/api/stats').then(r => r.json()),
           fetch('/api/sources').then(r => r.json()),
           fetch('/api/force-join').then(r => r.json()),
@@ -182,7 +215,8 @@ export default function App() {
           fetch('/api/users').then(r => r.json()),
           fetch('/api/logs').then(r => r.json()),
           fetch('/api/settings').then(r => r.json()),
-          fetch('/api/vpn-files').then(r => r.json())
+          fetch('/api/vpn-files').then(r => r.json()),
+          fetch('/api/tech-items').then(r => r.json())
         ]);
 
         setStats(statsRes);
@@ -191,6 +225,7 @@ export default function App() {
         setConfigs(configsRes);
         setProxies(proxiesRes || []);
         setVpnFiles(vpnRes || []);
+        setTechItems(techRes || []);
         setUsers(usersRes);
         setLogs(logsRes);
         setSettings(settingsRes);
@@ -859,6 +894,69 @@ export default function App() {
     }
   };
 
+  // --- Tech Knowledgebase Handlers ---
+  const handleRefreshTech = async () => {
+    setActionLoading('refresh_tech');
+    try {
+      const res = await fetch('/api/tech-items/refresh', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`پویش آنلاین انجام شد: ${data.addedCount} مطلب جدید جمع‌آوری و بروزرسانی گردید.`, 'success');
+        const itemsRes = await fetch('/api/tech-items').then(r => r.json());
+        setTechItems(itemsRes);
+      } else {
+        showToast(data.message || 'خطا در دریافت مطالب', 'error');
+      }
+    } catch (err) {
+      showToast('خطا در ارتباط با سرور', 'error');
+    } finally {
+      setActionLoading(null);
+      fetchData(true);
+    }
+  };
+
+  const handleAddTechItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTechForm.title.trim() || !newTechForm.summary.trim()) {
+      showToast('عنوان و متن ترفند یا خبر الزامی است.', 'error');
+      return;
+    }
+    setActionLoading('add_tech');
+    try {
+      const res = await fetch('/api/tech-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newTechForm)
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('مطلب جدید با موفقیت به دانشنامه افزوده شد.', 'success');
+        setTechItems(prev => [data.item, ...prev]);
+        setShowAddTechModal(false);
+        setNewTechForm({ title: '', summary: '', category: 'trick', importance: 'high' });
+      } else {
+        showToast(data.message || 'خطا در ثبت مطلب', 'error');
+      }
+    } catch (err) {
+      showToast('خطا در ثبت مطلب', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteTechItem = async (id: string) => {
+    try {
+      const res = await fetch(`/api/tech-items/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        setTechItems(prev => prev.filter(t => t.id !== id));
+        showToast('مطلب از بانک حذف شد.', 'info');
+      }
+    } catch (err) {
+      showToast('خطا در حذف مطلب', 'error');
+    }
+  };
+
   // Clear System Logs
   const handleClearLogs = async () => {
     try {
@@ -987,6 +1085,23 @@ export default function App() {
 
   const proxyTotalPages = useMemo(() => Math.max(1, Math.ceil(filteredProxies.length / ITEMS_PER_PAGE)), [filteredProxies.length]);
   const paginatedProxies = useMemo(() => filteredProxies.slice((proxyPage - 1) * ITEMS_PER_PAGE, proxyPage * ITEMS_PER_PAGE), [filteredProxies, proxyPage]);
+
+  // Memoized Filtered tech items calculation
+  const filteredTechItems = useMemo(() => {
+    const s = techSearch.toLowerCase().trim();
+    return techItems.filter(item => {
+      const matchesSearch = !s ||
+        (item.title && item.title.toLowerCase().includes(s)) ||
+        (item.summary && item.summary.toLowerCase().includes(s)) ||
+        (item.tags && item.tags.some(t => t.toLowerCase().includes(s))) ||
+        (item.source && item.source.toLowerCase().includes(s));
+
+      const matchesCategory = techCategoryFilter === 'all' || item.category === techCategoryFilter;
+      const matchesImportance = techImportanceFilter === 'all' || item.importance === techImportanceFilter;
+
+      return matchesSearch && matchesCategory && matchesImportance;
+    });
+  }, [techItems, techSearch, techCategoryFilter, techImportanceFilter]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col md:flex-row relative" dir="rtl">
@@ -1128,6 +1243,21 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('tech')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
+              activeTab === 'tech'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            <span>اخبار و ترفندها</span>
+            <span className="mr-auto bg-amber-500/20 text-amber-300 text-xs px-2 py-0.5 rounded-full">
+              {techItems.length} مطلب
+            </span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('join')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
               activeTab === 'join'
@@ -1202,6 +1332,7 @@ export default function App() {
               {activeTab === 'configs' && 'بانک جامع کانفیگ‌های استخراج شده'}
               {activeTab === 'proxies' && 'بانک جامع پروکسی‌های استخراج شده'}
               {activeTab === 'vpn_files' && 'بانک فایل‌های پیکربندی (.npvt, .ovpn)'}
+              {activeTab === 'tech' && 'دانشنامه و ترفندهای تکنولوژی و گوشی'}
               {activeTab === 'join' && 'بررسی عضویت اجباری (Force Join)'}
               {activeTab === 'settings' && 'پیکربندی هوشمند ربات و پلتفرم'}
               {activeTab === 'autopost' && 'زمان‌بندی و ارسال خودکار پست'}
@@ -1213,9 +1344,10 @@ export default function App() {
               {activeTab === 'configs' && 'بررسی، تست اتصال و برندسازی کانفیگ‌های ویتوری و NapsternetV.'}
               {activeTab === 'proxies' && 'بررسی و مدیریت پروکسی‌های تلگرامی Socks5 و MTProto جهت ارائه به کاربران یا پست کانال.'}
               {activeTab === 'vpn_files' && 'مشاهده و مدیریت فایل‌های جمع‌آوری شده از منابع جهت ارسال مستقیم به کانال.'}
+              {activeTab === 'tech' && 'جمع‌آوری هوشمند اخبار روز، ترفندهای آموزشی موبایل، کدهای مخفی و اولویت‌بندی بر اساس اهمیت جهت ارسال در کانال.'}
               {activeTab === 'join' && 'تنظیم کانال‌های حامی جهت ملزم کردن کاربران برای عضویت قبل از استفاده.'}
               {activeTab === 'settings' && 'تنظیم توکن API تلگرام، فواصل زمانی پویش خودکار و متن برندینگ شخصی.'}
-              {activeTab === 'autopost' && 'پیکربندی هوشمند ربات برای ارسال اتوماتیک کانفیگ‌ها و پروکسی‌های برتر به کانال شما در فواصل مشخص.'}
+              {activeTab === 'autopost' && 'پیکربندی هوشمند ربات برای ارسال اتوماتیک کانفیگ‌ها، پروکسی‌ها و ترفندهای تکنولوژی به کانال شما در فواصل مشخص.'}
               {activeTab === 'broadcast' && 'ارسال بیانیه‌ها، اخبار یا بنرهای تبلیغاتی به تمامی اعضای ذخیره شده در دیتابیس.'}
             </p>
           </div>
@@ -2460,6 +2592,403 @@ export default function App() {
                 </motion.div>
               )}
 
+              {/* --- TAB: TECH KNOWLEDGEBASE & TRICKS --- */}
+              {activeTab === 'tech' && (
+                <motion.div
+                  key="tech"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  className="space-y-6"
+                >
+                  {/* Top Stats Banner */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                        <BookOpen className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className="text-[11px] font-bold text-slate-500 block">اخبار روز تکنولوژی</span>
+                        <span className="text-lg font-black text-slate-900">
+                          {techItems.filter(i => i.category === 'news').length}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                        <Smartphone className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className="text-[11px] font-bold text-slate-500 block">ترفندهای گوشی و وب</span>
+                        <span className="text-lg font-black text-slate-900">
+                          {techItems.filter(i => i.category === 'trick').length}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
+                        <ShieldCheck className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className="text-[11px] font-bold text-slate-500 block">رازها و امنیت شبکه</span>
+                        <span className="text-lg font-black text-slate-900">
+                          {techItems.filter(i => i.category === 'secret').length}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                        <Flame className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className="text-[11px] font-bold text-slate-500 block">مطالب مهم و داغ</span>
+                        <span className="text-lg font-black text-amber-600">
+                          {techItems.filter(i => i.importance === 'breaking' || i.importance === 'high').length}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions & Description */}
+                  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-amber-500" />
+                        <span>سیستم هوشمند جمع‌آوری و اولویت‌بندی اخبار و ترفندهای تکنولوژی</span>
+                      </h3>
+                      <p className="text-xs text-slate-500 leading-relaxed max-w-2xl">
+                        این بخش به صورت کاملاً خودکار و ۲۴ ساعته جذاب‌ترین اخبار تکنولوژی، ترفندهای کاربردی موبایل (اندروید/آیفون)، کدهای مخفی و نکات امنیتی را جمع‌آوری کرده و بر اساس درجه اهمیت جهت ارسال در کانال تلگرام رتبه‌بندی می‌کند.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 w-full sm:w-auto shrink-0">
+                      <button
+                        onClick={handleRefreshTech}
+                        disabled={actionLoading === 'refresh_tech'}
+                        className="flex-1 sm:flex-none px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${actionLoading === 'refresh_tech' ? 'animate-spin' : ''}`} />
+                        <span>{actionLoading === 'refresh_tech' ? 'در حال پویش...' : 'بروزرسانی آنلاین'}</span>
+                      </button>
+
+                      <button
+                        onClick={() => setShowAddTechModal(true)}
+                        className="flex-1 sm:flex-none px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>ثبت مطلب دستی</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Filter & Search Bar */}
+                  <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-4">
+                    <div className="flex flex-col md:flex-row items-center gap-3">
+                      {/* Search */}
+                      <div className="relative flex-1 w-full">
+                        <Search className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="جستجو در عنوان، متن، برچسب‌ها یا منبع..."
+                          value={techSearch}
+                          onChange={(e) => setTechSearch(e.target.value)}
+                          className="w-full pl-4 pr-10 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Category Pills */}
+                      <div className="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto pb-1 md:pb-0">
+                        <button
+                          onClick={() => setTechCategoryFilter('all')}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                            techCategoryFilter === 'all'
+                              ? 'bg-slate-900 text-white'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          همه ({techItems.length})
+                        </button>
+                        <button
+                          onClick={() => setTechCategoryFilter('news')}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                            techCategoryFilter === 'news'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                          }`}
+                        >
+                          📰 اخبار روز ({techItems.filter(i => i.category === 'news').length})
+                        </button>
+                        <button
+                          onClick={() => setTechCategoryFilter('trick')}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                            techCategoryFilter === 'trick'
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                          }`}
+                        >
+                          💡 ترفندها ({techItems.filter(i => i.category === 'trick').length})
+                        </button>
+                        <button
+                          onClick={() => setTechCategoryFilter('secret')}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                            techCategoryFilter === 'secret'
+                              ? 'bg-purple-600 text-white'
+                              : 'bg-purple-50 text-purple-700 hover:bg-purple-100'
+                          }`}
+                        >
+                          🔐 رازها و امنیت ({techItems.filter(i => i.category === 'secret').length})
+                        </button>
+                      </div>
+
+                      {/* Importance Filter */}
+                      <div className="w-full md:w-auto shrink-0">
+                        <select
+                          value={techImportanceFilter}
+                          onChange={(e) => setTechImportanceFilter(e.target.value)}
+                          className="w-full md:w-auto px-3 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                        >
+                          <option value="all">تمام سطوح اهمیت</option>
+                          <option value="breaking">🔥 فوری و داغ (Breaking)</option>
+                          <option value="high">⚡️ اولویت بالا (High)</option>
+                          <option value="medium">⭐️ اهمیت متوسط (Medium)</option>
+                          <option value="normal">⚪️ عادی (Normal)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tech Items List */}
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                    {filteredTechItems.length === 0 ? (
+                      <div className="p-12 text-center space-y-3">
+                        <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-500 mx-auto flex items-center justify-center">
+                          <Sparkles className="w-6 h-6" />
+                        </div>
+                        <h4 className="font-bold text-slate-800 text-sm">مطلبی یافت نشد</h4>
+                        <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                          هیچ خبر یا ترفندی با فیلترهای انتخابی مطابقت ندارد. برای دریافت جدیدترین مطالب روی دکمه «بروزرسانی آنلاین» کلیک کنید.
+                        </p>
+                        <button
+                          onClick={handleRefreshTech}
+                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-2 cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>بروزرسانی و بارگذاری فوری</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {filteredTechItems.map((item) => (
+                          <div key={item.id} className="p-5 hover:bg-slate-50/50 transition-colors space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              {/* Badges */}
+                              <div className="flex flex-wrap items-center gap-2">
+                                {/* Category Badge */}
+                                <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-lg ${
+                                  item.category === 'news'
+                                    ? 'bg-blue-50 text-blue-700 border border-blue-200/50'
+                                    : item.category === 'trick'
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/50'
+                                    : 'bg-purple-50 text-purple-700 border border-purple-200/50'
+                                }`}>
+                                  {item.category === 'news' && '📰 خبر روز'}
+                                  {item.category === 'trick' && '💡 ترفند و آموزش'}
+                                  {item.category === 'secret' && '🔐 راز تکنولوژی'}
+                                </span>
+
+                                {/* Importance Badge */}
+                                <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg flex items-center gap-1 ${
+                                  item.importance === 'breaking'
+                                    ? 'bg-rose-50 text-rose-700 border border-rose-200/60 font-black'
+                                    : item.importance === 'high'
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-200/60'
+                                    : item.importance === 'medium'
+                                    ? 'bg-sky-50 text-sky-700 border border-sky-200/60'
+                                    : 'bg-slate-100 text-slate-600'
+                                }`}>
+                                  {item.importance === 'breaking' && <Flame className="w-3 h-3 text-rose-500" />}
+                                  {item.importance === 'high' && <Award className="w-3 h-3 text-amber-500" />}
+                                  <span>
+                                    {item.importance === 'breaking' && '🔥 فوری و داغ'}
+                                    {item.importance === 'high' && '⚡️ بسیار مهم'}
+                                    {item.importance === 'medium' && '⭐️ مهم'}
+                                    {item.importance === 'normal' && 'عادی'}
+                                  </span>
+                                  <span className="text-[9px] opacity-75 font-mono">({item.importanceScore} امتیاز)</span>
+                                </span>
+
+                                {/* Posted to Channel Status */}
+                                {item.postedToChannel ? (
+                                  <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200/50 px-2 py-0.5 rounded-md flex items-center gap-1 font-medium">
+                                    <CheckCircle2 className="w-3 h-3" />
+                                    <span>ارسال شده به کانال</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-md">
+                                    در صف ارسال
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Delete Button */}
+                              <button
+                                onClick={() => handleDeleteTechItem(item.id)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                title="حذف این مطلب"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            {/* Title */}
+                            <h4 className="text-sm font-bold text-slate-900 leading-snug">
+                              {item.title}
+                            </h4>
+
+                            {/* Summary */}
+                            <p className="text-xs text-slate-600 leading-relaxed">
+                              {item.summary}
+                            </p>
+
+                            {/* Footer & Meta */}
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[10px] text-slate-400">
+                              <div className="flex flex-wrap items-center gap-3">
+                                <span>منبع: <strong className="text-slate-600">{item.source}</strong></span>
+                                <span>ثبت: <strong>{new Date(item.createdAt).toLocaleDateString('fa-IR')} - {new Date(item.createdAt).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}</strong></span>
+                                {item.postedAt && (
+                                  <span>زمان ارسال به کانال: <strong>{new Date(item.postedAt).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}</strong></span>
+                                )}
+                              </div>
+
+                              {/* Tags */}
+                              {item.tags && item.tags.length > 0 && (
+                                <div className="flex flex-wrap items-center gap-1">
+                                  {item.tags.map((tag, tIdx) => (
+                                    <span key={tIdx} className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[9px]">
+                                      #{tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Add Tech Item Modal */}
+                  {showAddTechModal && (
+                    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-4"
+                      >
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                          <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                            <Plus className="w-4 h-4 text-indigo-600" />
+                            <span>ثبت مطلب اختصاصی یا ترفند جدید</span>
+                          </h3>
+                          <button
+                            onClick={() => setShowAddTechModal(false)}
+                            className="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer"
+                          >
+                            ×
+                          </button>
+                        </div>
+
+                        <form onSubmit={handleAddTechItem} className="space-y-4">
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">عنوان مطلب یا ترفند</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="مثال: ترفند مخفی افزایش سرعت اینترنت در شیائومی"
+                              value={newTechForm.title}
+                              onChange={(e) => setNewTechForm(prev => ({ ...prev, title: e.target.value }))}
+                              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-bold text-slate-700">دسته‌بندی</label>
+                              <select
+                                value={newTechForm.category}
+                                onChange={(e) => setNewTechForm(prev => ({ ...prev, category: e.target.value as any }))}
+                                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                              >
+                                <option value="trick">💡 ترفند و آموزش کاربردی</option>
+                                <option value="news">📰 خبر روز دنیای تکنولوژی</option>
+                                <option value="secret">🔐 راز مخفی و امنیت شبکه</option>
+                              </select>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-bold text-slate-700">درجه اهمیت</label>
+                              <select
+                                value={newTechForm.importance}
+                                onChange={(e) => setNewTechForm(prev => ({ ...prev, importance: e.target.value as any }))}
+                                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                              >
+                                <option value="breaking">🔥 فوری و داغ (Breaking)</option>
+                                <option value="high">⚡️ بسیار مهم (High)</option>
+                                <option value="medium">⭐️ اهمیت متوسط (Medium)</option>
+                                <option value="normal">⚪️ عادی (Normal)</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">متن کامل یا توضیحات ترفند</label>
+                            <textarea
+                              rows={5}
+                              required
+                              placeholder="آموزش گام به گام یا جزئیات خبر را اینجا بنویسید..."
+                              value={newTechForm.summary}
+                              onChange={(e) => setNewTechForm(prev => ({ ...prev, summary: e.target.value }))}
+                              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none leading-relaxed"
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                            <button
+                              type="button"
+                              onClick={() => setShowAddTechModal(false)}
+                              className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                            >
+                              انصراف
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={actionLoading === 'add_tech'}
+                              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                            >
+                              {actionLoading === 'add_tech' ? (
+                                <>
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  <span>در حال ثبت...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>ثبت مطلب</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </form>
+                      </motion.div>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+
               {/* --- TAB: AUTOPOST (AUTO POST TO TELEGRAM CHANNEL) --- */}
               {activeTab === 'autopost' && (
                 <motion.div
@@ -2596,6 +3125,104 @@ export default function App() {
                           onChange={(e) => setAutoPostForm(prev => ({ ...prev, adText: e.target.value }))}
                           className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none"
                         />
+                      </div>
+
+                      {/* Tech News & Tricks Settings Section */}
+                      <div className="p-4 bg-amber-50/60 border border-amber-200/80 rounded-2xl space-y-4">
+                        <div className="flex items-center gap-2 text-amber-900 font-bold text-xs pb-2 border-b border-amber-200/60">
+                          <Sparkles className="w-4 h-4 text-amber-600" />
+                          <span>تنظیمات ارسال هوشمند اخبار و ترفندهای تکنولوژی به کانال</span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {/* Tech News Count */}
+                          <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                              <span>تعداد اخبار روز تکنولوژی</span>
+                              <span className="text-[10px] text-amber-700">بروزرسانی روزانه</span>
+                            </label>
+                            <select
+                              value={autoPostForm.techNewsCount || 0}
+                              onChange={(e) => setAutoPostForm(prev => ({ ...prev, techNewsCount: Number(e.target.value) }))}
+                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                            >
+                              <option value="0">بدون اخبار (۰ خبر)</option>
+                              <option value="1">۱ خبر مهم و برتر</option>
+                              <option value="2">۲ خبر منتخب روز</option>
+                              <option value="3">۳ خبر مهم روز</option>
+                              <option value="5">۵ خبر منتخب روز</option>
+                            </select>
+                          </div>
+
+                          {/* Tech Tricks Count */}
+                          <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                              <span>تعداد ترفند و راز تکنولوژی</span>
+                              <span className="text-[10px] text-amber-700">آموزشی و موبایل</span>
+                            </label>
+                            <select
+                              value={autoPostForm.techTricksCount || 0}
+                              onChange={(e) => setAutoPostForm(prev => ({ ...prev, techTricksCount: Number(e.target.value) }))}
+                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                            >
+                              <option value="0">بدون ترفند (۰ ترفند)</option>
+                              <option value="1">۱ ترفند یا راز کاربردی</option>
+                              <option value="2">۲ ترفند یا راز کاربردی</option>
+                              <option value="3">۳ ترفند یا راز کاربردی</option>
+                              <option value="5">۵ ترفند یا راز کاربردی</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {/* Tech Post Mode */}
+                          <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-700">نحوه ارسال در کانال</label>
+                            <select
+                              value={autoPostForm.techPostMode || 'combined'}
+                              onChange={(e) => setAutoPostForm(prev => ({ ...prev, techPostMode: e.target.value as any }))}
+                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                            >
+                              <option value="combined">ادغام درون پست کانفیگ‌ها و پروکسی</option>
+                              <option value="standalone">پست مستقل و جداگانه برای اخبار و ترفندها</option>
+                              <option value="both">هم درون پست و هم پست مستقل</option>
+                            </select>
+                          </div>
+
+                          {/* Auto Purge Old Tech */}
+                          <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-700">حذف خودکار مطالب قدیمی</label>
+                            <select
+                              value={autoPostForm.autoPurgeOldTechDays || 7}
+                              onChange={(e) => setAutoPostForm(prev => ({ ...prev, autoPurgeOldTechDays: Number(e.target.value) }))}
+                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                            >
+                              <option value="1">مطالب قدیمی‌تر از ۱ روز</option>
+                              <option value="2">مطالب قدیمی‌تر از ۲ روز</option>
+                              <option value="3">مطالب قدیمی‌تر از ۳ روز</option>
+                              <option value="7">مطالب قدیمی‌تر از ۷ روز (پیش‌فرض)</option>
+                              <option value="14">مطالب قدیمی‌تر از ۱۴ روز</option>
+                              <option value="30">مطالب قدیمی‌تر از ۳۰ روز</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Show Importance Badge */}
+                        <div className="flex items-center justify-between pt-2 border-t border-amber-200/50">
+                          <div>
+                            <h4 className="text-xs font-bold text-slate-800">نمایش برچسب درجه اهمیت (🔥 فوری / ⚡️ مهم)</h4>
+                            <p className="text-[10px] text-slate-500 mt-0.5">افزودن نشان‌های جذاب درجه اهمیت در متن پست ارسالی به تلگرام</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setAutoPostForm(prev => ({ ...prev, includeTechImportanceBadge: !prev.includeTechImportanceBadge }))}
+                            className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                              autoPostForm.includeTechImportanceBadge !== false ? 'bg-amber-600 justify-end' : 'bg-slate-200 justify-start'
+                            }`}
+                          >
+                            <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                          </button>
+                        </div>
                       </div>
 
                       {/* Silent Post */}

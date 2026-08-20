@@ -62,6 +62,12 @@ export interface AutoPostSettings {
   postFiles?: boolean; // send .npvt and .ovpn files
   silentMode: boolean; // send silently (disable_notification)
   lastPostedAt: string | null;
+  // Tech News & Tricks Auto-Posting Settings
+  techNewsCount?: number; // Number of tech news to post (0, 1, 2, 3, 5, etc.)
+  techTricksCount?: number; // Number of mobile/tech tricks and secrets to post (0, 1, 2, 3, etc.)
+  techPostMode?: 'combined' | 'standalone' | 'both'; // 'combined' with configs, 'standalone' dedicated post, or 'both'
+  includeTechImportanceBadge?: boolean; // Show 🔥 / 💡 / 🔐 badges
+  autoPurgeOldTechDays?: number; // Auto purge news older than X days (default: 2)
 }
 
 export interface SystemSettings {
@@ -131,6 +137,25 @@ export interface BotLog {
   message: string;
 }
 
+export type TechItemCategory = 'news' | 'trick' | 'secret';
+export type TechImportance = 'breaking' | 'high' | 'medium' | 'normal';
+
+export interface TechItem {
+  id: string;
+  title: string;
+  summary: string;
+  fullText?: string;
+  category: TechItemCategory; // 'news' (اخبار تکنولوژی), 'trick' (ترفندهای گوشی و تکنولوژی), 'secret' (رازهای تکنولوژی و امنیت)
+  tags: string[];
+  source: string;
+  sourceUrl?: string;
+  importance: TechImportance; // 'breaking' (فوری و داغ), 'high' (مهم), 'medium' (متوسط), 'normal' (عادی)
+  importanceScore: number; // 1-100 (امتیاز اهمیت جهت اولویت‌بندی ارسال خودکار)
+  createdAt: string;
+  postedToChannel?: boolean;
+  postedAt?: string | null;
+}
+
 export interface DashboardStats {
   totalUsers: number;
   totalConfigs: number;
@@ -146,5 +171,11 @@ export interface DashboardStats {
   telegramChannelsCount: number;
   subsCount: number;
   extractedTodayCount: number;
+  // Tech Stats
+  totalTechItems?: number;
+  techNewsCount?: number;
+  techTricksCount?: number;
+  techSecretsCount?: number;
+  techHotCount?: number;
 }
 

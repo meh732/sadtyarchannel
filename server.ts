@@ -17,7 +17,10 @@ import {
   BotLog,
   DashboardStats,
   ProtocolType,
-  ChannelPost
+  ChannelPost,
+  TechItem,
+  TechItemCategory,
+  TechImportance
 } from './src/types';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -107,6 +110,7 @@ interface DatabaseSchema {
   users: BotUser[];
   logs: BotLog[];
   postedMessages?: ChannelPost[];
+  techItems?: TechItem[];
 }
 
 // --- Pre-populated default sources ---
@@ -167,7 +171,12 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   customText: '💎 کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده ما تقدیم به شما:',
   adText: 'Sponsor: @MyChannel',
   silentMode: true,
-  lastPostedAt: null
+  lastPostedAt: null,
+  techNewsCount: 1,
+  techTricksCount: 1,
+  techPostMode: 'combined',
+  includeTechImportanceBadge: true,
+  autoPurgeOldTechDays: 2
 };
 
 const DEFAULT_SETTINGS: SystemSettings = {
@@ -209,7 +218,8 @@ let db: DatabaseSchema = {
   npvFiles: [],
   users: [],
   logs: [],
-  postedMessages: []
+  postedMessages: [],
+  techItems: []
 };
 
 function loadDatabase() {
@@ -258,6 +268,7 @@ function loadDatabase() {
     const finalNpvFiles = Array.isArray(loadedDataStore?.npvFiles) ? loadedDataStore.npvFiles : [];
     const finalLogs = Array.isArray(loadedDataStore?.logs) ? loadedDataStore.logs : [];
     const finalPosted = Array.isArray(loadedDataStore?.postedMessages) ? loadedDataStore.postedMessages : [];
+    const finalTechItems = Array.isArray(loadedDataStore?.techItems) ? loadedDataStore.techItems : [];
 
     db = {
       settings: finalSettings,
@@ -268,7 +279,8 @@ function loadDatabase() {
       npvFiles: finalNpvFiles,
       users: finalUsers,
       logs: finalLogs,
-      postedMessages: finalPosted
+      postedMessages: finalPosted,
+      techItems: finalTechItems
     };
 
     // Reset any stuck 'checking' items on database load
@@ -306,11 +318,12 @@ function saveDatabase(immediate = false) {
       };
       writeJsonAtomic(SETTINGS_FILE, systemData);
 
-      // 2. Save heavy data store (configs, proxies, npvFiles, logs, postedMessages)
+      // 2. Save heavy data store (configs, proxies, npvFiles, techItems, logs, postedMessages)
       const storeData = {
         configs: db.configs,
         proxies: db.proxies,
         npvFiles: db.npvFiles,
+        techItems: db.techItems || [],
         logs: db.logs,
         postedMessages: db.postedMessages
       };
@@ -2626,7 +2639,32 @@ function escapeHtml(str: string): string {
     .replace(/>/g, '&gt;');
 }
 
-// Helper to safely truncate and balance HTML tags to respect Telegram 4096 character limits
+function formatProxyTelegramUrl(p: { type?: string; raw?: string; server?: string; port?: number; secret?: string; user?: string; pass?: string }): string {
+  const raw = p.raw || '';
+  if (raw.startsWith('tg://') || raw.startsWith('https://t.me/')) {
+    return raw;
+  }
+  
+  if (p.type === 'socks5' || raw.startsWith('socks5://')) {
+    const s = p.server || '127.0.0.1';
+    const port = p.port || 1080;
+    if (p.user || p.pass) {
+      return `tg://socks?server=${encodeURIComponent(s)}&port=${port}&user=${encodeURIComponent(p.user || '')}&pass=${encodeURIComponent(p.pass || '')}`;
+    }
+    return `tg://socks?server=${encodeURIComponent(s)}&port=${port}`;
+  }
+  
+  if (p.server && p.port) {
+    if (p.secret) {
+      return `tg://proxy?server=${encodeURIComponent(p.server)}&port=${p.port}&secret=${encodeURIComponent(p.secret)}`;
+    }
+    return `tg://proxy?server=${encodeURIComponent(p.server)}&port=${p.port}`;
+  }
+  
+  return raw.startsWith('http') ? raw : `tg://socks?server=${encodeURIComponent(p.server || '127.0.0.1')}&port=${p.port || 1080}`;
+}
+
+// Helper to safely truncate and balance HTML tags in strict LIFO order to respect Telegram 4096 character limits
 function safeTelegramHtmlLength(text: string, maxLen: number = 3800): string {
   if (!text || text.length <= maxLen) return text;
   
@@ -2638,16 +2676,518 @@ function safeTelegramHtmlLength(text: string, maxLen: number = 3800): string {
     truncated = truncated.substring(0, lastOpen);
   }
 
-  // Ensure unclosed tags are closed
-  const tags = ['code', 'blockquote', 'b', 'i', 'a'];
-  for (const tag of tags) {
-    const openCount = (truncated.match(new RegExp(`<${tag}[^>]*>`, 'gi')) || []).length;
-    const closeCount = (truncated.match(new RegExp(`</${tag}>`, 'gi')) || []).length;
-    if (openCount > closeCount) {
-      truncated += `</${tag}>`;
+  // Parse open tags and close them in LIFO order
+  const tagRegex = /<\/?([a-zA-Z0-9]+)(?:\s+[^>]*)?>/g;
+  const tagStack: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = tagRegex.exec(truncated)) !== null) {
+    const fullTag = match[0];
+    const tagName = match[1].toLowerCase();
+    
+    if (fullTag.startsWith('</')) {
+      // Closing tag
+      const lastIdx = tagStack.lastIndexOf(tagName);
+      if (lastIdx !== -1) {
+        tagStack.splice(lastIdx, 1);
+      }
+    } else if (!fullTag.endsWith('/>')) {
+      // Opening tag (excluding self-closing)
+      if (['b', 'i', 'code', 'blockquote', 'a', 's', 'u', 'pre'].includes(tagName)) {
+        tagStack.push(tagName);
+      }
     }
   }
+
+  // Close remaining tags in reverse order
+  while (tagStack.length > 0) {
+    const unclosed = tagStack.pop();
+    truncated += `</${unclosed}>`;
+  }
+
   return truncated;
+}
+
+// --- Tech News, Secrets & Mobile Tricks Knowledgebase & Collector Engine ---
+
+function cleanHtmlText(html: string): string {
+  if (!html) return '';
+  return html
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#8211;/g, '-')
+    .replace(/&#8212;/g, '—')
+    .replace(/&#8216;/g, "'")
+    .replace(/&#8217;/g, "'")
+    .replace(/&#8220;/g, '"')
+    .replace(/&#8221;/g, '"')
+    .replace(/&#8230;/g, '...')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function calculateTechImportance(title: string, summary: string): { importance: TechImportance; score: number } {
+  const text = `${title} ${summary}`.toLowerCase();
+  let score = 50;
+
+  // Urgent, critical or breaking indicators
+  if (/فوری|مهم|هشدار|آسیب‌پذیری|شکست امنیتی|روز صفر|zero-day|بزرگترین|انقلابی|رسمی|اعلام شد/i.test(text)) {
+    score += 35;
+  }
+  // AI and frontier intelligence
+  if (/هوش مصنوعی|chatgpt|claude|gemini|deepseek|openai|مدل زبانی|llm|ag/i.test(text)) {
+    score += 25;
+  }
+  // Mobile tricks, hidden secrets, codes
+  if (/کد مخفی|راز|ترفند|افزایش سرعت|بهینه‌سازی|باتری|دوربین|حافظه|قابلیت مخفی|تست سخت‌افزار/i.test(text)) {
+    score += 20;
+  }
+  // Telegram, privacy, cybersecurity, anti-filter
+  if (/تلگرام|پروکسی|امنیت|ضد هک|ردیابی|فیلترشکن|رمزنگاری|حریم خصوصی|dns/i.test(text)) {
+    score += 18;
+  }
+  // Major OS updates (Android 15/16, iOS 18, Windows 11)
+  if (/ios \d+|android \d+|آپدیت|نسخه جدید|به‌روزرسانی/i.test(text)) {
+    score += 15;
+  }
+
+  score = Math.min(99, Math.max(20, score));
+
+  let importance: TechImportance = 'normal';
+  if (score >= 85) importance = 'breaking';
+  else if (score >= 70) importance = 'high';
+  else if (score >= 50) importance = 'medium';
+
+  return { importance, score };
+}
+
+const SEED_TECH_ITEMS: Array<Omit<TechItem, 'id' | 'createdAt' | 'importanceScore' | 'importance'> & { importance?: TechImportance; importanceScore?: number }> = [
+  // --- Secrets (رازهای تکنولوژی و امنیت) ---
+  {
+    title: '🔐 کد مخفی تست سخت‌افزار و سلامت قطعات گوشی‌های سامسونگ و شیائومی',
+    summary: 'با شماره‌گیری کد *#0*# در سامسونگ یا *#*#6484#*#* در شیائومی، منوی مهندسی پنهان باز می‌شود که امکان تست لمس، اسپیکر، ویبره، حسگرها، دوربین و پیکسل‌سوختگی صفحه را فراهم می‌کند.',
+    category: 'secret',
+    tags: ['کد_مخفی', 'اندروید', 'سامسونگ', 'شیائومی', 'تست_گوشی'],
+    source: 'دانشنامه ترفندهای تکنولوژی',
+    importance: 'breaking',
+    importanceScore: 98
+  },
+  {
+    title: '🛡️ ترفند فعال‌سازی DNS خصوصی و رمزنگاری DoH جهت ضد فیلتر و رفع قطعی اینترنت',
+    summary: 'در تنظیمات گوشی وارد اتصالات (Connections) و بخش Private DNS شوید و آدرس dns.adguard.com یا 1dot1dot1dot1.cloudflare-dns.com را وارد کنید تا تبلیغات مزاحم مسدود شده و تاخیر پینگ کاهش یابد.',
+    category: 'secret',
+    tags: ['امنیت', 'دی_ان_اس', 'حریم_خصوصی', 'کاهش_پینگ', 'اینترنت'],
+    source: 'امنیت سایبری و شبکه',
+    importance: 'breaking',
+    importanceScore: 96
+  },
+  {
+    title: '⚡ کد مخفی منوی تست شبکه و اطلاعات پیشرفته باتری در تمام گوشی‌های اندروید',
+    summary: 'کد *#*#4636#*#* را در شماره‌گیر وارد کنید تا منوی Testing باز شود. در این بخش می‌توانید نوع شبکه تلفن را روی LTE Only قفل کنید تا از سوییچ ناخواسته به 3G جلوگیری شود.',
+    category: 'secret',
+    tags: ['کد_مخفی', 'شبکه', 'اینترنت_همراه', 'باتری', 'اندروید'],
+    source: 'دانشنامه ترفندهای تکنولوژی',
+    importance: 'high',
+    importanceScore: 92
+  },
+  {
+    title: '👁️ راز جلوگیری از ردیابی تبلیغاتی و استراق سمع میکروفون توسط اپلیکیشن‌ها',
+    summary: 'در تنظیمات گوشی به مسیر Privacy > Permission Manager بروید و دسترسی Microphone و Location در پس‌زمینه را از برنامه‌های غیرضروری لغو کنید و شناسه Advertising ID را ریست نمایید.',
+    category: 'secret',
+    tags: ['حریم_خصوصی', 'امنیت', 'ضد_جاسوسی', 'اندروید', 'آیفون'],
+    source: 'مرکز امنیت دیجیتال',
+    importance: 'high',
+    importanceScore: 88
+  },
+  {
+    title: '📡 افزایش پایداری و رفع پرش آنتن و سرعت اینترنت با بهینه‌سازی MTU و IPv6',
+    summary: 'تنظیم صحیح MTU روی عدد 1400 یا 1420 در اتصالات مودم یا کانفیگ‌های شبکه مانع از قطعه‌قطعه شدن بسته‌های داده در شبکه‌های پر اختلال می‌شود و استریم ویدیو را روان‌تر می‌سازد.',
+    category: 'secret',
+    tags: ['شبکه', 'افزایش_سرعت', 'پایداری_اینترنت', 'فناوری'],
+    source: 'آموزش تخصصی شبکه',
+    importance: 'medium',
+    importanceScore: 82
+  },
+  {
+    title: '🔍 کد جهانی استعلام اصالت، IMEI و سرقت گوشی در تمام برندها',
+    summary: 'با شماره‌گیری کد ستاره مربع صفر شش مربع (*#06#) کد ۱۵ رقمی شناسایی گوشی را دریافت کرده و در سامانه همتا جهت اصالت رجیستری و بررسی قفل اپراتور بررسی کنید.',
+    category: 'secret',
+    tags: ['کد_مخفی', 'رجیستری', 'امنیت_گوشی', 'خرید_گوشی'],
+    source: 'راهنمای امنیتی موبایل',
+    importance: 'medium',
+    importanceScore: 78
+  },
+
+  // --- Tricks (ترفندهای آموزشی گوشی و اپلیکیشن‌ها) ---
+  {
+    title: '🚀 ترفند افزایش ۲ برابری سرعت عملکرد و انیمیشن‌های اندروید',
+    summary: 'وارد Developer Options (با ۷ بار لمس Build Number در About Phone) شوید و مقادیر Window animation scale، Transition animation scale و Animator duration scale را از 1x به 0.5x تغییر دهید.',
+    category: 'trick',
+    tags: ['ترفند_موبایل', 'افزایش_سرعت', 'اندروید', 'بهینه‌سازی'],
+    source: 'آموزش‌های کاربردی تکنولوژی',
+    importance: 'breaking',
+    importanceScore: 95
+  },
+  {
+    title: '🔋 راز افزایش طول عمر باتری با تکنیک طلایی قانون ۲۰ تا ۸۰ درصد',
+    summary: 'تخلیه کامل باتری تا ۰٪ یا شارژ مدام تا ۱۰۰٪ چرخه عمر باتری‌های لیتیوم‌یونی را سریع فرسوده می‌کند. نگه داشتن شارژ بین ۲۰٪ تا ۸۰٪ و فعال کردن Protect Battery عمر باتری را دو برابر می‌کند.',
+    category: 'trick',
+    tags: ['باتری', 'سلامت_گوشی', 'ترفند_موبایل', 'شارژ_سریع'],
+    source: 'تکنولوژی و سخت‌افزار',
+    importance: 'high',
+    importanceScore: 90
+  },
+  {
+    title: '🧹 پاکسازی کش و بهینه‌سازی دیتابیس محلی تلگرام جهت رفع کندی بدون پاک شدن چت‌ها',
+    summary: 'در تلگرام به Settings > Data and Storage > Storage Usage بروید. گزینه Auto-Remove Cached Media را روی ۳ روز قرار داده و با دکمه Clear Cache حافظه چند گیگابایتی اشغال شده را آزاد کنید.',
+    category: 'trick',
+    tags: ['تلگرام', 'ترفند_تلگرام', 'پاکسازی_حافظه', 'سرعت_گوشی'],
+    source: 'ترفندهای تلگرام',
+    importance: 'high',
+    importanceScore: 92
+  },
+  {
+    title: '🔊 ترفند خارج کردن آب و گردوغبار از اسپیکر گوشی با فرکانس صوتی ۱۶۵ هرتز',
+    summary: 'اگر گوشی در آب افتاده یا صدای اسپیکر بم شده، با پخش صدای فرکانس ۱۶۵ هرتز (سایت FixMySpeakers) لرزش شدید دیافراگم قطرات آب و ذرات غبار را بدون باز کردن گوشی خارج می‌کند.',
+    category: 'trick',
+    tags: ['ترفند_موبایل', 'نجات_گوشی', 'تعمیرات', 'کاربردی'],
+    source: 'ترفندهای اضطراری موبایل',
+    importance: 'high',
+    importanceScore: 89
+  },
+  {
+    title: '📱 لمس دوتایی پشت آیفون و اندروید (Back Tap) برای اسکرین‌شات و چراغ‌قوه',
+    summary: 'در آیفون (Accessibility > Touch > Back Tap) یا در اندروید با فعال‌سازی Quick Tap، می‌توانید با ۲ یا ۳ بار ضربه به قاب پشت گوشی بدون لمس صفحه اسکرین‌شات بگیرید یا چراغ‌قوه را روشن کنید.',
+    category: 'trick',
+    tags: ['آیفون', 'اندروید', 'ترفند_کاربردی', 'میانبر'],
+    source: 'ترفندهای روز موبایل',
+    importance: 'medium',
+    importanceScore: 84
+  },
+  {
+    title: '🎙️ تایپ صوتی فوق‌سریع فارسی و انگلیسی با هوش مصنوعی Gboard',
+    summary: 'در کیبورد گوگل روی آیکون میکروفون بزنید؛ هوش مصنوعی آفلاین گوگل علائم نگارشی مانند نقطه، کاما و علامت سوال را نیز با بیان نام آن‌ها به صورت خودکار تایپ می‌کند.',
+    category: 'trick',
+    tags: ['هوش_مصنوعی', 'تایپ_صوتی', 'کیبورد', 'اندروید'],
+    source: 'آموزش‌های کاربردی تکنولوژی',
+    importance: 'medium',
+    importanceScore: 80
+  },
+
+  // --- News (اخبار داغ و مهم تکنولوژی) ---
+  {
+    title: '🔥 تحول بزرگ در دنیای هوش مصنوعی با انتشار مدل‌های استدلال عمیق و چندوجهی',
+    summary: 'نسل جدید مدل‌های هوش مصنوعی با قابلیت پردازش چندوجهی صوت، تصویر و استدلال گام‌به‌گام در حل مسائل پیچیده برنامه‌نویسی و تحلیل داده به استاندارد جدیدی در صنعت فناوری تبدیل شده‌اند.',
+    category: 'news',
+    tags: ['هوش_مصنوعی', 'فناوری_روز', 'تحول_دیجیتال', 'اخبار_فناوری'],
+    source: 'اخبار فناوری و هوش مصنوعی',
+    importance: 'breaking',
+    importanceScore: 97
+  },
+  {
+    title: '🚨 هشدار امنیتی اضطراری: آپدیت فوری مرورگرها و سیستم‌عامل‌ها جهت رفع باگ روز صفر',
+    summary: 'محققان امنیتی نقص امنیتی بحرانی در موتورهای وب‌کیت و کرومیوم شناسایی کرده‌اند که امکان اجرای کد از راه دور را می‌داد. نصب آخرین بروزرسانی‌های امنیتی اکیداً توصیه شده است.',
+    category: 'news',
+    tags: ['امنیت_سایبری', 'هشدار_فوری', 'آپدیت_امنیتی', 'کروم'],
+    source: 'دیده‌بان امنیت دیجیتال',
+    importance: 'breaking',
+    importanceScore: 95
+  },
+  {
+    title: '🛰️ فراگیر شدن اتصال مستقیم ماهواره‌ای گوشی‌ها برای پیام‌رسانی و تماس اضطراری',
+    summary: 'نسل جدید گوشی‌های هوشمند پرچمدار و میان‌رده به فناوری اتصال مستقیم ماهواره‌ای مجهز شده‌اند تا در مناطق بدون پوشش شبکه سلولی امکان ارسال موقعیت و پیام اضطراری فراهم باشد.',
+    category: 'news',
+    tags: ['ماهواره', 'اینترنت_ماهواره‌ای', 'موبایل', 'اخبار_فناوری'],
+    source: 'اخبار ارتباطات و ماهواره',
+    importance: 'high',
+    importanceScore: 91
+  },
+  {
+    title: '📶 تجاری‌سازی استاندارد Wi-Fi 7 با پهنای باند ۳۲۰ مگاهرتز و تاخیر نزدیک به صفر',
+    summary: 'روترها و دستگاه‌های مجهز به Wi-Fi 7 با ترکیب باندهای فرکانسی ۲.۴، ۵ و ۶ گیگاهرتز سرعتی تا ۴ برابر وای‌فای ۶ ارائه داده و قطعی ناشی از نویز در منازل را به حداقل می‌رسانند.',
+    category: 'news',
+    tags: ['وای_فای', 'اینترنت', 'سخت_افزار', 'اخبار_تکنولوژی'],
+    source: 'اخبار سخت‌افزار و شبکه',
+    importance: 'high',
+    importanceScore: 87
+  }
+];
+
+// Helper to seed or refresh initial curated tech items
+function seedCuratedTechItems() {
+  if (!db.techItems) db.techItems = [];
+  const existingTitles = new Set(db.techItems.map(i => i.title.trim()));
+
+  for (const item of SEED_TECH_ITEMS) {
+    if (!existingTitles.has(item.title.trim())) {
+      const impCalc = calculateTechImportance(item.title, item.summary);
+      db.techItems.push({
+        id: `tech-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        title: item.title,
+        summary: item.summary,
+        category: item.category,
+        tags: item.tags || ['تکنولوژی'],
+        source: item.source || 'دانشنامه فناوری',
+        sourceUrl: item.sourceUrl,
+        importance: item.importance || impCalc.importance,
+        importanceScore: item.importanceScore || impCalc.score,
+        createdAt: new Date().toISOString(),
+        postedToChannel: false,
+        postedAt: null
+      });
+      existingTitles.add(item.title.trim());
+    }
+  }
+}
+
+// Auto Purge old items older than X days (default: 2 days)
+function purgeOldTechItems(maxDays: number = 2): number {
+  if (!db.techItems || db.techItems.length === 0) return 0;
+  const days = Math.max(1, maxDays);
+  const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+  const initialCount = db.techItems.length;
+
+  db.techItems = db.techItems.filter(item => {
+    const itemTime = new Date(item.createdAt).getTime();
+    if (isNaN(itemTime)) return true;
+    // Retain if within cutoff period
+    if (itemTime >= cutoff) return true;
+    // Retain breaking unposted items
+    if (item.importance === 'breaking' && !item.postedToChannel) return true;
+    return false;
+  });
+
+  const purgedCount = initialCount - db.techItems.length;
+  if (purgedCount > 0) {
+    saveDatabase();
+    addLog('info', `🧹 تعداد ${purgedCount} خبر/ترفند قدیمی تکنولوژی (بیشتر از ${days} روز) پاکسازی شدند.`);
+  }
+  return purgedCount;
+}
+
+// Fetch from RSS Feeds
+async function fetchLiveTechFromRss(): Promise<number> {
+  const RSS_FEEDS = [
+    { url: 'https://digiato.com/feed', name: 'Digiato' },
+    { url: 'https://www.zoomit.ir/feed/', name: 'Zoomit' },
+    { url: 'https://gadgetnews.net/feed/', name: 'GadgetNews' },
+    { url: 'https://farnet.io/feed/', name: 'Farnet' }
+  ];
+
+  let addedCount = 0;
+  if (!db.techItems) db.techItems = [];
+  const existingTitles = new Set(db.techItems.map(i => i.title.trim()));
+
+  for (const feed of RSS_FEEDS) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 9000);
+
+      const resp = await fetch(feed.url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+        }
+      });
+      clearTimeout(timeoutId);
+
+      if (!resp.ok) continue;
+      const xmlText = await resp.text();
+      if (!xmlText || xmlText.length < 50) continue;
+
+      const itemBlocks = xmlText.match(/<(?:item|entry)[\s\S]*?<\/(?:item|entry)>/gi) || [];
+      for (const block of itemBlocks.slice(0, 15)) {
+        const titleMatch = block.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        const rawTitle = cleanHtmlText(titleMatch ? titleMatch[1] : '');
+        if (!rawTitle || rawTitle.length < 10) continue;
+
+        if (existingTitles.has(rawTitle)) continue;
+
+        const descMatch = block.match(/<(?:description|summary|content:encoded|content)[^>]*>([\s\S]*?)<\/(?:description|summary|content:encoded|content)>/i);
+        let summary = cleanHtmlText(descMatch ? descMatch[1] : '');
+        if (summary.length > 280) {
+          summary = summary.substring(0, 277) + '...';
+        }
+        if (!summary) summary = rawTitle;
+
+        let link = '';
+        const linkMatch = block.match(/<link[^>]*>([\s\S]*?)<\/link>/i);
+        if (linkMatch && linkMatch[1]) {
+          link = cleanHtmlText(linkMatch[1]);
+        } else {
+          const hrefMatch = block.match(/<link[^>]*href=["']([^"']+)["']/i);
+          if (hrefMatch) link = hrefMatch[1];
+        }
+
+        const dateMatch = block.match(/<(?:pubDate|published|updated|dc:date)[^>]*>([\s\S]*?)<\/(?:pubDate|published|updated|dc:date)>/i);
+        let pubDate = new Date().toISOString();
+        if (dateMatch && dateMatch[1]) {
+          const d = new Date(dateMatch[1]);
+          if (!isNaN(d.getTime())) pubDate = d.toISOString();
+        }
+
+        // Categorize based on keywords
+        let category: TechItemCategory = 'news';
+        if (/ترفند|آموزش|چگونه|روش|راهکار|حل مشکل|کد مخفی/i.test(rawTitle)) {
+          category = 'trick';
+        } else if (/راز|پنهان|امنیت|جاسوسی|هک|ضد هک|حریم خصوصی/i.test(rawTitle)) {
+          category = 'secret';
+        }
+
+        const { importance, score } = calculateTechImportance(rawTitle, summary);
+
+        // Tags
+        const tags: string[] = ['تکنولوژی', feed.name];
+        if (category === 'trick') tags.push('ترفند_موبایل');
+        if (category === 'secret') tags.push('راز_تکنولوژی', 'امنیت');
+        if (score >= 85) tags.push('خبر_فوری');
+
+        db.techItems.push({
+          id: `tech-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          title: rawTitle,
+          summary,
+          category,
+          tags,
+          source: feed.name,
+          sourceUrl: link || undefined,
+          importance,
+          importanceScore: score,
+          createdAt: pubDate,
+          postedToChannel: false,
+          postedAt: null
+        });
+
+        existingTitles.add(rawTitle);
+        addedCount++;
+      }
+    } catch (e: any) {
+      // Ignore individual feed errors
+    }
+  }
+
+  // Sort techItems by importanceScore descending and recency
+  if (db.techItems && db.techItems.length > 0) {
+    db.techItems.sort((a, b) => (b.importanceScore || 50) - (a.importanceScore || 50));
+  }
+
+  return addedCount;
+}
+
+// Master refresh function that seeds, fetches fresh RSS, purges old and saves
+async function refreshTechContentAndPurgeOld(force = false): Promise<{ added: number; purged: number; total: number }> {
+  seedCuratedTechItems();
+  const maxDays = db.settings.autoPost.autoPurgeOldTechDays || 2;
+  const purged = purgeOldTechItems(maxDays);
+  const added = await fetchLiveTechFromRss();
+
+  if (added > 0 || purged > 0 || force) {
+    saveDatabase();
+    if (added > 0) {
+      addLog('info', `📰 بروزرسانی اخبار و ترفندهای تکنولوژی: ${added} مطلب جدید دریافت شد.`);
+    }
+  }
+
+  return {
+    added,
+    purged,
+    total: db.techItems ? db.techItems.length : 0
+  };
+}
+
+// Helper to format a tech item cleanly for Telegram
+function formatTechItemForTelegram(item: TechItem, showBadge = true): string {
+  let badgeEmoji = '💡';
+  let badgeTitle = 'ترفند تکنولوژی';
+  if (item.category === 'news') {
+    badgeEmoji = item.importance === 'breaking' ? '🔥' : '📰';
+    badgeTitle = item.importance === 'breaking' ? 'خبر فوری' : 'خبر فناوری';
+  } else if (item.category === 'secret') {
+    badgeEmoji = '🔐';
+    badgeTitle = 'راز تکنولوژی و امنیت';
+  } else if (item.category === 'trick') {
+    badgeEmoji = '📱';
+    badgeTitle = 'ترفند و آموزش موبایل';
+  }
+
+  let text = '';
+  if (showBadge) {
+    text += `${badgeEmoji} <b>[${badgeTitle}] ${escapeHtml(item.title)}</b>\n`;
+  } else {
+    text += `🔹 <b>${escapeHtml(item.title)}</b>\n`;
+  }
+  
+  if (item.summary) {
+    text += `▫️ ${escapeHtml(item.summary)}\n`;
+  }
+
+  if (item.tags && item.tags.length > 0) {
+    const formattedTags = item.tags
+      .slice(0, 4)
+      .map(t => `#${t.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '')}`)
+      .join(' ');
+    text += `🏷 <i>${formattedTags}</i>\n`;
+  }
+
+  return text;
+}
+
+// Standalone Tech Post Dispatcher
+async function executeStandaloneTechPost(targetChannel: string, items: TechItem[]): Promise<boolean> {
+  if (!items || items.length === 0) return false;
+  try {
+    let msg = `✨ <b>دانشنامه و تازه‌های دنیای تکنولوژی و ترفندها:</b>\n\n`;
+    
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      msg += formatTechItemForTelegram(it, true);
+      if (i < items.length - 1) msg += `\n───────────────\n\n`;
+    }
+
+    msg += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
+
+    const inlineButtons: any[] = [];
+    const sponsorBtn = getSponsorChannelInlineButton();
+    if (sponsorBtn) {
+      inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url, style: 'primary' }]);
+    }
+    const botUser = db.settings.botUsername;
+    if (botUser) {
+      inlineButtons.push([{
+        text: '🤖 دسترسی به ترفندها و کانفیگ‌های بیشتر',
+        url: `https://t.me/${botUser.replace('@', '')}`
+      }]);
+    }
+
+    const safeText = safeTelegramHtmlLength(msg, 3900);
+    const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
+    
+    await callTelegramApi('sendMessage', {
+      chat_id: channelHandle,
+      text: safeText,
+      parse_mode: 'HTML',
+      reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+      disable_notification: !!db.settings.autoPost.silentMode
+    });
+
+    for (const it of items) {
+      it.postedToChannel = true;
+      it.postedAt = new Date().toISOString();
+    }
+    saveDatabase();
+    return true;
+  } catch (e: any) {
+    addLog('error', `خطا در ارسال پست مستقل ترفندهای تکنولوژی: ${e.message}`);
+    return false;
+  }
 }
 
 // --- Auto-Posting Logic ---
@@ -2697,8 +3237,32 @@ async function executeAutoPost(): Promise<boolean> {
     const shuffledProxies = [...availableProxies].sort(() => 0.5 - Math.random());
     const selectedProxies = proxyLimit === 0 ? [] : shuffledProxies.slice(0, Math.min(proxyLimit, shuffledProxies.length));
 
-    if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
-      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ یا پروکسی در دیتابیس یافت نشد. لطفاً از منوی استخراج، منابع را بروزرسانی نمایید.');
+    // Get requested tech items count
+    seedCuratedTechItems();
+    const rawTechNewsCount = typeof settings.techNewsCount === 'number' ? settings.techNewsCount : 0;
+    const techNewsLimit = !isNaN(rawTechNewsCount) && rawTechNewsCount >= 0 ? rawTechNewsCount : 0;
+
+    const rawTechTricksCount = typeof settings.techTricksCount === 'number' ? settings.techTricksCount : 0;
+    const techTricksLimit = !isNaN(rawTechTricksCount) && rawTechTricksCount >= 0 ? rawTechTricksCount : 0;
+
+    const allTech = db.techItems || [];
+    // Prioritize unposted items, then highest importance score, then newest
+    const sortTechFn = (a: TechItem, b: TechItem) => {
+      if (a.postedToChannel !== b.postedToChannel) {
+        return a.postedToChannel ? 1 : -1;
+      }
+      return (b.importanceScore || 50) - (a.importanceScore || 50);
+    };
+
+    const newsCandidates = allTech.filter(i => i.category === 'news').sort(sortTechFn);
+    const tricksCandidates = allTech.filter(i => i.category === 'trick' || i.category === 'secret').sort(sortTechFn);
+
+    const selectedTechNews = techNewsLimit > 0 ? newsCandidates.slice(0, techNewsLimit) : [];
+    const selectedTechTricks = techTricksLimit > 0 ? tricksCandidates.slice(0, techTricksLimit) : [];
+    const selectedTechItems = [...selectedTechNews, ...selectedTechTricks];
+
+    if (selectedConfigs.length === 0 && selectedProxies.length === 0 && selectedTechItems.length === 0) {
+      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ، پروکسی یا مطلب تکنولوژی برای ارسال انتخاب نشده است.');
       return false;
     }
 
@@ -2767,7 +3331,16 @@ async function executeAutoPost(): Promise<boolean> {
         const pType = (proxy.type || 'MTPROTO').toUpperCase();
         text += `🔹 پروکسی ${pType} | ${pingText} | ${loc.country} ${flag}\n`;
       }
-      text += `\n👇 برای اتصال به پروکسی‌ها، روی دکمه‌های شیشه‌ای زیر کلیک کنید:\n`;
+      text += `\n👇 برای اتصال به پروکسی‌ها، روی دکمه‌های شیشه‌ای زیر کلیک کنید:\n\n`;
+    }
+
+    // Append Tech News and Educational Mobile Tricks (if combined mode or default)
+    const isStandaloneOnly = settings.techPostMode === 'standalone';
+    if (!isStandaloneOnly && selectedTechItems.length > 0) {
+      text += `💡 <b>دانشنامه و تازه‌های دنیای تکنولوژی و ترفندها:</b>\n\n`;
+      for (const it of selectedTechItems) {
+        text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false) + '\n';
+      }
     }
 
     if (needsFullPackFile) {
@@ -2780,16 +3353,18 @@ async function executeAutoPost(): Promise<boolean> {
     selectedProxies.forEach((p, idx) => {
       const pType = (p.type || 'MTPROTO').toUpperCase();
       const label = `🔌 اتصال به پروکسی ${pType} شماره ${idx + 1}`;
-      inlineButtons.push([{
-        text: label,
-        url: p.raw,
-        style: 'success'
-      }]);
+      const validUrl = formatProxyTelegramUrl(p);
+      if (validUrl) {
+        inlineButtons.push([{
+          text: label,
+          url: validUrl
+        }]);
+      }
     });
 
     const sponsorBtn = getSponsorChannelInlineButton();
     if (sponsorBtn) {
-      inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url, style: 'primary' }]);
+      inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url }]);
     }
 
     // Add bot advertisement button
@@ -2914,9 +3489,28 @@ async function executeAutoPost(): Promise<boolean> {
       repliedMessageId: null
     });
 
+    // Mark selected tech items as posted
+    for (const t of selectedTechItems) {
+      t.postedToChannel = true;
+      t.postedAt = new Date().toISOString();
+    }
+
+    // If techPostMode is standalone or both, also dispatch standalone educational post
+    if ((settings.techPostMode === 'standalone' || settings.techPostMode === 'both') && selectedTechItems.length > 0) {
+      await executeStandaloneTechPost(channelHandle, selectedTechItems);
+    }
+
     settings.lastPostedAt = new Date().toISOString();
     saveDatabase();
-    addLog('success', `پست خودکار با موفقیت به کانال ${settings.targetChannel} ارسال گردید (${selectedConfigs.length} کانفیگ، ${selectedProxies.length} پروکسی).`);
+    
+    let summaryText = `پست خودکار با موفقیت به کانال ${settings.targetChannel} ارسال گردید`;
+    const parts: string[] = [];
+    if (selectedConfigs.length > 0) parts.push(`${selectedConfigs.length} کانفیگ`);
+    if (selectedProxies.length > 0) parts.push(`${selectedProxies.length} پروکسی`);
+    if (selectedTechItems.length > 0) parts.push(`${selectedTechItems.length} ترفند/خبر تکنولوژی`);
+    if (parts.length > 0) summaryText += ` (${parts.join('، ')})`;
+
+    addLog('success', summaryText + '.');
     return true;
   } catch (err: any) {
     addLog('error', `خطا در ارسال پست خودکار به کانال: ${err.message || err}`);
@@ -3043,28 +3637,19 @@ async function monitorChannelPosts() {
         if (status === 'working') {
           const pType = (p.type || 'MTPROTO').toUpperCase();
           const label = `🔌 اتصال به پروکسی ${pType} شماره ${p.index || (idx + 1)}`;
-          inlineButtons.push([{
-            text: label,
-            url: p.raw,
-            style: 'success'
-          }]);
+          const validUrl = formatProxyTelegramUrl(p);
+          if (validUrl) {
+            inlineButtons.push([{
+              text: label,
+              url: validUrl
+            }]);
+          }
         }
       });
 
-      const ap = db.settings.autoPost;
-      if (ap.adText && ap.adText.trim() !== '') {
-        let adUrl = 'https://t.me';
-        let adLabel = ap.adText;
-        if (ap.adText.includes('@')) {
-          const handle = ap.adText.match(/@[a-zA-Z0-9_]+/)?.[0]?.replace('@', '');
-          if (handle) {
-            adUrl = `https://t.me/${handle}`;
-            adLabel = `📢 عضویت در کانال اسپانسر: ${ap.adText}`;
-          }
-        } else if (ap.adText.startsWith('http')) {
-          adUrl = ap.adText;
-        }
-        inlineButtons.push([{ text: adLabel, url: adUrl, style: 'primary' }]);
+      const sponsorBtn = getSponsorChannelInlineButton();
+      if (sponsorBtn) {
+        inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url }]);
       }
 
       // Add bot advertisement button
@@ -3240,11 +3825,25 @@ async function sendBackupToAdmin(includeConfigsAndFiles: boolean = false): Promi
 /**
  * Helper to get sponsor or branding telegram channel button.
  */
-function getSponsorChannelInlineButton() {
+function getSponsorChannelInlineButton(): { text: string; url: string } | null {
+  // First check if explicit adText is configured in autoPost
+  const ap = db.settings?.autoPost;
+  if (ap?.adText && ap.adText.trim()) {
+    const text = ap.adText.trim();
+    if (text.includes('@')) {
+      const handleMatch = text.match(/@[a-zA-Z0-9_]+/);
+      const handle = handleMatch ? handleMatch[0].replace('@', '') : '';
+      if (handle) {
+        return { text: `📢 عضویت در کانال اسپانسر: ${text}`, url: `https://t.me/${handle}` };
+      }
+    } else if (text.startsWith('http://') || text.startsWith('https://')) {
+      return { text: `📢 مشاهده لینک اسپانسر`, url: text };
+    }
+  }
+
   // Check if there are active force join channels
-  const activeFj = db.forceJoinChannels.find(c => c.enabled && c.username);
+  const activeFj = db.forceJoinChannels?.find(c => c.enabled && c.username);
   if (!activeFj) {
-    // If no active force join channels are added/configured, do not show any sponsor button.
     return null;
   }
 
@@ -5018,6 +5617,8 @@ async function handleBotUpdate(update: any) {
         msg += `بازه زمانی ارسال: **هر ${ap.postIntervalHours} ساعت**\n`;
         msg += `تعداد کانفیگ ویتوری: **${ap.configCount} عدد**\n`;
         msg += `تعداد پروکسی تلگرام: **${ap.proxyCount} عدد**\n`;
+        msg += `اخبار تکنولوژی: **${ap.techNewsCount || 0} عدد**\n`;
+        msg += `رازها و ترفندهای موبایل: **${ap.techTricksCount || 0} عدد**\n`;
         msg += `ارسال بدون صدا (Silent): **${ap.silentMode ? '🟢 فعال' : '🔴 غیرفعال'}**\n`;
         msg += `آخرین ارسال موفق: **${ap.lastPostedAt ? new Date(ap.lastPostedAt).toLocaleString('fa-IR') : 'هنوز ارسالی ثبت نشده'}**\n\n`;
         msg += `تنظیمات زیر را ویرایش کنید:`;
@@ -5036,11 +5637,16 @@ async function handleBotUpdate(update: any) {
             { text: `🔌 پروکسی: ${ap.proxyCount} عدد`, callback_data: 'admin_ap_proxy_count' }
           ],
           [
-            { text: `✍️ تغییر متن اصلی پست`, callback_data: 'admin_ap_edit_text' },
-            { text: `📢 ویرایش تبلیغات (Sponsor Ad)`, callback_data: 'admin_ap_edit_ad' }
+            { text: `📰 اخبار تکنولوژی: ${ap.techNewsCount || 0} عدد`, callback_data: 'admin_ap_tech_news_count' },
+            { text: `💡 ترفند و راز: ${ap.techTricksCount || 0} عدد`, callback_data: 'admin_ap_tech_tricks_count' }
           ],
           [
-            { text: `🚀 ارسال فوری همین حالا (تست)`, callback_data: 'admin_ap_trigger' }
+            { text: `🔄 بروزرسانی فوری اخبار و ترفندها`, callback_data: 'admin_ap_refresh_tech' },
+            { text: `✍️ تغییر متن اصلی`, callback_data: 'admin_ap_edit_text' }
+          ],
+          [
+            { text: `📢 ویرایش تبلیغات (Sponsor Ad)`, callback_data: 'admin_ap_edit_ad' },
+            { text: `🚀 ارسال فوری تست`, callback_data: 'admin_ap_trigger' }
           ],
           [{ text: '🔙 بازگشت به منوی مدیریت', callback_data: 'admin_menu' }]
         ];
@@ -5229,6 +5835,82 @@ async function handleBotUpdate(update: any) {
         saveDatabase();
         await answerCallback(`تعداد پروکسی به ${count} عدد تغییر یافت.`);
         await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
+        return;
+      }
+
+      if (callbackData === 'admin_ap_tech_news_count') {
+        const keyboard = [
+          [
+            { text: '0 (غیرفعال)', callback_data: 'admin_ap_set_technews_0' },
+            { text: '1 عدد', callback_data: 'admin_ap_set_technews_1' },
+            { text: '2 عدد', callback_data: 'admin_ap_set_technews_2' }
+          ],
+          [
+            { text: '3 عدد', callback_data: 'admin_ap_set_technews_3' },
+            { text: '5 عدد', callback_data: 'admin_ap_set_technews_5' }
+          ],
+          [{ text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }]
+        ];
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: '📰 **انتخاب تعداد اخبار تکنولوژی جهت ارسال در هر پست:**',
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        await answerCallback();
+        return;
+      }
+
+      if (callbackData.startsWith('admin_ap_set_technews_')) {
+        const count = parseInt(callbackData.replace('admin_ap_set_technews_', '')) || 0;
+        db.settings.autoPost.techNewsCount = count;
+        saveDatabase();
+        await answerCallback(`تعداد اخبار تکنولوژی به ${count} عدد تنظیم شد.`);
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
+        return;
+      }
+
+      if (callbackData === 'admin_ap_tech_tricks_count') {
+        const keyboard = [
+          [
+            { text: '0 (غیرفعال)', callback_data: 'admin_ap_set_techtricks_0' },
+            { text: '1 عدد', callback_data: 'admin_ap_set_techtricks_1' },
+            { text: '2 عدد', callback_data: 'admin_ap_set_techtricks_2' }
+          ],
+          [
+            { text: '3 عدد', callback_data: 'admin_ap_set_techtricks_3' },
+            { text: '5 عدد', callback_data: 'admin_ap_set_techtricks_5' }
+          ],
+          [{ text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }]
+        ];
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: '💡 **انتخاب تعداد رازها و ترفندهای آموزشی موبایل/تکنولوژی جهت ارسال:**',
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        await answerCallback();
+        return;
+      }
+
+      if (callbackData.startsWith('admin_ap_set_techtricks_')) {
+        const count = parseInt(callbackData.replace('admin_ap_set_techtricks_', '')) || 0;
+        db.settings.autoPost.techTricksCount = count;
+        saveDatabase();
+        await answerCallback(`تعداد ترفندهای آموزشی به ${count} عدد تنظیم شد.`);
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
+        return;
+      }
+
+      if (callbackData === 'admin_ap_refresh_tech') {
+        await answerCallback('🔄 در حال دریافت جدیدترین اخبار و ترفندها...', true);
+        const added = await refreshTechContentAndPurgeOld();
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `✅ **بروزرسانی محتوای تکنولوژی انجام شد!**\n\nتعداد ${added} مطلب تازه جمع‌آوری گردید و مطالب قدیمی پالایش شدند. کل مطالب فعال: **${(db.techItems || []).length}**`,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به تنظیمات ارسال', callback_data: 'admin_autopost_menu' }]] }
+        });
         return;
       }
 
@@ -6152,6 +6834,11 @@ function setupIntervals() {
     }
   }, 15000);
 
+  // Auto refresh Tech News/Tricks content & purge old items every 6 hours
+  setInterval(() => {
+    refreshTechContentAndPurgeOld().catch(err => console.error('Tech auto-refresh error:', err));
+  }, 6 * 60 * 60 * 1000);
+
   // Set up auto post interval
   setupAutoPostInterval();
 
@@ -6159,7 +6846,8 @@ function setupIntervals() {
   setTimeout(() => {
     monitorChannelPosts();
     checkAndTriggerBackup();
-  }, 10 * 1000);
+    refreshTechContentAndPurgeOld().catch(() => {});
+  }, 5 * 1000);
 }
 
 // Initialize background schedules
@@ -6768,18 +7456,40 @@ async function startExpressServer() {
   // API: Save Auto-Post settings
   app.post('/api/settings/auto-post', (req, res) => {
     try {
-      const { enabled, targetChannel, postIntervalHours, configCount, proxyCount, customText, adText, silentMode, postFiles } = req.body;
+      const { 
+        enabled, 
+        targetChannel, 
+        postIntervalHours, 
+        configCount, 
+        proxyCount, 
+        customText, 
+        adText, 
+        silentMode, 
+        postFiles,
+        techNewsCount,
+        techTricksCount,
+        techPostMode,
+        autoPurgeOldTechDays,
+        includeTechImportanceBadge
+      } = req.body;
       
       db.settings.autoPost = {
+        ...DEFAULT_AUTO_POST,
+        ...db.settings.autoPost,
         enabled: !!enabled,
         targetChannel: targetChannel || '',
         postIntervalHours: Number(postIntervalHours) || 4,
-        configCount: typeof configCount !== 'undefined' && !isNaN(Number(configCount)) ? Number(configCount) : 1,
-        proxyCount: typeof proxyCount !== 'undefined' && !isNaN(Number(proxyCount)) ? Number(proxyCount) : 1,
+        configCount: typeof configCount !== 'undefined' && !isNaN(Number(configCount)) ? Math.max(0, Number(configCount)) : 5,
+        proxyCount: typeof proxyCount !== 'undefined' && !isNaN(Number(proxyCount)) ? Math.max(0, Number(proxyCount)) : 0,
         customText: customText || '',
         adText: adText || '',
         postFiles: !!postFiles,
         silentMode: !!silentMode,
+        techNewsCount: typeof techNewsCount !== 'undefined' && !isNaN(Number(techNewsCount)) ? Math.max(0, Number(techNewsCount)) : 0,
+        techTricksCount: typeof techTricksCount !== 'undefined' && !isNaN(Number(techTricksCount)) ? Math.max(0, Number(techTricksCount)) : 0,
+        techPostMode: techPostMode || 'combined',
+        autoPurgeOldTechDays: Number(autoPurgeOldTechDays) || 7,
+        includeTechImportanceBadge: includeTechImportanceBadge !== false,
         lastPostedAt: db.settings.autoPost?.lastPostedAt || null
       };
 
@@ -6791,6 +7501,73 @@ async function startExpressServer() {
       
       res.json({ success: true, autoPost: db.settings.autoPost });
     } catch(err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Get Tech Items
+  app.get('/api/tech-items', (req, res) => {
+    seedCuratedTechItems();
+    res.json(db.techItems || []);
+  });
+
+  // API: Refresh Tech Content (Fetch RSS & Purge old)
+  app.post('/api/tech-items/refresh', async (req, res) => {
+    try {
+      const added = await refreshTechContentAndPurgeOld();
+      res.json({ success: true, addedCount: added, totalCount: (db.techItems || []).length });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Add Custom Tech Item
+  app.post('/api/tech-items', (req, res) => {
+    try {
+      const { title, summary, category, importance } = req.body;
+      if (!title || !summary) {
+        return res.status(400).json({ success: false, message: 'عنوان و متن ترفند یا خبر الزامی است.' });
+      }
+      const calc = calculateTechImportance(title, summary);
+      const cat = category === 'news' || category === 'trick' || category === 'secret' ? category : 'trick';
+      const imp = (importance || calc.importance) as TechImportance;
+
+      const newItem: TechItem = {
+        id: generateId(),
+        title: title.trim(),
+        summary: summary.trim(),
+        category: cat,
+        importance: imp,
+        importanceScore: calc.score,
+        source: 'مدیریت دستی',
+        tags: ['تکنولوژی', cat === 'trick' ? 'ترفند_موبایل' : cat === 'secret' ? 'راز_تکنولوژی' : 'اخبار_فناوری'],
+        createdAt: new Date().toISOString(),
+        postedToChannel: false,
+        postedAt: null
+      };
+
+      if (!db.techItems) db.techItems = [];
+      db.techItems.unshift(newItem);
+      saveDatabase();
+      addLog('success', `مطلب تکنولوژی جدید افزوده شد: ${newItem.title}`);
+      res.json({ success: true, item: newItem });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Delete Tech Item
+  app.delete('/api/tech-items/:id', (req, res) => {
+    try {
+      const { id } = req.params;
+      const idx = (db.techItems || []).findIndex(t => t.id === id);
+      if (idx === -1) {
+        return res.status(404).json({ success: false, message: 'مطلب یافت نشد.' });
+      }
+      db.techItems.splice(idx, 1);
+      saveDatabase();
+      res.json({ success: true });
+    } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
   });
