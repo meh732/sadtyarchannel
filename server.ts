@@ -216,6 +216,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   lastBackupAt: null,
   botConnectionMode: 'polling',
   publicUrl: DEFAULT_KNOWN_APP_URL,
+  adminPassword: process.env.ADMIN_PASSWORD || 'admin',
   maxConfigsRetention: 2000
 };
 
@@ -7221,6 +7222,105 @@ async function startExpressServer() {
   app.use(express.json({ limit: '250mb' }));
   app.use(express.urlencoded({ limit: '250mb', extended: true }));
 
+  // --- Admin Access Authentication Layer ---
+  function verifyToken(token: string): boolean {
+    if (!token) return false;
+    
+    // Direct comparison fallback (matches raw admin password)
+    const adminPass = db.settings.adminPassword || 'admin';
+    if (token === adminPass) return true;
+    
+    try {
+      const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
+      if (decoded && decoded.isAdmin === true && decoded.expires > Date.now()) {
+        return true;
+      }
+    } catch {
+      // Ignore errors
+    }
+    return false;
+  }
+  
+  function generateAdminToken(): string {
+    const expires = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days expiry
+    return Buffer.from(JSON.stringify({ isAdmin: true, expires })).toString('base64');
+  }
+
+  // Middleware to enforce admin authorization on all /api routes (except auth and webhook)
+  app.use((req, res, next) => {
+    const publicPaths = [
+      '/api/health',
+      '/api/app-url',
+      '/api/auth/login',
+      '/api/auth/telegram-login',
+      '/api/telegram-webhook'
+    ];
+    
+    if (publicPaths.includes(req.path)) {
+      return next();
+    }
+    
+    // Allow regular users to read configs, proxies, tech items, and vpn files list
+    const publicGetPaths = [
+      '/api/configs',
+      '/api/proxies',
+      '/api/tech-items',
+      '/api/vpn-files'
+    ];
+    if (req.method === 'GET' && publicGetPaths.includes(req.path)) {
+      return next();
+    }
+    
+    // Only protect endpoints starting with /api/
+    if (!req.path.startsWith('/api/')) {
+      return next();
+    }
+    
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'دسترسی غیرمجاز. لطفا ابتدا وارد پنل شوید.' });
+    }
+    
+    const token = authHeader.substring(7);
+    if (!verifyToken(token)) {
+      return res.status(401).json({ success: false, message: 'اعتبار نشست شما منقضی شده است. لطفا دوباره وارد شوید.' });
+    }
+    
+    next();
+  });
+
+  // API: Login with password
+  app.post('/api/auth/login', (req, res) => {
+    try {
+      const { password } = req.body;
+      const adminPass = db.settings.adminPassword || 'admin';
+      
+      if (password === adminPass) {
+        return res.json({ success: true, token: generateAdminToken() });
+      }
+      return res.status(400).json({ success: false, message: 'رمز عبور وارد شده نادرست است.' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Auto login inside Telegram WebApp
+  app.post('/api/auth/telegram-login', (req, res) => {
+    try {
+      const { userId, username } = req.body;
+      const isAdmin = checkIsAdmin(userId, username);
+      
+      if (isAdmin) {
+        addLog('info', `ورود موفقیت‌آمیز مدیر از طریق وب‌ویو تلگرام (آیدی: ${userId || 'نامشخص'}، یوزرنیم: ${username || 'نامشخص'})`);
+        return res.json({ success: true, token: generateAdminToken() });
+      }
+      
+      return res.status(403).json({ success: false, message: 'شما دسترسی مدیریت ندارید. این پنل فقط مخصوص ادمین ربات است.' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   // Ensure xray is executable, working, and clean up leftover config files
   try {
     const xrayPath = path.join(process.cwd(), 'bin/xray');
@@ -7461,6 +7561,7 @@ async function startExpressServer() {
         backupIntervalHours,
         botConnectionMode,
         publicUrl,
+        adminPassword,
         maxConfigsRetention
       } = req.body;
       
@@ -7470,6 +7571,9 @@ async function startExpressServer() {
       }
       if (adminId !== undefined) {
         db.settings.adminId = adminId;
+      }
+      if (adminPassword !== undefined) {
+        db.settings.adminPassword = adminPassword;
       }
       if (testBatchLimit !== undefined) {
         db.settings.testBatchLimit = Number(testBatchLimit) || 100;

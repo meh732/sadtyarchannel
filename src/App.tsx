@@ -14,6 +14,7 @@ import {
   RefreshCw, 
   CheckCircle2, 
   XCircle, 
+  X,
   AlertTriangle, 
   Search, 
   Filter, 
@@ -65,9 +66,71 @@ import {
   TechImportance
 } from './types';
 
+// Define custom window type extensions for Telegram WebApp
+declare global {
+  interface Window {
+    Telegram?: {
+      WebApp?: {
+        initData?: string;
+        initDataUnsafe?: {
+          user?: {
+            id?: number;
+            username?: string;
+            first_name?: string;
+          };
+        };
+        ready?: () => void;
+        expand?: () => void;
+      };
+    };
+  }
+}
+
+// Global fetch interceptor to automatically attach authorization token and handle 401
+const originalFetch = window.fetch;
+window.fetch = async function(input: RequestInfo | URL, init?: RequestInit) {
+  const token = localStorage.getItem('adminToken');
+  if (token && typeof input === 'string' && input.startsWith('/api/')) {
+    init = init || {};
+    init.headers = init.headers || {};
+    if (init.headers instanceof Headers) {
+      init.headers.set('Authorization', `Bearer ${token}`);
+    } else if (Array.isArray(init.headers)) {
+      const hasAuth = init.headers.some(h => h[0].toLowerCase() === 'authorization');
+      if (!hasAuth) {
+        init.headers.push(['Authorization', `Bearer ${token}`]);
+      }
+    } else {
+      init.headers = {
+        ...init.headers,
+        'Authorization': `Bearer ${token}`
+      };
+    }
+  }
+  
+  const response = await originalFetch.call(this, input, init);
+  
+  if (response.status === 401 && typeof input === 'string' && input.startsWith('/api/') && !input.includes('/api/auth/')) {
+    localStorage.removeItem('adminToken');
+    window.dispatchEvent(new Event('admin-logout'));
+  }
+  
+  return response;
+};
+
 export default function App() {
+  // Auth States
+  const [token, setToken] = useState<string | null>(localStorage.getItem('adminToken'));
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [loginPassword, setLoginPassword] = useState<string>('');
+  const [isTgWebApp, setIsTgWebApp] = useState<boolean>(false);
+  const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
+  const [logoClickCount, setLogoClickCount] = useState<number>(0);
+
   // Navigation & View State
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'configs' | 'proxies' | 'vpn_files' | 'tech' | 'join' | 'settings' | 'autopost' | 'broadcast'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'configs' | 'proxies' | 'vpn_files' | 'tech' | 'join' | 'settings' | 'autopost' | 'broadcast' | 'public_panel'>('dashboard');
+  const [publicSubTab, setPublicSubTab] = useState<'configs' | 'proxies' | 'vpn_files' | 'tech'>('configs');
   
   // Data States
   const [stats, setStats] = useState<DashboardStats>({
@@ -216,78 +279,225 @@ export default function App() {
     }, 4000);
   };
 
+  // --- Admin Access Authentication Layer ---
+  
+  // 1. Listen for global logout events (triggered by 401 response)
+  useEffect(() => {
+    const handleLogoutEvent = () => {
+      setToken(null);
+      localStorage.removeItem('adminToken');
+      showToast('نشست شما منقضی شد. لطفا دوباره وارد شوید.', 'error');
+    };
+    window.addEventListener('admin-logout', handleLogoutEvent);
+    return () => window.removeEventListener('admin-logout', handleLogoutEvent);
+  }, []);
+
+  // 2. Auth Initialization & Telegram Auto-Login
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        const tgWebApp = window.Telegram?.WebApp;
+        if (tgWebApp && tgWebApp.initDataUnsafe?.user) {
+          setIsTgWebApp(true);
+          const user = tgWebApp.initDataUnsafe.user;
+          
+          if (tgWebApp.ready) tgWebApp.ready();
+          if (tgWebApp.expand) tgWebApp.expand();
+
+          // Auto login Telegram Admin
+          try {
+            const res = await fetch('/api/auth/telegram-login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userId: user.id, username: user.username })
+            });
+            const data = await res.json();
+            if (data.success && data.token) {
+              localStorage.setItem('adminToken', data.token);
+              setToken(data.token);
+              setAuthError(null);
+            } else {
+              setToken(null);
+              localStorage.removeItem('adminToken');
+            }
+          } catch (err) {
+            console.error('Telegram auto-login error:', err);
+            setToken(null);
+            localStorage.removeItem('adminToken');
+          }
+        } else {
+          // Normal web browser - no Telegram WebApp
+          setIsTgWebApp(false);
+          const cachedToken = localStorage.getItem('adminToken');
+          if (cachedToken) {
+            setToken(cachedToken);
+          }
+        }
+      } catch (err) {
+        console.error('Auth initialization error:', err);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    initAuth();
+  }, []);
+
+  const handleHeaderLogoClick = () => {
+    setLogoClickCount(prev => {
+      const next = prev + 1;
+      if (next >= 5) {
+        setShowLoginModal(true);
+        return 0;
+      }
+      return next;
+    });
+  };
+
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginPassword) return;
+    setActionLoading('login');
+    setAuthError(null);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: loginPassword })
+      });
+      const data = await res.json();
+      if (data.success && data.token) {
+        localStorage.setItem('adminToken', data.token);
+        setToken(data.token);
+        setLoginPassword('');
+        showToast('ورود با موفقیت انجام شد.', 'success');
+      } else {
+        setAuthError(data.message || 'رمز عبور وارد شده نادرست است.');
+      }
+    } catch (err) {
+      setAuthError('خطا در برقراری ارتباط با سرور.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('adminToken');
+    setToken(null);
+    setAuthError(null);
+    showToast('شما با موفقیت خارج شدید.', 'info');
+  };
+
   // --- API Integrations ---
 
   const fetchData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
       if (!silent) {
-        const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes, techRes, appUrlRes] = await Promise.all([
-          fetch('/api/stats').then(r => r.json()).catch(() => ({})),
-          fetch('/api/sources').then(r => r.json()).catch(() => []),
-          fetch('/api/force-join').then(r => r.json()).catch(() => []),
-          fetch('/api/configs?limit=500').then(r => r.json()).catch(() => []),
-          fetch('/api/proxies?limit=500').then(r => r.json()).catch(() => []),
-          fetch('/api/users').then(r => r.json()).catch(() => []),
-          fetch('/api/logs').then(r => r.json()).catch(() => []),
-          fetch('/api/settings').then(r => r.json()).catch(() => ({})),
-          fetch('/api/vpn-files').then(r => r.json()).catch(() => []),
-          fetch('/api/tech-items').then(r => r.json()).catch(() => []),
-          fetch('/api/app-url').then(r => r.json()).catch(() => ({ url: window.location.origin }))
-        ]);
+        if (token) {
+          const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes, techRes, appUrlRes] = await Promise.all([
+            fetch('/api/stats').then(r => r.json()).catch(() => ({})),
+            fetch('/api/sources').then(r => r.json()).catch(() => []),
+            fetch('/api/force-join').then(r => r.json()).catch(() => []),
+            fetch('/api/configs?limit=500').then(r => r.json()).catch(() => []),
+            fetch('/api/proxies?limit=500').then(r => r.json()).catch(() => []),
+            fetch('/api/users').then(r => r.json()).catch(() => []),
+            fetch('/api/logs').then(r => r.json()).catch(() => []),
+            fetch('/api/settings').then(r => r.json()).catch(() => ({})),
+            fetch('/api/vpn-files').then(r => r.json()).catch(() => []),
+            fetch('/api/tech-items').then(r => r.json()).catch(() => []),
+            fetch('/api/app-url').then(r => r.json()).catch(() => ({ url: window.location.origin }))
+          ]);
 
-        setStats(statsRes);
-        setSources(sourcesRes);
-        setForceJoinChannels(fjRes);
-        setConfigs(configsRes);
-        setProxies(proxiesRes || []);
-        setVpnFiles(vpnRes || []);
-        setTechItems(techRes || []);
-        setUsers(usersRes);
-        setLogs(logsRes);
-        setSettings(settingsRes);
-        if (appUrlRes && appUrlRes.url) {
-          setDetectedAppUrl(appUrlRes.url);
+          setStats(statsRes);
+          setSources(sourcesRes);
+          setForceJoinChannels(fjRes);
+          setConfigs(configsRes);
+          setProxies(proxiesRes || []);
+          setVpnFiles(vpnRes || []);
+          setTechItems(techRes || []);
+          setUsers(usersRes);
+          setLogs(logsRes);
+          setSettings(settingsRes);
+          if (appUrlRes && appUrlRes.url) {
+            setDetectedAppUrl(appUrlRes.url);
+          } else {
+            setDetectedAppUrl(window.location.origin);
+          }
+          
+          if (settingsRes && settingsRes.autoPost) {
+            setAutoPostForm(settingsRes.autoPost);
+          }
         } else {
-          setDetectedAppUrl(window.location.origin);
-        }
-        
-        if (settingsRes && settingsRes.autoPost) {
-          setAutoPostForm(settingsRes.autoPost);
+          // Regular user data fetch - only public routes
+          const [configsRes, proxiesRes, vpnRes, techRes] = await Promise.all([
+            fetch('/api/configs?limit=500').then(r => r.json()).catch(() => []),
+            fetch('/api/proxies?limit=500').then(r => r.json()).catch(() => []),
+            fetch('/api/vpn-files').then(r => r.json()).catch(() => []),
+            fetch('/api/tech-items').then(r => r.json()).catch(() => [])
+          ]);
+
+          setConfigs(configsRes);
+          setProxies(proxiesRes || []);
+          setVpnFiles(vpnRes || []);
+          setTechItems(techRes || []);
         }
       } else {
-        // Fast lightweight silent poll
-        const promises: Promise<any>[] = [
-          fetch('/api/stats').then(r => r.json()),
-          fetch('/api/logs').then(r => r.json())
-        ];
+        if (token) {
+          // Fast lightweight silent poll for admins
+          const promises: Promise<any>[] = [
+            fetch('/api/stats').then(r => r.json()).catch(() => ({})),
+            fetch('/api/logs').then(r => r.json()).catch(() => [])
+          ];
 
-        const isTesting = (stats.checkingConfigsCount || 0) > 0 || (stats.checkingProxiesCount || 0) > 0 || actionLoading === 'test_all';
-        const fetchConfigsNeeded = activeTab === 'configs' || activeTab === 'dashboard' || isTesting;
-        const fetchProxiesNeeded = activeTab === 'proxies' || activeTab === 'dashboard' || isTesting;
-        const fetchSourcesNeeded = activeTab === 'sources';
-        const fetchVpnNeeded = activeTab === 'vpn_files';
-        const fetchJoinNeeded = activeTab === 'join';
-        const fetchUsersNeeded = activeTab === 'broadcast';
+          const isTesting = (stats.checkingConfigsCount || 0) > 0 || (stats.checkingProxiesCount || 0) > 0 || actionLoading === 'test_all';
+          const fetchConfigsNeeded = activeTab === 'configs' || activeTab === 'dashboard' || isTesting;
+          const fetchProxiesNeeded = activeTab === 'proxies' || activeTab === 'dashboard' || isTesting;
+          const fetchSourcesNeeded = activeTab === 'sources';
+          const fetchVpnNeeded = activeTab === 'vpn_files';
+          const fetchJoinNeeded = activeTab === 'join';
+          const fetchUsersNeeded = activeTab === 'broadcast';
 
-        if (fetchConfigsNeeded) promises.push(fetch('/api/configs?limit=500').then(r => r.json()));
-        if (fetchProxiesNeeded) promises.push(fetch('/api/proxies?limit=500').then(r => r.json()));
-        if (fetchSourcesNeeded) promises.push(fetch('/api/sources').then(r => r.json()));
-        if (fetchVpnNeeded) promises.push(fetch('/api/vpn-files').then(r => r.json()));
-        if (fetchJoinNeeded) promises.push(fetch('/api/force-join').then(r => r.json()));
-        if (fetchUsersNeeded) promises.push(fetch('/api/users').then(r => r.json()));
+          if (fetchConfigsNeeded) promises.push(fetch('/api/configs?limit=500').then(r => r.json()).catch(() => []));
+          if (fetchProxiesNeeded) promises.push(fetch('/api/proxies?limit=500').then(r => r.json()).catch(() => []));
+          if (fetchSourcesNeeded) promises.push(fetch('/api/sources').then(r => r.json()).catch(() => []));
+          if (fetchVpnNeeded) promises.push(fetch('/api/vpn-files').then(r => r.json()).catch(() => []));
+          if (fetchJoinNeeded) promises.push(fetch('/api/force-join').then(r => r.json()).catch(() => []));
+          if (fetchUsersNeeded) promises.push(fetch('/api/users').then(r => r.json()).catch(() => []));
 
-        const results = await Promise.all(promises);
-        setStats(results[0]);
-        setLogs(results[1]);
+          const results = await Promise.all(promises);
+          setStats(results[0]);
+          setLogs(results[1]);
 
-        let idx = 2;
-        if (fetchConfigsNeeded) { setConfigs(results[idx]); idx++; }
-        if (fetchProxiesNeeded) { setProxies(results[idx] || []); idx++; }
-        if (fetchSourcesNeeded) { setSources(results[idx]); idx++; }
-        if (fetchVpnNeeded) { setVpnFiles(results[idx] || []); idx++; }
-        if (fetchJoinNeeded) { setForceJoinChannels(results[idx]); idx++; }
-        if (fetchUsersNeeded) { setUsers(results[idx]); idx++; }
+          let idx = 2;
+          if (fetchConfigsNeeded) { setConfigs(results[idx]); idx++; }
+          if (fetchProxiesNeeded) { setProxies(results[idx] || []); idx++; }
+          if (fetchSourcesNeeded) { setSources(results[idx]); idx++; }
+          if (fetchVpnNeeded) { setVpnFiles(results[idx] || []); idx++; }
+          if (fetchJoinNeeded) { setForceJoinChannels(results[idx]); idx++; }
+          if (fetchUsersNeeded) { setUsers(results[idx]); idx++; }
+        } else {
+          // Silent poll for public users
+          const promises: Promise<any>[] = [];
+          const fetchConfigsNeeded = activeTab === 'configs';
+          const fetchProxiesNeeded = activeTab === 'proxies';
+          const fetchVpnNeeded = activeTab === 'vpn_files';
+          const fetchTechNeeded = activeTab === 'tech';
+
+          if (fetchConfigsNeeded) promises.push(fetch('/api/configs?limit=500').then(r => r.json()).catch(() => []));
+          if (fetchProxiesNeeded) promises.push(fetch('/api/proxies?limit=500').then(r => r.json()).catch(() => []));
+          if (fetchVpnNeeded) promises.push(fetch('/api/vpn-files').then(r => r.json()).catch(() => []));
+          if (fetchTechNeeded) promises.push(fetch('/api/tech-items').then(r => r.json()).catch(() => []));
+
+          if (promises.length > 0) {
+            const results = await Promise.all(promises);
+            let idx = 0;
+            if (fetchConfigsNeeded) { setConfigs(results[idx]); idx++; }
+            if (fetchProxiesNeeded) { setProxies(results[idx] || []); idx++; }
+            if (fetchVpnNeeded) { setVpnFiles(results[idx] || []); idx++; }
+            if (fetchTechNeeded) { setTechItems(results[idx] || []); idx++; }
+          }
+        }
       }
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
@@ -299,12 +509,12 @@ export default function App() {
   // Initial fetch and adaptive fast polling when testing is active
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [token]);
 
   // Fetch updated data when switching active tabs
   useEffect(() => {
     fetchData(true);
-  }, [activeTab]);
+  }, [activeTab, token]);
 
   // Reset pagination when filters change
   useEffect(() => {
@@ -316,15 +526,15 @@ export default function App() {
   }, [proxySearch, proxyTypeFilter, proxyStatusFilter]);
 
   useEffect(() => {
-    const isTesting = (stats.checkingConfigsCount || 0) > 0 || (stats.checkingProxiesCount || 0) > 0 || actionLoading === 'test_all';
-    const pollMs = isTesting ? 1500 : 5000;
+    const isTesting = token && ((stats.checkingConfigsCount || 0) > 0 || (stats.checkingProxiesCount || 0) > 0 || actionLoading === 'test_all');
+    const pollMs = isTesting ? 1500 : (token ? 5000 : 15000);
 
     const interval = setInterval(() => {
       fetchData(true);
     }, pollMs);
 
     return () => clearInterval(interval);
-  }, [stats.checkingConfigsCount, stats.checkingProxiesCount, actionLoading]);
+  }, [stats.checkingConfigsCount, stats.checkingProxiesCount, actionLoading, token]);
 
   // Handle Restore Backup with fast native streaming (no main-thread JSON freeze)
   const handleRestoreBackup = async (e: React.ChangeEvent<HTMLInputElement>, overrideMode?: 'settings_and_sources' | 'full') => {
@@ -1215,6 +1425,759 @@ export default function App() {
     });
   }, [techItems, techSearch, techCategoryFilter, techImportanceFilter]);
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-slate-100" dir="rtl">
+        <RefreshCw className="w-12 h-12 text-indigo-500 animate-spin mb-4" />
+        <h1 className="text-lg font-bold">در حال بررسی دسترسی...</h1>
+        <p className="text-xs text-slate-400 mt-2">لطفا شکیبا باشید.</p>
+      </div>
+    );
+  }
+
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden text-slate-100 font-sans" dir="rtl">
+        {/* Decorative background grid/gradients */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#0f172a_1px,transparent_1px),linear-gradient(to_bottom,#0f172a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-30" />
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl" />
+
+        <div className="w-full max-w-md bg-slate-900/90 backdrop-blur-xl border border-slate-800 rounded-2xl p-8 shadow-2xl relative z-10">
+          <div className="flex flex-col items-center text-center mb-8">
+            <div className="w-16 h-16 rounded-2xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center shadow-lg mb-4">
+              <Bot className="w-8 h-8 text-indigo-400" />
+            </div>
+            <h1 className="text-xl font-black text-white tracking-tight">ورود به پنل مدیریت ربات ⚙️</h1>
+            <p className="text-xs text-slate-400 mt-2">دسترسی به این پنل منحصراً در اختیار مدیریت ربات می‌باشد.</p>
+          </div>
+
+          {authError && (
+            <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs text-rose-300 flex items-start gap-3 animate-pulse">
+              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+              <div className="leading-relaxed">{authError}</div>
+            </div>
+          )}
+
+          {isTgWebApp ? (
+            <div className="text-center py-6">
+              <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin mx-auto mb-4" />
+              <p className="text-sm font-semibold text-white">در حال تایید خودکار هویت شما در تلگرام...</p>
+              <p className="text-xs text-slate-400 mt-2">ربات در حال بررسی شناسه تلگرامی شما است.</p>
+            </div>
+          ) : (
+            <form onSubmit={handlePasswordLogin} className="space-y-5">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-2">رمز عبور پنل مدیریت:</label>
+                <input
+                  type="password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="رمز عبور خود را وارد کنید..."
+                  className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-center tracking-widest text-white placeholder:tracking-normal transition-all"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={actionLoading === 'login'}
+                className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-600/20 cursor-pointer"
+              >
+                {actionLoading === 'login' ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>در حال ورود...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>ورود امن به پنل 🔐</span>
+                  </>
+                )}
+              </button>
+            </form>
+          )}
+
+          <div className="mt-8 pt-6 border-t border-slate-800 text-center text-[11px] text-slate-500">
+            طراحی شده با ❤️ برای مدیریت هوشمند پروکسی و محتوا
+          </div>
+        </div>
+
+        {/* Public Toast Container */}
+        <AnimatePresence>
+          {toast && (
+            <motion.div
+              initial={{ opacity: 0, y: 50, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              className={`fixed bottom-6 left-6 z-50 flex items-center gap-3 px-5 py-4 rounded-xl shadow-xl max-w-sm border ${
+                toast.type === 'success' 
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+                  : toast.type === 'error' 
+                  ? 'bg-rose-50 border-rose-200 text-rose-800' 
+                  : 'bg-blue-50 border-blue-200 text-blue-800'
+              }`}
+            >
+              {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />}
+              {toast.type === 'error' && <XCircle className="w-5 h-5 text-rose-600 shrink-0" />}
+              {toast.type === 'info' && <Info className="w-5 h-5 text-blue-600 shrink-0" />}
+              <span className="text-sm font-medium leading-relaxed">{toast.message}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+      </div>
+    );
+  }
+
+  const renderPublicWebPanel = () => {
+    const resolvedTab = publicSubTab;
+
+    return (
+      <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col relative" dir="rtl">
+        
+        {/* Sleek Client Header */}
+        <header className="bg-slate-900 text-white shadow-md relative overflow-hidden shrink-0">
+          <div className="absolute inset-0 bg-gradient-to-r from-indigo-950/40 to-slate-900 opacity-60 pointer-events-none" />
+          <div className="max-w-6xl mx-auto px-5 py-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
+            <div className="flex items-center gap-4">
+              <div 
+                className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-600/30 cursor-pointer select-none active:scale-95 transition-transform"
+                onClick={handleHeaderLogoClick}
+                title="سامانه هوشمند اشتراک‌گذاری کانفیگ"
+              >
+                <Radio className="w-6 h-6 text-white animate-pulse" />
+              </div>
+              <div>
+                <h1 className="font-extrabold text-xl text-white tracking-tight flex items-center gap-2">
+                  <span>کانفیگ‌یاب و پروکسی‌ساز هوشمند</span>
+                  <span className="text-[10px] bg-indigo-500/25 text-indigo-300 border border-indigo-500/40 px-2.5 py-0.5 rounded-full font-bold">نسخه کاربر</span>
+                </h1>
+                <p className="text-xs text-slate-400 mt-1">آرشیو روزانه و خودکار پروکسی‌های تلگرام، کلاینت‌های V2Ray و مطالب تکنولوژی</p>
+              </div>
+            </div>
+
+            {/* Live stats counter */}
+            <div className="flex items-center gap-3.5 bg-slate-800/40 backdrop-blur border border-slate-700/50 rounded-2xl p-3 px-4 text-xs">
+              <div className="flex items-center gap-1.5 border-l border-slate-700/80 pl-3">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                <span className="text-slate-400">کانفیگ‌های فعال:</span>
+                <strong className="text-emerald-400 font-black">{configs.filter(c => c.status === 'working').length}</strong>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-400">پروکسی فعال:</span>
+                <strong className="text-indigo-400 font-black">{proxies.filter(p => p.status === 'working').length}</strong>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Tab selection menu */}
+        <div className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+          <div className="max-w-6xl mx-auto px-5">
+            <div className="flex items-center gap-1.5 overflow-x-auto py-3 scrollbar-none">
+              <button
+                onClick={() => setActiveTab('configs')}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                  resolvedTab === 'configs'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-black'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <Layers className="w-4 h-4 shrink-0" />
+                <span>کانفیگ‌های V2Ray ({configs.filter(c => c.status === 'working').length})</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('proxies')}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                  resolvedTab === 'proxies'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-black'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <Radio className="w-4 h-4 shrink-0" />
+                <span>پروکسی تلگرام ({proxies.filter(p => p.status === 'working').length})</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('vpn_files')}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                  resolvedTab === 'vpn_files'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-black'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <Download className="w-4 h-4 shrink-0" />
+                <span>فایل‌های VPN ({vpnFiles.length})</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('tech')}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                  resolvedTab === 'tech'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-black'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <BookOpen className="w-4 h-4 shrink-0" />
+                <span>اخبار و ترفندها ({techItems.length})</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Content Area */}
+        <main className="flex-1 max-w-6xl w-full mx-auto p-5 md:py-8 space-y-6">
+          {loading ? (
+            <div className="py-24 text-center space-y-4">
+              <RefreshCw className="w-10 h-10 text-indigo-500 animate-spin mx-auto" />
+              <p className="text-xs text-slate-500">در حال بروزرسانی لیست کانفیگ‌ها و پروکسی‌ها...</p>
+            </div>
+          ) : (
+            <AnimatePresence mode="wait">
+              
+              {/* --- TAB: CONFIGS --- */}
+              {resolvedTab === 'configs' && (
+                <motion.div
+                  key="configs"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  className="space-y-6"
+                >
+                  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                    <div className="flex flex-col md:flex-row items-center gap-4">
+                      <div className="w-full md:flex-1 relative">
+                        <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-3.5" />
+                        <input
+                          type="text"
+                          placeholder="جستجو در نام، سرور، منبع یا آی‌پی..."
+                          value={configSearch}
+                          onChange={(e) => setConfigSearch(e.target.value)}
+                          className="w-full pl-4 pr-10 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none"
+                        />
+                      </div>
+                      <div className="w-full md:w-48 flex items-center gap-2">
+                        <Filter className="w-4 h-4 text-slate-400 shrink-0" />
+                        <select
+                          value={configProtocolFilter}
+                          onChange={(e) => setConfigProtocolFilter(e.target.value)}
+                          className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                        >
+                          <option value="all">همه پروتکل‌ها</option>
+                          <option value="vless">VLESS</option>
+                          <option value="vmess">VMESS</option>
+                          <option value="trojan">Trojan</option>
+                          <option value="ss">ShadowSocks</option>
+                          <option value="npv">NapsternetV (NPV)</option>
+                        </select>
+                      </div>
+                      <div className="w-full md:w-48">
+                        <select
+                          value={configStatusFilter}
+                          onChange={(e) => setConfigStatusFilter(e.target.value)}
+                          className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                        >
+                          <option value="all">همه وضعیت‌ها</option>
+                          <option value="working">فعال (پاسخ پورت موفق)</option>
+                          <option value="untested">در انتظار بررسی</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                    {filteredConfigs.length === 0 ? (
+                      <div className="py-24 text-center flex flex-col items-center justify-center text-slate-400 gap-3">
+                        <Database className="w-12 h-12 text-slate-300" />
+                        <p className="text-sm">هیچ کانفیگی مطابق با فیلتر شما یافت نشد.</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {paginatedConfigs.map((config) => (
+                          <div key={config.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/50 transition-colors">
+                            <div className="flex-1 space-y-1.5 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold tracking-wide uppercase ${
+                                  config.protocol === 'vless' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
+                                  config.protocol === 'vmess' ? 'bg-amber-50 text-amber-700 border border-amber-100' :
+                                  config.protocol === 'trojan' ? 'bg-purple-50 text-purple-700 border border-purple-100' :
+                                  config.protocol === 'ss' ? 'bg-teal-50 text-teal-700 border border-teal-100' :
+                                  'bg-cyan-50 text-cyan-700 border border-cyan-100'
+                                }`}>
+                                  {config.protocol}
+                                </span>
+                                <h4 className="text-xs font-bold text-slate-800 truncate" title={config.remark}>
+                                  {config.remark || 'بدون عنوان'}
+                                </h4>
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 ${
+                                  config.status === 'working' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
+                                  'bg-slate-100 text-slate-600'
+                                }`}>
+                                  {config.status === 'working' ? `فعال ${config.latency ? `(${config.latency}ms)` : ''}` : 'در انتظار تست'}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-500 font-mono" dir="ltr">
+                                Server: <strong className="text-slate-700">{config.server}</strong> | Port: <strong className="text-slate-700">{config.port}</strong>
+                              </p>
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-400">
+                                <span>منبع: <strong className="text-slate-600">{config.source}</strong></span>
+                                {config.lastChecked && (
+                                  <span>بررسی اتصال: <strong>{new Date(config.lastChecked).toLocaleTimeString('fa-IR')}</strong></span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center">
+                              <button
+                                onClick={() => copyToClipboard(config.raw, config.id)}
+                                className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                              >
+                                {copiedId === config.id ? <Check className="w-3.5 h-3.5 text-emerald-600 animate-bounce" /> : <Copy className="w-3.5 h-3.5" />}
+                                <span>کپی لینک کانفیگ</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {configTotalPages > 1 && (
+                      <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50">
+                        <div className="text-xs text-slate-500 font-medium">
+                          نمایش {(configPage - 1) * ITEMS_PER_PAGE + 1} تا {Math.min(configPage * ITEMS_PER_PAGE, filteredConfigs.length)} از {filteredConfigs.length}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setConfigPage(1)}
+                            disabled={configPage === 1}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all cursor-pointer"
+                          >
+                            <ChevronsRight className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setConfigPage(p => Math.max(1, p - 1))}
+                            disabled={configPage === 1}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all cursor-pointer"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                          <span className="px-3 py-1 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-lg shadow-sm">
+                            صفحه {configPage} از {configTotalPages}
+                          </span>
+                          <button
+                            onClick={() => setConfigPage(p => Math.min(configTotalPages, p + 1))}
+                            disabled={configPage === configTotalPages}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all cursor-pointer"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setConfigPage(configTotalPages)}
+                            disabled={configPage === configTotalPages}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all cursor-pointer"
+                          >
+                            <ChevronsLeft className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* --- TAB: PROXIES --- */}
+              {resolvedTab === 'proxies' && (
+                <motion.div
+                  key="proxies"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  className="space-y-6"
+                >
+                  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-500">جستجو در سرورها</label>
+                        <div className="relative">
+                          <Search className="w-4 h-4 absolute right-3.5 top-3.5 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="جستجو بر اساس آی‌پی سرور یا منبع..."
+                            value={proxySearch}
+                            onChange={(e) => setProxySearch(e.target.value)}
+                            className="w-full pr-10 pl-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-500">نوع پروکسی</label>
+                        <select
+                          value={proxyTypeFilter}
+                          onChange={(e) => setProxyTypeFilter(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                        >
+                          <option value="all">همه پروتکل‌ها</option>
+                          <option value="mtproto">MTProto Proxy</option>
+                          <option value="socks5">Socks5 Proxy</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-500">وضعیت اتصال</label>
+                        <select
+                          value={proxyStatusFilter}
+                          onChange={(e) => setProxyStatusFilter(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                        >
+                          <option value="all">همه وضعیت‌ها</option>
+                          <option value="working">فعال (پینگ موفق)</option>
+                          <option value="untested">در انتظار بررسی</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                    {filteredProxies.length === 0 ? (
+                      <div className="py-24 text-center flex flex-col items-center justify-center text-slate-400 gap-3">
+                        <Radio className="w-12 h-12 text-slate-300" />
+                        <p className="text-sm">هیچ پروکسی تلگرامی مطابق با فیلتر شما یافت نشد.</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {paginatedProxies.map((proxy) => (
+                          <div key={proxy.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/50 transition-colors">
+                            <div className="flex-1 space-y-1.5 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold tracking-wide uppercase ${
+                                  proxy.type === 'mtproto' ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' : 'bg-slate-100 text-slate-700 border border-slate-200'
+                                }`}>
+                                  {proxy.type}
+                                </span>
+                                <h4 className="text-xs font-bold text-slate-800 truncate" dir="ltr">
+                                  tg://proxy?server={proxy.server}&port={proxy.port}
+                                </h4>
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 ${
+                                  proxy.status === 'working' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-slate-100 text-slate-600'
+                                }`}>
+                                  {proxy.status === 'working' ? `فعال ${proxy.latency ? `(${proxy.latency}ms)` : ''}` : 'در انتظار تست'}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-500 font-mono" dir="ltr">
+                                IP: <strong className="text-slate-700">{proxy.server}</strong> | Port: <strong className="text-slate-700">{proxy.port}</strong>
+                              </p>
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-400">
+                                <span>منبع: <strong className="text-slate-600">{proxy.source}</strong></span>
+                                {proxy.lastChecked && (
+                                  <span>آخرین بررسی: <strong>{new Date(proxy.lastChecked).toLocaleTimeString('fa-IR')}</strong></span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0 self-end lg:self-center">
+                              <button
+                                onClick={() => copyToClipboard(proxy.raw, proxy.id)}
+                                className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                              >
+                                {copiedId === proxy.id ? <Check className="w-3.5 h-3.5 text-emerald-600 animate-bounce" /> : <Copy className="w-3.5 h-3.5" />}
+                                <span>اتصال و کپی پروکسی</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {proxyTotalPages > 1 && (
+                      <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50">
+                        <div className="text-xs text-slate-500 font-medium">
+                          نمایش {(proxyPage - 1) * ITEMS_PER_PAGE + 1} تا {Math.min(proxyPage * ITEMS_PER_PAGE, filteredProxies.length)} از {filteredProxies.length}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setProxyPage(1)}
+                            disabled={proxyPage === 1}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all cursor-pointer"
+                          >
+                            <ChevronsRight className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setProxyPage(p => Math.max(1, p - 1))}
+                            disabled={proxyPage === 1}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all cursor-pointer"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                          <span className="px-3 py-1 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-lg shadow-sm">
+                            صفحه {proxyPage} از {proxyTotalPages}
+                          </span>
+                          <button
+                            onClick={() => setProxyPage(p => Math.min(proxyTotalPages, p + 1))}
+                            disabled={proxyPage === proxyTotalPages}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all cursor-pointer"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setProxyPage(proxyTotalPages)}
+                            disabled={proxyPage === proxyTotalPages}
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-30 border border-transparent hover:border-slate-200 transition-all cursor-pointer"
+                          >
+                            <ChevronsLeft className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* --- TAB: VPN FILES --- */}
+              {resolvedTab === 'vpn_files' && (
+                <motion.div
+                  key="vpn_files"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  className="space-y-6"
+                >
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                    {vpnFiles.length === 0 ? (
+                      <div className="py-24 text-center flex flex-col items-center justify-center text-slate-400 gap-3">
+                        <Download className="w-12 h-12 text-slate-300" />
+                        <p className="text-sm">هیچ فایل VPN (.npvt یا .ovpn) آرشیو نشده است.</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {vpnFiles.map((file) => (
+                          <div key={file.id} className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/50 transition-colors">
+                            <div className="flex-1 space-y-1">
+                              <h4 className="text-sm font-bold text-slate-800" dir="ltr">
+                                {file.filename}
+                              </h4>
+                              <p className="text-[10px] text-slate-400">آرشیو شده در تاریخ: {new Date(file.createdAt).toLocaleDateString('fa-IR')}</p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                              <span className="text-xs bg-slate-100 text-slate-500 px-3 py-1.5 rounded-lg font-bold">قابل دریافت در ربات تلگرام 🤖</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* --- TAB: TECH --- */}
+              {resolvedTab === 'tech' && (
+                <motion.div
+                  key="tech"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  className="space-y-6"
+                >
+                  <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+                    <div className="flex flex-col md:flex-row items-center gap-3">
+                      <div className="relative flex-1 w-full">
+                        <Search className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="جستجو در عنوان، متن، برچسب‌ها..."
+                          value={techSearch}
+                          onChange={(e) => setTechSearch(e.target.value)}
+                          className="w-full pl-4 pr-10 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto">
+                        <button
+                          onClick={() => setTechCategoryFilter('all')}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                            techCategoryFilter === 'all' ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          همه ({techItems.length})
+                        </button>
+                        <button
+                          onClick={() => setTechCategoryFilter('news')}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                            techCategoryFilter === 'news' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700'
+                          }`}
+                        >
+                          📰 اخبار روز
+                        </button>
+                        <button
+                          onClick={() => setTechCategoryFilter('trick')}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                            techCategoryFilter === 'trick' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-700'
+                          }`}
+                        >
+                          💡 ترفندها
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                    {filteredTechItems.length === 0 ? (
+                      <div className="py-20 text-center text-slate-400">
+                        <BookOpen className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                        <p className="text-sm">مطلبی مطابق با فیلتر شما یافت نشد.</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {filteredTechItems.map((item) => (
+                          <div key={item.id} className="p-5 hover:bg-slate-50/50 transition-colors space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-lg ${
+                                  item.category === 'news' ? 'bg-blue-50 text-blue-700 border border-blue-200/50' :
+                                  item.category === 'trick' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/50' :
+                                  'bg-purple-50 text-purple-700 border border-purple-200/50'
+                                }`}>
+                                  {item.category === 'news' && '📰 خبر تکنولوژی'}
+                                  {item.category === 'trick' && '💡 ترفند و آموزش'}
+                                  {item.category === 'secret' && '🔐 امنیت و شبکه'}
+                                </span>
+                                {item.importance === 'breaking' && (
+                                  <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200/50 flex items-center gap-1">
+                                    <Flame className="w-3 h-3 text-rose-500" />
+                                    <span>فوری و داغ</span>
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-slate-400">{new Date(item.createdAt).toLocaleDateString('fa-IR')}</span>
+                            </div>
+                            <h4 className="text-sm font-bold text-slate-900 leading-snug">{item.title}</h4>
+                            <p className="text-xs text-slate-600 leading-relaxed">{item.summary}</p>
+                            {item.tags && item.tags.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1 pt-1.5">
+                                {item.tags.map((tag, tIdx) => (
+                                  <span key={tIdx} className="bg-slate-100 text-slate-500 px-2.5 py-0.5 rounded-lg text-[9px]">
+                                    #{tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+
+            </AnimatePresence>
+          )}
+        </main>
+
+        {/* Client Footer */}
+        <footer className="bg-white border-t border-slate-200 shrink-0 py-6 text-center text-[11px] text-slate-400 mt-12 shadow-inner">
+          <div className="max-w-6xl mx-auto px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <p>تمامی سرویس‌ها به صورت دوره‌ای اسکن شده و پس از اعتبارسنجی پینگ منتشر می‌شوند.</p>
+            <p className="font-mono text-slate-500">Smart Config Hub © 2026</p>
+          </div>
+        </footer>
+
+        {/* Sleek Modal for Hidden Admin Access */}
+        <AnimatePresence>
+          {showLoginModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.95, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.95, y: 20 }}
+                className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-7 text-white shadow-2xl relative"
+                dir="rtl"
+              >
+                <button 
+                  onClick={() => { setShowLoginModal(false); setAuthError(null); }}
+                  className="absolute left-4 top-4 p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+
+                <div className="text-center mb-6 space-y-2">
+                  <div className="w-12 h-12 rounded-xl bg-indigo-600/15 border border-indigo-500/20 flex items-center justify-center mx-auto mb-2">
+                    <ShieldCheck className="w-6 h-6 text-indigo-400 animate-pulse" />
+                  </div>
+                  <h3 className="font-black text-sm text-white">ورود مدیریت سیستم ⚙️</h3>
+                  <p className="text-[11px] text-slate-400">جهت دسترسی به داشبورد کنترل, استخراج و پیکربندی ربات</p>
+                </div>
+
+                {authError && (
+                  <div className="mb-4 p-3 bg-rose-500/15 border border-rose-500/20 rounded-xl text-[11px] text-rose-300 flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <span>{authError}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handlePasswordLogin} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="block text-[11px] font-bold text-slate-300">گذرواژه مدیریت را وارد کنید:</label>
+                    <input
+                      type="password"
+                      autoFocus
+                      required
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs focus:outline-none focus:border-indigo-500 text-center tracking-widest text-white transition-all"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={actionLoading === 'login'}
+                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50"
+                  >
+                    {actionLoading === 'login' ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <>
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span>تایید هویت و ورود</span>
+                      </>
+                    )}
+                  </button>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Public Toast Container */}
+        <AnimatePresence>
+          {toast && (
+            <motion.div
+              initial={{ opacity: 0, y: 50, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              className={`fixed bottom-6 left-6 z-50 flex items-center gap-3 px-5 py-4 rounded-xl shadow-xl max-w-sm border ${
+                toast.type === 'success' 
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+                  : toast.type === 'error' 
+                  ? 'bg-rose-50 border-rose-200 text-rose-800' 
+                  : 'bg-blue-50 border-blue-200 text-blue-800'
+              }`}
+            >
+              {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />}
+              {toast.type === 'error' && <XCircle className="w-5 h-5 text-rose-600 shrink-0" />}
+              {toast.type === 'info' && <Info className="w-5 h-5 text-blue-600 shrink-0" />}
+              <span className="text-sm font-medium leading-relaxed">{toast.message}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col md:flex-row relative" dir="rtl">
       
@@ -1422,6 +2385,28 @@ export default function App() {
             <Send className="w-4 h-4" />
             <span>ارسال پیام همگانی</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('public_panel')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
+              activeTab === 'public_panel'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+            }`}
+          >
+            <Globe className="w-4 h-4" />
+            <span>پیش‌نمایش پنل وب</span>
+          </button>
+
+          {!isTgWebApp && (
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer text-rose-400 hover:bg-rose-500/10"
+            >
+              <Power className="w-4 h-4 text-rose-400" />
+              <span>خروج از پنل</span>
+            </button>
+          )}
         </nav>
 
         {/* Footer info */}
@@ -1449,6 +2434,7 @@ export default function App() {
               {activeTab === 'settings' && 'پیکربندی هوشمند ربات و پلتفرم'}
               {activeTab === 'autopost' && 'زمان‌بندی و ارسال خودکار پست'}
               {activeTab === 'broadcast' && 'سیستم نوتیفیکیشن و پیام همگانی'}
+              {activeTab === 'public_panel' && 'پیش‌نمایش پنل وب عمومی کاربران'}
             </h2>
             <p className="text-xs text-slate-500 mt-1">
               {activeTab === 'dashboard' && 'خلاصه‌ای از عملکرد ربات، منابع پایش شده و گزارشات زنده.'}
@@ -1461,6 +2447,7 @@ export default function App() {
               {activeTab === 'settings' && 'تنظیم توکن API تلگرام، فواصل زمانی پویش خودکار و متن برندینگ شخصی.'}
               {activeTab === 'autopost' && 'پیکربندی هوشمند ربات برای ارسال اتوماتیک کانفیگ‌ها، پروکسی‌ها و ترفندهای تکنولوژی به کانال شما در فواصل مشخص.'}
               {activeTab === 'broadcast' && 'ارسال بیانیه‌ها، اخبار یا بنرهای تبلیغاتی به تمامی اعضای ذخیره شده در دیتابیس.'}
+              {activeTab === 'public_panel' && 'تست و مشاهده لحظه‌ای خروجی کانفیگ‌ها، پروکسی‌ها و مطالبی که در پنل وب عمومی نمایش داده می‌شوند.'}
             </p>
           </div>
 
@@ -3780,6 +4767,25 @@ export default function App() {
                         </p>
                       </div>
 
+                      {/* Admin Access Password Input */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                          <span>رمز عبور دسترسی پنل مدیریت (Admin Password)</span>
+                          <span className="text-[10px] text-indigo-600 font-semibold">تأیید هویت در مرورگر خارج از تلگرام</span>
+                        </label>
+                        <input
+                          type="password"
+                          placeholder="مثال: admin"
+                          value={settings.adminPassword || ''}
+                          onChange={(e) => setSettings(prev => ({ ...prev, adminPassword: e.target.value }))}
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-mono text-left focus:border-indigo-500 focus:outline-none"
+                          dir="ltr"
+                        />
+                        <p className="text-[10px] text-slate-400">
+                          برای دسترسی به پنل ادمین در وب‌مرورگرهای عادی، باید از این رمز عبور استفاده کنید (رمز پیش‌فرض: admin).
+                        </p>
+                      </div>
+
                       {/* Branding Input */}
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
@@ -4199,6 +5205,39 @@ export default function App() {
                       <span>{actionLoading === 'broadcast' ? 'در حال ارسال پیام به اعضا...' : `ارسال همگانی پیام به ${users.length} کاربر`}</span>
                     </button>
                   </form>
+                </motion.div>
+              )}
+
+              {activeTab === 'public_panel' && (
+                <motion.div
+                  key="public_panel"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  className="space-y-6"
+                >
+                  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                      <h3 className="font-bold text-slate-950 text-sm">پیش‌نمایش زنده خروجی پنل وب عمومی کاربران</h3>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        کاربران معمولی به جای دسترسی به داشبورد مدیریت، این خروجی زیبا را به صورت وب‌ویو تلگرام یا لینک مستقیم مشاهده خواهند کرد.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const url = settings.webPanelUrl || window.location.origin;
+                          navigator.clipboard.writeText(url);
+                          setToast({ type: 'success', message: 'لینک پنل وب با موفقیت کپی شد.' });
+                        }}
+                        className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>کپی لینک پنل وب</span>
+                      </button>
+                    </div>
+                  </div>
+                  {renderPublicWebPanel()}
                 </motion.div>
               )}
 

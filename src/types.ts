@@ -104,6 +104,7 @@ export interface SystemSettings {
   lastBackupAt?: string | null;
   botConnectionMode?: 'polling' | 'webhook';
   publicUrl?: string;
+  adminPassword?: string;
   maxConfigsRetention?: number; // Maximum retention limit for configs (default: 2000, range: 1-10000)
 }
 
