@@ -270,6 +270,12 @@ function loadDatabase() {
       autoPost: { ...DEFAULT_AUTO_POST, ...(loadedSettings?.settings?.autoPost || loadedDataStore?.settings?.autoPost || {}) }
     };
 
+    // Automatically resolve and set the correct public Web panel URL for Telegram WebApp (TWA)
+    const detectedUrl = process.env.APP_URL || process.env.DEV_APP_URL || DEFAULT_KNOWN_APP_URL;
+    if (!finalSettings.publicUrl || finalSettings.publicUrl.trim() === '' || finalSettings.publicUrl === 'https://ais-dev-3wfduwtghl6fqrseyhtp5l-217900666396.europe-west2.run.app') {
+      finalSettings.publicUrl = detectedUrl;
+    }
+
     const finalSources = Array.isArray(loadedSettings?.sources) 
       ? loadedSettings.sources 
       : (Array.isArray(loadedDataStore?.sources) ? loadedDataStore.sources : DEFAULT_SOURCES);
@@ -4259,6 +4265,85 @@ async function callTelegramApi(method: string, body: object | FormData): Promise
 }
 
 /**
+ * Checks if a user is the configured admin (supports numeric chat ID and @username)
+ */
+function checkIsAdmin(userId?: string | number, username?: string | null): boolean {
+  if (!db.settings.adminId) return false;
+  const adminSetting = String(db.settings.adminId).replace(/^['"\s]+|['"\s]+$/g, '').trim();
+  if (!adminSetting) return false;
+  
+  if (userId && String(userId).trim() === adminSetting) return true;
+  
+  if (username) {
+    const cleanUser = username.replace(/^@/, '').toLowerCase().trim();
+    const cleanAdmin = adminSetting.replace(/^@/, '').toLowerCase().trim();
+    if (cleanUser && cleanAdmin && cleanUser === cleanAdmin) return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Automatically sets the native Telegram Chat Menu button to launch the Web App (TWA)
+ */
+async function setupBotMenuButton(token?: string): Promise<{ success: boolean; message: string }> {
+  const botToken = token || db.settings.botToken;
+  if (!botToken) {
+    return { success: false, message: 'توکن ربات تنظیم نشده است.' };
+  }
+  const appUrl = getPublicAppUrl();
+  if (!appUrl) {
+    return { success: false, message: 'آدرس دامنه پنل مشخص نیست.' };
+  }
+
+  try {
+    // 1. Set global menu button with WebApp
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        menu_button: {
+          type: 'web_app',
+          text: '🌐 پنل مدیریت',
+          web_app: { url: appUrl }
+        }
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+    const data = await res.json();
+    
+    // 2. Also attempt to set for admin chat id specifically
+    if (db.settings.adminId) {
+      const adminIdNum = Number(String(db.settings.adminId).replace(/[^0-9]/g, ''));
+      if (adminIdNum) {
+        await fetch(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: adminIdNum,
+            menu_button: {
+              type: 'web_app',
+              text: '⚙️ پنل مدیریت',
+              web_app: { url: appUrl }
+            }
+          }),
+          signal: AbortSignal.timeout(10000)
+        }).catch(() => {});
+      }
+    }
+
+    if (data.ok) {
+      addLog('success', `دکمه منوی وب‌ویو تلگرام (Web App) روی آدرس ${appUrl} با موفقیت تنظیم گردید.`);
+      return { success: true, message: `دکمه منوی وب‌ویو (Menu Button) با موفقیت در تلگرام فعال گردید.` };
+    } else {
+      return { success: false, message: data.description || 'خطا در ثبت دکمه منو در تلگرام.' };
+    }
+  } catch (err: any) {
+    return { success: false, message: err.message || 'خطا در ارتباط با سرور تلگرام' };
+  }
+}
+
+/**
  * Registers default bot commands with Telegram so the native "Menu" button appears next to the chat bar
  */
 async function setBotCommands(token: string) {
@@ -4270,6 +4355,7 @@ async function setBotCommands(token: string) {
         commands: [
           { command: 'start', description: '🚀 شروع کار ربات و منوی اصلی' },
           { command: 'admin', description: '⚙️ ورود به پنل مدیریت (ادمین)' },
+          { command: 'panel', description: '🌐 وب‌ویو پنل مدیریت (WebApp)' },
           { command: 'help', description: 'ℹ️ راهنمای گام به گام اتصال' }
         ]
       }),
@@ -4289,12 +4375,9 @@ async function setBotCommands(token: string) {
 /**
  * Generates the persistent custom keyboard (ReplyKeyboardMarkup) to be displayed in the bar below the chat
  */
-function getReplyKeyboard(userId: string | number) {
-  const cleanId = (id: string | number | undefined) => {
-    if (!id) return '';
-    return String(id).replace(/^['"\s]+|['"\s]+$/g, '').trim();
-  };
-  const isAdmin = db.settings.adminId && cleanId(userId) === cleanId(db.settings.adminId);
+function getReplyKeyboard(userId: string | number, username?: string | null) {
+  const isAdmin = checkIsAdmin(userId, username);
+  const appUrl = getPublicAppUrl();
 
   const keyboard: any[][] = [
     [
@@ -4319,8 +4402,13 @@ function getReplyKeyboard(userId: string | number) {
   ];
 
   if (isAdmin) {
-    // Show Admin Panel quick shortcut button directly in the bar below the chat for the admin!
-    keyboard.push([{ text: '⚙️ ورود به پنل مدیریت 🔴', style: 'danger' }]);
+    // Show Admin WebApp button & quick shortcut button directly in the bar below the chat for the admin!
+    keyboard.unshift([
+      { text: '🌐 باز کردن وب‌ویو پنل مدیریت (WebApp) 🚀', web_app: { url: appUrl } }
+    ]);
+    keyboard.push([
+      { text: '⚙️ ورود به پنل مدیریت در تلگرام 🔴', style: 'danger' }
+    ]);
   }
 
   return {
@@ -4588,6 +4676,8 @@ async function handleBotUpdate(update: any) {
       messageText = '';
     } else if (cleanMsg.includes('پنل مدیریت') || lowerMsg.startsWith('/admin')) {
       messageText = '/admin';
+    } else if (lowerMsg.startsWith('/panel') || lowerMsg.startsWith('/webapp') || cleanMsg.includes('وب‌ویو') || cleanMsg.includes('وبویو') || cleanMsg.includes('پنل وب')) {
+      messageText = '/panel';
     }
 
     // Save or update bot user
@@ -4614,11 +4704,7 @@ async function handleBotUpdate(update: any) {
     let userHasJoinedAll = true;
     const notJoinedList: ForceJoinChannel[] = [];
 
-    const cleanId = (id: string | number | undefined) => {
-      if (!id) return '';
-      return String(id).replace(/^['"\s]+|['"\s]+$/g, '').trim();
-    };
-    const isAdmin = db.settings.adminId && cleanId(userId) === cleanId(db.settings.adminId);
+    const isAdmin = checkIsAdmin(userId, username);
 
     if (requiredChannels.length > 0 && !isAdmin) {
       // Check cache first to avoid rate limits (valid for 30 seconds)
@@ -5285,13 +5371,43 @@ async function handleBotUpdate(update: any) {
       }
 
       // 2. Admin Menus & Callback Actions
+      if (messageText === '/panel' || callbackData === 'admin_webapp') {
+        if (callbackQueryId) await answerCallback('پنل وب‌ویو 🌐');
+        const appUrl = getPublicAppUrl();
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `🌐 **پنل تحت وب و وب‌اپلیکیشن مدیریت (Telegram WebApp)**\n\n` +
+            `👑 **مدیر گرامی**، برای باز کردن و مدیریت کلیه تنظیمات، آمار، استخراج و تست در محیط وب‌ویو تلگرام، روی دکمه زیر کلیک فرمایید:\n\n` +
+            `🔗 **آدرس مستقیم پنل:** \`${appUrl}\``,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🌐 باز کردن وب‌ویو پنل مدیریت (Web App) 🚀', web_app: { url: appUrl } }],
+              [{ text: '🔗 باز کردن در مرورگر اینترنت 🌍', url: appUrl }],
+              [{ text: '⚙️ منوی مدیریت در تلگرام', callback_data: 'admin_menu' }]
+            ]
+          }
+        });
+        return;
+      }
+
       if (messageText === '/admin' || callbackData === 'admin_menu') {
         if (callbackQueryId) await answerCallback('پنل مدیریت ⚙️');
         
-        const welcome = `⚙️ **پنل فوق‌پیشرفته مدیریت ربات** ⚙️\n\nمدیر گرامی، به مرکز کنترل خوش آمدید.\nاز دکمه‌های شیشه‌ای زیر برای تغییر فوری تنظیمات ربات، پایش لحظه‌ای و تعامل با اعضا استفاده کنید:`;
+        const appUrl = getPublicAppUrl();
+        const welcome = `⚙️ **پنل فوق‌پیشرفته مدیریت ربات** ⚙️\n\n` +
+          `👑 **مدیر گرامی، به مرکز کنترل خوش آمدید.**\n` +
+          `برای استفاده از رابط کاربری گرافیکی، دکمه **«🌐 باز کردن وب‌ویو پنل مدیریت»** را بزنید یا از گزینه‌های تلگرامی زیر استفاده کنید:\n\n` +
+          `🔗 **آدرس پنل تحت وب:** \`${appUrl}\``;
         
         const keyboard = {
           inline_keyboard: [
+            [
+              { text: `🌐 باز کردن وب‌ویو پنل مدیریت (Web App) 🚀`, web_app: { url: appUrl } }
+            ],
+            [
+              { text: `🔗 باز کردن پنل در مرورگر خارجی 🌍`, url: appUrl }
+            ],
             [
               { text: `📊 آمار لحظه‌ای سیستم`, callback_data: 'admin_stats', style: 'primary' },
               { text: `${db.settings.isBotRunning ? '🟢 ربات: روشن' : '🔴 ربات: خاموش'}`, callback_data: 'admin_toggle_bot', style: db.settings.isBotRunning ? 'success' : 'danger' }
@@ -6434,6 +6550,16 @@ async function handleBotUpdate(update: any) {
         ]
       ];
 
+      if (isAdmin) {
+        const appUrl = getPublicAppUrl();
+        startInlineKeyboard.unshift([
+          { text: '👑 🌐 باز کردن وب‌ویو پنل مدیریت (WebApp) 🚀', web_app: { url: appUrl } }
+        ]);
+        startInlineKeyboard.splice(1, 0, [
+          { text: '⚙️ ورود به منوی مدیریت در تلگرام', callback_data: 'admin_menu' }
+        ]);
+      }
+
       if (requiredChannels.length > 0 && requiredChannels[0]?.username) {
         const url = requiredChannels[0].inviteLink || `https://t.me/${requiredChannels[0].username.replace('@', '')}`;
         startInlineKeyboard.push([{ text: '⭐ کانال رسمی پشتیبانی و اخبار', url, style: 'primary' }]);
@@ -6443,7 +6569,7 @@ async function handleBotUpdate(update: any) {
         chat_id: chatId,
         text: welcome,
         parse_mode: 'Markdown',
-        reply_markup: getReplyKeyboard(userId)
+        reply_markup: getReplyKeyboard(userId, username)
       });
 
       await callTelegramApi('sendMessage', {
@@ -6888,7 +7014,7 @@ async function handleBotUpdate(update: any) {
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: defaultMsg,
-        reply_markup: getReplyKeyboard(userId)
+        reply_markup: getReplyKeyboard(userId, username)
       });
     }
 
@@ -6933,6 +7059,7 @@ async function startBot() {
     addLog('info', 'در حال اتصال به سرورهای تلگرام و اعتبارسنجی توکن...');
     const username = await testBotConnection(token);
     await setBotCommands(token);
+    await setupBotMenuButton(token);
     db.settings.botUsername = username;
     
     if (db.settings.botConnectionMode === 'webhook') {
@@ -7409,6 +7536,16 @@ async function startExpressServer() {
       res.json({ success: true, settings: db.settings });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Automatically configure Telegram Bot WebApp Menu Button
+  app.post('/api/settings/set-menu-button', async (req, res) => {
+    try {
+      const result = await setupBotMenuButton();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Error setting Telegram WebApp menu button' });
     }
   });
 
@@ -7968,7 +8105,7 @@ async function startExpressServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*all', (req, res) => {
+    app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

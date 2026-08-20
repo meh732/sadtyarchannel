@@ -521,6 +521,24 @@ export default function App() {
     }
   };
 
+  // Automatically configure Telegram WebApp Menu Button
+  const handleSetMenuButton = async () => {
+    setActionLoading('set_menu_button');
+    try {
+      const res = await fetch('/api/settings/set-menu-button', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || 'دکمه منوی وب‌ویو ربات در تلگرام با موفقیت فعال شد!', 'success');
+      } else {
+        showToast(data.message || 'خطا در ثبت دکمه منو در تلگرام', 'error');
+      }
+    } catch (err: any) {
+      showToast('خطا در برقراری ارتباط با سرور', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   // Add Extraction Source
   const handleAddSource = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3641,17 +3659,43 @@ export default function App() {
                           <span>باز کردن در تب جدید</span>
                         </a>
                       </div>
+
+                      {/* Instant 1-Click Bot Menu Setup Action */}
+                      <div className="pt-2 flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handleSetMenuButton}
+                          disabled={actionLoading === 'set_menu_button' || !settings.botToken}
+                          className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                          title="تنظیم خودکار دکمه منوی تلگرام به صورت Web App"
+                        >
+                          {actionLoading === 'set_menu_button' ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              <span>در حال اتصال و تنظیم در تلگرام...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Bot className="w-4 h-4" />
+                              <span>⚡️ تنظیم خودکار دکمه منوی وب‌ویو در ربات تلگرام</span>
+                            </>
+                          )}
+                        </button>
+                        <span className="text-[11px] text-emerald-300">
+                          (به صورت خودکار دکمه منوی چت تلگرام را روی این آدرس تنظیم می‌کند)
+                        </span>
+                      </div>
                     </div>
 
                     <div className="bg-indigo-900/40 border border-indigo-700/30 rounded-xl p-3.5 text-xs text-indigo-200 space-y-1.5">
                       <div className="font-bold flex items-center gap-1.5 text-indigo-100">
                         <Bot className="w-4 h-4 text-indigo-300" />
-                        <span>نحوه اتصال به عنوان دکمه منوی ربات در BotFather@:</span>
+                        <span>دسترسی به وب‌ویو برای ادمین در ربات تلگرام:</span>
                       </div>
                       <p className="text-[11px] text-slate-300 leading-relaxed">
-                        ۱. به ربات <strong>BotFather@</strong> بروید و دستور <code className="bg-slate-800 px-1 py-0.5 rounded text-amber-300">/setmenubutton</code> را بفرستید.<br />
-                        ۲. ربات خود را انتخاب کرده و آدرس کپی شده بالا را به عنوان URL دکمه منو وارد کنید.<br />
-                        ۳. کاربران با زدن دکمه منو در پایین چت تلگرام، پنل وب را مستقیم به صورت Web App باز می‌کنند.
+                        ۱. <strong>دکمه شیشه‌ای و کیبورد اختصاصی:</strong> اگر شناسه ادمین شما در زیر ذخیره شده باشد، دکمه <strong>«🌐 باز کردن وب‌ویو پنل مدیریت (WebApp)»</strong> به بالای کیبورد چت و منوی استارت اضافه می‌گردد.<br />
+                        ۲. <strong>دستور مستقیم:</strong> با فرستادن دستور <code className="bg-slate-800 px-1 py-0.5 rounded text-amber-300">/panel</code> یا <code className="bg-slate-800 px-1 py-0.5 rounded text-amber-300">/admin</code> در ربات، لینک و دکمه وب‌ویو فوراً ارسال می‌شود.<br />
+                        ۳. <strong>دکمه منوی گوشه چت:</strong> با زدن دکمه سبز رنگ بالا، دکمه Menu تلگرام برای باز کردن مستقیم وب‌اپ تنظیم می‌گردد.
                       </p>
                     </div>
                   </div>
