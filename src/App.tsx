@@ -41,7 +41,12 @@ import {
   Smartphone,
   ShieldCheck,
   Eye,
-  Award
+  Award,
+  Clock,
+  Globe,
+  ExternalLink,
+  Zap,
+  Newspaper
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -160,7 +165,9 @@ export default function App() {
   const [autoPostForm, setAutoPostForm] = useState<AutoPostSettings>({
     enabled: false,
     targetChannel: '',
+    configsEnabled: true,
     postIntervalHours: 4,
+    configIntervalHours: 4,
     configCount: 5,
     proxyCount: 1,
     customText: '',
@@ -168,12 +175,21 @@ export default function App() {
     postFiles: false,
     silentMode: false,
     lastPostedAt: null,
-    techNewsCount: 0,
-    techTricksCount: 0,
+    lastConfigsPostedAt: null,
+    lastTechNewsPostedAt: null,
+    lastTechTricksPostedAt: null,
+    techNewsEnabled: true,
+    techNewsIntervalHours: 4,
+    techNewsCount: 2,
+    techTricksEnabled: true,
+    techTricksIntervalHours: 6,
+    techTricksCount: 2,
     techPostMode: 'combined',
     autoPurgeOldTechDays: 7,
     includeTechImportanceBadge: true
   });
+
+  const [detectedAppUrl, setDetectedAppUrl] = useState<string>('');
 
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [restoreMode, setRestoreMode] = useState<'settings_and_sources' | 'full'>('settings_and_sources');
@@ -206,17 +222,18 @@ export default function App() {
     if (!silent) setLoading(true);
     try {
       if (!silent) {
-        const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes, techRes] = await Promise.all([
-          fetch('/api/stats').then(r => r.json()),
-          fetch('/api/sources').then(r => r.json()),
-          fetch('/api/force-join').then(r => r.json()),
-          fetch('/api/configs?limit=500').then(r => r.json()),
-          fetch('/api/proxies?limit=500').then(r => r.json()),
-          fetch('/api/users').then(r => r.json()),
-          fetch('/api/logs').then(r => r.json()),
-          fetch('/api/settings').then(r => r.json()),
-          fetch('/api/vpn-files').then(r => r.json()),
-          fetch('/api/tech-items').then(r => r.json())
+        const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes, techRes, appUrlRes] = await Promise.all([
+          fetch('/api/stats').then(r => r.json()).catch(() => ({})),
+          fetch('/api/sources').then(r => r.json()).catch(() => []),
+          fetch('/api/force-join').then(r => r.json()).catch(() => []),
+          fetch('/api/configs?limit=500').then(r => r.json()).catch(() => []),
+          fetch('/api/proxies?limit=500').then(r => r.json()).catch(() => []),
+          fetch('/api/users').then(r => r.json()).catch(() => []),
+          fetch('/api/logs').then(r => r.json()).catch(() => []),
+          fetch('/api/settings').then(r => r.json()).catch(() => ({})),
+          fetch('/api/vpn-files').then(r => r.json()).catch(() => []),
+          fetch('/api/tech-items').then(r => r.json()).catch(() => []),
+          fetch('/api/app-url').then(r => r.json()).catch(() => ({ url: window.location.origin }))
         ]);
 
         setStats(statsRes);
@@ -229,6 +246,11 @@ export default function App() {
         setUsers(usersRes);
         setLogs(logsRes);
         setSettings(settingsRes);
+        if (appUrlRes && appUrlRes.url) {
+          setDetectedAppUrl(appUrlRes.url);
+        } else {
+          setDetectedAppUrl(window.location.origin);
+        }
         
         if (settingsRes && settingsRes.autoPost) {
           setAutoPostForm(settingsRes.autoPost);
@@ -888,6 +910,78 @@ export default function App() {
       }
     } catch (err) {
       showToast('خطا در ارسال پست به کانال', 'error');
+    } finally {
+      setActionLoading(null);
+      fetchData(true);
+    }
+  };
+
+  const handleTriggerConfigsAutoPost = async () => {
+    setActionLoading('trigger_configs_autopost');
+    try {
+      await fetch('/api/settings/auto-post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(autoPostForm)
+      });
+
+      const res = await fetch('/api/bot/auto-post/trigger-configs', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('پست آزمایشی کانفیگ‌ها و پروکسی‌ها با موفقیت به کانال ارسال شد.', 'success');
+      } else {
+        showToast(data.message || 'خطا در ارسال کانفیگ‌ها', 'error');
+      }
+    } catch (err) {
+      showToast('خطا در ارسال به کانال', 'error');
+    } finally {
+      setActionLoading(null);
+      fetchData(true);
+    }
+  };
+
+  const handleTriggerTechNewsAutoPost = async () => {
+    setActionLoading('trigger_tech_news_autopost');
+    try {
+      await fetch('/api/settings/auto-post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(autoPostForm)
+      });
+
+      const res = await fetch('/api/bot/auto-post/trigger-tech-news', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('پست آزمایشی اخبار روز تکنولوژی با موفقیت به کانال ارسال شد.', 'success');
+      } else {
+        showToast(data.message || 'خطا در ارسال اخبار', 'error');
+      }
+    } catch (err) {
+      showToast('خطا در ارسال اخبار به کانال', 'error');
+    } finally {
+      setActionLoading(null);
+      fetchData(true);
+    }
+  };
+
+  const handleTriggerTechTricksAutoPost = async () => {
+    setActionLoading('trigger_tech_tricks_autopost');
+    try {
+      await fetch('/api/settings/auto-post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(autoPostForm)
+      });
+
+      const res = await fetch('/api/bot/auto-post/trigger-tech-tricks', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('پست آزمایشی ترفندها و رازهای تکنولوژی با موفقیت به کانال ارسال شد.', 'success');
+      } else {
+        showToast(data.message || 'خطا در ارسال ترفندها', 'error');
+      }
+    } catch (err) {
+      showToast('خطا در ارسال ترفندها به کانال', 'error');
     } finally {
       setActionLoading(null);
       fetchData(true);
@@ -2996,73 +3090,163 @@ export default function App() {
                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -15 }}
-                  className="max-w-2xl mx-auto space-y-6"
+                  className="max-w-3xl mx-auto space-y-6"
                 >
-                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                  {/* Header Banner */}
+                  <div className="bg-gradient-to-r from-indigo-900 to-slate-900 text-white rounded-2xl p-6 shadow-md">
                     <div className="flex items-start gap-4">
-                      <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
-                        <Sliders className="w-5 h-5" />
+                      <div className="w-12 h-12 rounded-xl bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 flex items-center justify-center shrink-0">
+                        <Sliders className="w-6 h-6" />
                       </div>
                       <div className="space-y-1">
-                        <h3 className="font-bold text-slate-900 text-base">سیستم هوشمند ارسال خودکار (Auto-Post)</h3>
-                        <p className="text-xs text-slate-500 leading-relaxed">
-                          این سیستم به شما به عنوان مدیر کانال اجازه می‌دهد بدون نیاز به کار دستی، روزانه بهترین کانفیگ‌های تست شده و پروکسی‌های پرسرعت فعال را به همراه لوکیشن، پینگ، برندسازی اختصاصی و متن‌های تبلیغاتی شخصی، به کانال یا گروه خود بفرستید.
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-white text-base">سیستم زمان‌بندی و ارسال خودکار به کانال (Auto-Post)</h3>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/30 text-indigo-200 border border-indigo-400/20">
+                            زمان‌بندی مجزا و تفکیک شده
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          می‌توانید زمان‌بندی ارسال **اخبار روز تکنولوژی**، **ترفندها و رازهای تخصصی** و **کانفیگ‌ها و پروکسی‌ها** را کاملاً مستقل و سوا از هم تنظیم نمایید.
                         </p>
                       </div>
                     </div>
                   </div>
 
-                  <form onSubmit={handleSaveAutoPostSettings} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
-                    <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-                      <div>
-                        <h4 className="font-bold text-slate-900 text-sm">فعال‌سازی ارسال خودکار پست</h4>
-                        <p className="text-[10px] text-slate-400 mt-0.5">ارسال منظم بر اساس بازه انتخابی شما در پس‌زمینه سرور</p>
+                  <form onSubmit={handleSaveAutoPostSettings} className="space-y-6">
+                    {/* Master Channel & General Config Card */}
+                    <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+                      <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                        <div>
+                          <h4 className="font-bold text-slate-900 text-sm">فعال‌سازی کلی سیستم ارسال خودکار</h4>
+                          <p className="text-[11px] text-slate-500 mt-0.5">کنترل سراسری ارسال پست‌های زمان‌بندی‌شده به کانال تلگرام</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAutoPostForm(prev => ({ ...prev, enabled: !prev.enabled }))}
+                          className={`w-12 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                            autoPostForm.enabled ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                          }`}
+                        >
+                          <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setAutoPostForm(prev => ({ ...prev, enabled: !prev.enabled }))}
-                        className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
-                          autoPostForm.enabled ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
-                        }`}
-                      >
-                        <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
-                      </button>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Target Channel */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                            <span>آیدی کانال مقصد</span>
+                            <span className="text-[10px] text-slate-400">مثال: MyChannel@</span>
+                          </label>
+                          <input
+                            type="text"
+                            required={autoPostForm.enabled}
+                            placeholder="@MyChannel"
+                            value={autoPostForm.targetChannel}
+                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, targetChannel: e.target.value }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm text-left font-mono focus:border-indigo-500 focus:outline-none"
+                            dir="ltr"
+                          />
+                        </div>
+
+                        {/* Advertisement / Bot username */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                            <span>آیدی تبلیغ / اسپانسر زیر پست‌ها</span>
+                            <span className="text-[10px] text-slate-400">امضای انتهای هر پست</span>
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="مثلا: @MyBot یا لینک کانال شما"
+                            value={autoPostForm.adText || ''}
+                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, adText: e.target.value }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* General Flags */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                        {/* Silent Post */}
+                        <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/50">
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 block">ارسال بدون صدا (Silent Mode)</span>
+                            <span className="text-[10px] text-slate-500">پست بدون بوق و نوتیفیکیشن صوتی</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setAutoPostForm(prev => ({ ...prev, silentMode: !prev.silentMode }))}
+                            className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                              autoPostForm.silentMode ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                            }`}
+                          >
+                            <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                          </button>
+                        </div>
+
+                        {/* Post Files */}
+                        <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/50">
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 block">ارسال فایل‌های پیکربندی (.npvt, .ovpn)</span>
+                            <span className="text-[10px] text-slate-500">ارسال فایل به همراه متن پست</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setAutoPostForm(prev => ({ ...prev, postFiles: !prev.postFiles }))}
+                            className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                              autoPostForm.postFiles ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                            }`}
+                          >
+                            <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                          </button>
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="space-y-4">
-                      {/* Target Channel */}
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                          <span>آیدی کانال مقصد ارسال پست</span>
-                          <span className="text-[10px] text-slate-400">مثال: MyTelegramChannel@</span>
-                        </label>
-                        <input
-                          type="text"
-                          required={autoPostForm.enabled}
-                          placeholder="@MyChannel"
-                          value={autoPostForm.targetChannel}
-                          onChange={(e) => setAutoPostForm(prev => ({ ...prev, targetChannel: e.target.value }))}
-                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm text-left font-mono focus:border-indigo-500 focus:outline-none"
-                          dir="ltr"
-                        />
-                        <p className="text-[10px] text-slate-400 leading-relaxed">
-                          ⚠️ بسیار مهم: ربات شما باید حتماً به عنوان مدیر (Administrator) با اجازه **ارسال پست (Post Messages)** در این کانال عضو باشد تا بتواند پست را ارسال کند.
-                        </p>
+                    {/* Section 1: CONFIGS & PROXIES SCHEDULE */}
+                    <div className="bg-white border border-indigo-100 rounded-2xl p-6 shadow-sm space-y-5">
+                      <div className="flex items-center justify-between pb-3 border-b border-indigo-50">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                            <Zap className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                              <span>زمان‌بندی ۱: ارسال کانفیگ‌ها و پروکسی‌ها (V2Ray & MTProto)</span>
+                            </h4>
+                            <p className="text-[10px] text-slate-400">بهترین کانفیگ‌های تست شده و پروکسی‌های پرسرعت فعال</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAutoPostForm(prev => ({ ...prev, configsEnabled: prev.configsEnabled === false }))}
+                          className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                            autoPostForm.configsEnabled !== false ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                          }`}
+                        >
+                          <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                        </button>
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        {/* Interval Hours */}
+                        {/* Config Interval */}
                         <div className="space-y-2">
-                          <label className="text-xs font-bold text-slate-700">فاصله زمانی ارسال</label>
+                          <label className="text-xs font-bold text-indigo-900 flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>فاصله زمانی ارسال کانفیگ</span>
+                          </label>
                           <select
-                            value={autoPostForm.postIntervalHours}
-                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, postIntervalHours: Number(e.target.value) }))}
-                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                            value={autoPostForm.configIntervalHours || autoPostForm.postIntervalHours || 4}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              setAutoPostForm(prev => ({ ...prev, configIntervalHours: val, postIntervalHours: val }));
+                            }}
+                            className="w-full px-4 py-2.5 rounded-xl border border-indigo-100 text-xs focus:border-indigo-500 focus:outline-none bg-indigo-50/30 cursor-pointer font-medium text-slate-800"
                           >
                             <option value="1">هر ۱ ساعت یکبار</option>
                             <option value="2">هر ۲ ساعت یکبار</option>
                             <option value="3">هر ۳ ساعت یکبار</option>
-                            <option value="4">هر ۴ ساعت یکبار</option>
+                            <option value="4">هر ۴ ساعت یکبار (پیش‌فرض)</option>
                             <option value="6">هر ۶ ساعت یکبار</option>
                             <option value="8">هر ۸ ساعت یکبار</option>
                             <option value="12">هر ۱۲ ساعت یکبار</option>
@@ -3074,13 +3258,13 @@ export default function App() {
                         <div className="space-y-2">
                           <label className="text-xs font-bold text-slate-700">تعداد کانفیگ ویتوری</label>
                           <select
-                            value={autoPostForm.configCount}
+                            value={autoPostForm.configCount !== undefined ? autoPostForm.configCount : 5}
                             onChange={(e) => setAutoPostForm(prev => ({ ...prev, configCount: Number(e.target.value) }))}
                             className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
                           >
                             {Array.from({ length: 51 }).map((_, idx) => (
                               <option key={idx} value={idx}>
-                                {idx === 0 ? 'هیچکدام (بدون کانفیگ)' : `${idx} کانفیگ برتر فعال`}
+                                {idx === 0 ? 'هیچکدام (بدون کانفیگ)' : `${idx} کانفیگ برتر`}
                               </option>
                             ))}
                           </select>
@@ -3090,169 +3274,272 @@ export default function App() {
                         <div className="space-y-2">
                           <label className="text-xs font-bold text-slate-700">تعداد پروکسی تلگرام</label>
                           <select
-                            value={autoPostForm.proxyCount}
+                            value={autoPostForm.proxyCount !== undefined ? autoPostForm.proxyCount : 1}
                             onChange={(e) => setAutoPostForm(prev => ({ ...prev, proxyCount: Number(e.target.value) }))}
                             className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
                           >
                             {Array.from({ length: 21 }).map((_, idx) => (
                               <option key={idx} value={idx}>
-                                {idx === 0 ? 'هیچکدام (بدون پروکسی)' : `${idx} پروکسی برتر فعال`}
+                                {idx === 0 ? 'هیچکدام (بدون پروکسی)' : `${idx} پروکسی برتر`}
                               </option>
                             ))}
                           </select>
                         </div>
                       </div>
 
-                      {/* Custom Persian text */}
+                      {/* Custom Intro text */}
                       <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-700">توضیحات و متن دلخواه پست</label>
+                        <label className="text-xs font-bold text-slate-700">متن سربرگ یا توضیحات دلخواه پست کانفیگ‌ها</label>
                         <textarea
-                          rows={4}
-                          placeholder="متنی که مایلید به انتهای پست اضافه شود. این متن به همراه لوکیشن و پینگ ارسال می‌شود."
-                          value={autoPostForm.customText}
+                          rows={2}
+                          placeholder="متن دلخواه که در ابتدای پست کانفیگ‌ها قرار می‌گیرد..."
+                          value={autoPostForm.customText || ''}
                           onChange={(e) => setAutoPostForm(prev => ({ ...prev, customText: e.target.value }))}
-                          className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none leading-relaxed"
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none leading-relaxed"
                         />
                       </div>
 
-                      {/* Advertisement / Bot username */}
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-700">آیدی جهت تبلیغ (اسپریالایزر)</label>
-                        <input
-                          type="text"
-                          placeholder="مثلا: @MyConfigRobot یا لینک کانال شما"
-                          value={autoPostForm.adText}
-                          onChange={(e) => setAutoPostForm(prev => ({ ...prev, adText: e.target.value }))}
-                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-indigo-500 focus:outline-none"
-                        />
-                      </div>
-
-                      {/* Tech News & Tricks Settings Section */}
-                      <div className="p-4 bg-amber-50/60 border border-amber-200/80 rounded-2xl space-y-4">
-                        <div className="flex items-center gap-2 text-amber-900 font-bold text-xs pb-2 border-b border-amber-200/60">
-                          <Sparkles className="w-4 h-4 text-amber-600" />
-                          <span>تنظیمات ارسال هوشمند اخبار و ترفندهای تکنولوژی به کانال</span>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          {/* Tech News Count */}
-                          <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                              <span>تعداد اخبار روز تکنولوژی</span>
-                              <span className="text-[10px] text-amber-700">بروزرسانی روزانه</span>
-                            </label>
-                            <select
-                              value={autoPostForm.techNewsCount || 0}
-                              onChange={(e) => setAutoPostForm(prev => ({ ...prev, techNewsCount: Number(e.target.value) }))}
-                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
-                            >
-                              <option value="0">بدون اخبار (۰ خبر)</option>
-                              <option value="1">۱ خبر مهم و برتر</option>
-                              <option value="2">۲ خبر منتخب روز</option>
-                              <option value="3">۳ خبر مهم روز</option>
-                              <option value="5">۵ خبر منتخب روز</option>
-                            </select>
-                          </div>
-
-                          {/* Tech Tricks Count */}
-                          <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                              <span>تعداد ترفند و راز تکنولوژی</span>
-                              <span className="text-[10px] text-amber-700">آموزشی و موبایل</span>
-                            </label>
-                            <select
-                              value={autoPostForm.techTricksCount || 0}
-                              onChange={(e) => setAutoPostForm(prev => ({ ...prev, techTricksCount: Number(e.target.value) }))}
-                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
-                            >
-                              <option value="0">بدون ترفند (۰ ترفند)</option>
-                              <option value="1">۱ ترفند یا راز کاربردی</option>
-                              <option value="2">۲ ترفند یا راز کاربردی</option>
-                              <option value="3">۳ ترفند یا راز کاربردی</option>
-                              <option value="5">۵ ترفند یا راز کاربردی</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          {/* Tech Post Mode */}
-                          <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-700">نحوه ارسال در کانال</label>
-                            <select
-                              value={autoPostForm.techPostMode || 'combined'}
-                              onChange={(e) => setAutoPostForm(prev => ({ ...prev, techPostMode: e.target.value as any }))}
-                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
-                            >
-                              <option value="combined">ادغام درون پست کانفیگ‌ها و پروکسی</option>
-                              <option value="standalone">پست مستقل و جداگانه برای اخبار و ترفندها</option>
-                              <option value="both">هم درون پست و هم پست مستقل</option>
-                            </select>
-                          </div>
-
-                          {/* Auto Purge Old Tech */}
-                          <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-700">حذف خودکار مطالب قدیمی</label>
-                            <select
-                              value={autoPostForm.autoPurgeOldTechDays || 7}
-                              onChange={(e) => setAutoPostForm(prev => ({ ...prev, autoPurgeOldTechDays: Number(e.target.value) }))}
-                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
-                            >
-                              <option value="1">مطالب قدیمی‌تر از ۱ روز</option>
-                              <option value="2">مطالب قدیمی‌تر از ۲ روز</option>
-                              <option value="3">مطالب قدیمی‌تر از ۳ روز</option>
-                              <option value="7">مطالب قدیمی‌تر از ۷ روز (پیش‌فرض)</option>
-                              <option value="14">مطالب قدیمی‌تر از ۱۴ روز</option>
-                              <option value="30">مطالب قدیمی‌تر از ۳۰ روز</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        {/* Show Importance Badge */}
-                        <div className="flex items-center justify-between pt-2 border-t border-amber-200/50">
-                          <div>
-                            <h4 className="text-xs font-bold text-slate-800">نمایش برچسب درجه اهمیت (🔥 فوری / ⚡️ مهم)</h4>
-                            <p className="text-[10px] text-slate-500 mt-0.5">افزودن نشان‌های جذاب درجه اهمیت در متن پست ارسالی به تلگرام</p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setAutoPostForm(prev => ({ ...prev, includeTechImportanceBadge: !prev.includeTechImportanceBadge }))}
-                            className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
-                              autoPostForm.includeTechImportanceBadge !== false ? 'bg-amber-600 justify-end' : 'bg-slate-200 justify-start'
-                            }`}
-                          >
-                            <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Silent Post */}
-                      <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                        <div>
-                          <h4 className="text-xs font-bold text-slate-800">ارسال بدون صدا (Silent Mode)</h4>
-                          <p className="text-[10px] text-slate-400 mt-0.5">پست بدون نوتیفیکیشن صوتی در کانال ارسال خواهد شد (کاربر آزار نمی‌بیند)</p>
+                      <div className="flex items-center justify-between pt-3 border-t border-indigo-50">
+                        <div className="text-[11px] text-slate-400">
+                          {autoPostForm.lastConfigsPostedAt ? (
+                            <span>آخرین ارسال کانفیگ‌ها: <strong>{new Date(autoPostForm.lastConfigsPostedAt).toLocaleString('fa-IR')}</strong></span>
+                          ) : (
+                            <span>هنوز ارسالی ثبت نشده است.</span>
+                          )}
                         </div>
                         <button
                           type="button"
-                          onClick={() => setAutoPostForm(prev => ({ ...prev, silentMode: !prev.silentMode }))}
+                          onClick={handleTriggerConfigsAutoPost}
+                          disabled={actionLoading === 'trigger_configs_autopost' || !autoPostForm.targetChannel}
+                          className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          {actionLoading === 'trigger_configs_autopost' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                          <span>ارسال فوری و تست کانفیگ‌ها</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Section 2: TECH NEWS SCHEDULE */}
+                    <div className="bg-white border border-sky-100 rounded-2xl p-6 shadow-sm space-y-5">
+                      <div className="flex items-center justify-between pb-3 border-b border-sky-50">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center">
+                            <Newspaper className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                              <span>زمان‌بندی ۲: ارسال اخبار روز دنیای تکنولوژی (Tech News)</span>
+                            </h4>
+                            <p className="text-[10px] text-slate-400">تازه‌ترین رویدادهای هوش مصنوعی، فناوری و اینترنت</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAutoPostForm(prev => ({ ...prev, techNewsEnabled: prev.techNewsEnabled === false }))}
                           className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
-                            autoPostForm.silentMode ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                            autoPostForm.techNewsEnabled !== false ? 'bg-sky-600 justify-end' : 'bg-slate-200 justify-start'
                           }`}
                         >
                           <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
                         </button>
                       </div>
 
-                      {/* Post Files */}
-                      <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                        <div>
-                          <h4 className="text-xs font-bold text-slate-800">ارسال فایل‌های پیکربندی (.npvt, .ovpn)</h4>
-                          <p className="text-[10px] text-slate-400 mt-0.5">آپلود و ارسال فایل‌ها به محض استخراج با نام اختصاصی شما.</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Tech News Interval */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-sky-900 flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-sky-600" />
+                            <span>فاصله زمانی ارسال اخبار</span>
+                          </label>
+                          <select
+                            value={autoPostForm.techNewsIntervalHours || 4}
+                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, techNewsIntervalHours: Number(e.target.value) }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-sky-100 text-xs focus:border-sky-500 focus:outline-none bg-sky-50/30 cursor-pointer font-medium text-slate-800"
+                          >
+                            <option value="1">هر ۱ ساعت یکبار</option>
+                            <option value="2">هر ۲ ساعت یکبار</option>
+                            <option value="3">هر ۳ ساعت یکبار</option>
+                            <option value="4">هر ۴ ساعت یکبار (پیش‌فرض)</option>
+                            <option value="6">هر ۶ ساعت یکبار</option>
+                            <option value="8">هر ۸ ساعت یکبار</option>
+                            <option value="12">هر ۱۲ ساعت یکبار</option>
+                            <option value="24">هر ۲۴ ساعت (یکبار در روز)</option>
+                          </select>
+                        </div>
+
+                        {/* Tech News Count */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-700">تعداد اخبار در هر نوبت</label>
+                          <select
+                            value={autoPostForm.techNewsCount !== undefined ? autoPostForm.techNewsCount : 2}
+                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, techNewsCount: Number(e.target.value) }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-sky-500 focus:outline-none bg-white cursor-pointer"
+                          >
+                            <option value="0">بدون اخبار (۰ خبر)</option>
+                            <option value="1">۱ خبر مهم و برتر</option>
+                            <option value="2">۲ خبر منتخب</option>
+                            <option value="3">۳ خبر مهم روز</option>
+                            <option value="5">۵ خبر منتخب روز</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-3 border-t border-sky-50">
+                        <div className="text-[11px] text-slate-400">
+                          {autoPostForm.lastTechNewsPostedAt ? (
+                            <span>آخرین ارسال اخبار: <strong>{new Date(autoPostForm.lastTechNewsPostedAt).toLocaleString('fa-IR')}</strong></span>
+                          ) : (
+                            <span>هنوز ارسالی برای اخبار ثبت نشده است.</span>
+                          )}
                         </div>
                         <button
                           type="button"
-                          onClick={() => setAutoPostForm(prev => ({ ...prev, postFiles: !prev.postFiles }))}
+                          onClick={handleTriggerTechNewsAutoPost}
+                          disabled={actionLoading === 'trigger_tech_news_autopost' || !autoPostForm.targetChannel}
+                          className="px-4 py-2 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          {actionLoading === 'trigger_tech_news_autopost' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                          <span>ارسال فوری و تست اخبار</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Section 3: TECH TRICKS & SECRETS SCHEDULE */}
+                    <div className="bg-white border border-amber-100 rounded-2xl p-6 shadow-sm space-y-5">
+                      <div className="flex items-center justify-between pb-3 border-b border-amber-50">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                            <Lightbulb className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                              <span>زمان‌بندی ۳: ارسال ترفندها و رازهای تکنولوژی (Tech Tricks & Secrets)</span>
+                            </h4>
+                            <p className="text-[10px] text-slate-400">ترفندهای موبایل، کامپیوتر، امنیت و دور زدن محدودیت‌ها</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAutoPostForm(prev => ({ ...prev, techTricksEnabled: prev.techTricksEnabled === false }))}
                           className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
-                            autoPostForm.postFiles ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                            autoPostForm.techTricksEnabled !== false ? 'bg-amber-600 justify-end' : 'bg-slate-200 justify-start'
+                          }`}
+                        >
+                          <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Tech Tricks Interval */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-amber-900 flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-amber-600" />
+                            <span>فاصله زمانی ارسال ترفندها</span>
+                          </label>
+                          <select
+                            value={autoPostForm.techTricksIntervalHours || 6}
+                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, techTricksIntervalHours: Number(e.target.value) }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-amber-100 text-xs focus:border-amber-500 focus:outline-none bg-amber-50/30 cursor-pointer font-medium text-slate-800"
+                          >
+                            <option value="1">هر ۱ ساعت یکبار</option>
+                            <option value="2">هر ۲ ساعت یکبار</option>
+                            <option value="3">هر ۳ ساعت یکبار</option>
+                            <option value="4">هر ۴ ساعت یکبار</option>
+                            <option value="6">هر ۶ ساعت یکبار (پیش‌فرض)</option>
+                            <option value="8">هر ۸ ساعت یکبار</option>
+                            <option value="12">هر ۱۲ ساعت یکبار</option>
+                            <option value="24">هر ۲۴ ساعت (یکبار در روز)</option>
+                          </select>
+                        </div>
+
+                        {/* Tech Tricks Count */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-700">تعداد ترفند در هر نوبت</label>
+                          <select
+                            value={autoPostForm.techTricksCount !== undefined ? autoPostForm.techTricksCount : 2}
+                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, techTricksCount: Number(e.target.value) }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-amber-500 focus:outline-none bg-white cursor-pointer"
+                          >
+                            <option value="0">بدون ترفند (۰ ترفند)</option>
+                            <option value="1">۱ ترفند یا راز کاربردی</option>
+                            <option value="2">۲ ترفند یا راز کاربردی</option>
+                            <option value="3">۳ ترفند یا راز کاربردی</option>
+                            <option value="5">۵ ترفند یا راز کاربردی</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-3 border-t border-amber-50">
+                        <div className="text-[11px] text-slate-400">
+                          {autoPostForm.lastTechTricksPostedAt ? (
+                            <span>آخرین ارسال ترفندها: <strong>{new Date(autoPostForm.lastTechTricksPostedAt).toLocaleString('fa-IR')}</strong></span>
+                          ) : (
+                            <span>هنوز ارسالی برای ترفندها ثبت نشده است.</span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleTriggerTechTricksAutoPost}
+                          disabled={actionLoading === 'trigger_tech_tricks_autopost' || !autoPostForm.targetChannel}
+                          className="px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          {actionLoading === 'trigger_tech_tricks_autopost' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                          <span>ارسال فوری و تست ترفندها</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Section 4: ADVANCED PRESENTATION & ARCHIVE SETTINGS */}
+                    <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+                      <div className="flex items-center gap-2 text-slate-900 font-bold text-xs pb-2 border-b border-slate-100">
+                        <Sparkles className="w-4 h-4 text-indigo-600" />
+                        <span>تنظیمات قالب و نگهداری آرشیو مطالب تکنولوژی</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Tech Post Mode */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-700">شیوه انتشار اخبار و ترفندها</label>
+                          <select
+                            value={autoPostForm.techPostMode || 'combined'}
+                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, techPostMode: e.target.value as any }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                          >
+                            <option value="combined">ادغام درون پست کانفیگ‌ها و پروکسی</option>
+                            <option value="standalone">پست‌های کاملاً مستقل و مجزا در کانال (پیشنهادی)</option>
+                            <option value="both">هم درون پست و هم به صورت مستقل</option>
+                          </select>
+                        </div>
+
+                        {/* Auto Purge Old Tech */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-700">حذف خودکار مطالب قدیمی از آرشیو</label>
+                          <select
+                            value={autoPostForm.autoPurgeOldTechDays || 7}
+                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, autoPurgeOldTechDays: Number(e.target.value) }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none bg-white cursor-pointer"
+                          >
+                            <option value="1">مطالب قدیمی‌تر از ۱ روز</option>
+                            <option value="2">مطالب قدیمی‌تر از ۲ روز</option>
+                            <option value="3">مطالب قدیمی‌تر از ۳ روز</option>
+                            <option value="7">مطالب قدیمی‌تر از ۷ روز (پیش‌فرض)</option>
+                            <option value="14">مطالب قدیمی‌تر از ۱۴ روز</option>
+                            <option value="30">مطالب قدیمی‌تر از ۳۰ روز</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Show Importance Badge */}
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                        <div>
+                          <h4 className="text-xs font-bold text-slate-800">نمایش برچسب درجه اهمیت (🔥 فوری / ⚡️ مهم)</h4>
+                          <p className="text-[10px] text-slate-500 mt-0.5">افزودن نشان‌های بصری جذاب درجه اهمیت در متن ارسالی تلگرام</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAutoPostForm(prev => ({ ...prev, includeTechImportanceBadge: !prev.includeTechImportanceBadge }))}
+                          className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                            autoPostForm.includeTechImportanceBadge !== false ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
                           }`}
                         >
                           <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
@@ -3260,21 +3547,22 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+                    {/* Master Action Buttons */}
+                    <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4">
                       <button
                         type="submit"
                         disabled={actionLoading === 'save_autopost'}
-                        className="w-full sm:w-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                        className="w-full sm:w-auto px-7 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer disabled:opacity-50"
                       >
                         {actionLoading === 'save_autopost' ? (
                           <>
                             <RefreshCw className="w-4 h-4 animate-spin" />
-                            <span>در حال ذخیره...</span>
+                            <span>در حال ذخیره تنظیمات...</span>
                           </>
                         ) : (
                           <>
                             <Check className="w-4 h-4" />
-                            <span>ذخیره تنظیمات ارسال خودکار</span>
+                            <span>ذخیره کلیه تنظیمات و زمان‌بندی‌ها</span>
                           </>
                         )}
                       </button>
@@ -3283,26 +3571,91 @@ export default function App() {
                         type="button"
                         onClick={handleTriggerAutoPost}
                         disabled={actionLoading === 'trigger_autopost' || !autoPostForm.targetChannel}
-                        className="w-full sm:w-auto px-6 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
-                        title="ارسال دستی و فوری یک پست نمونه طبق تنظیمات بالا جهت تست صحت عملکرد"
+                        className="w-full sm:w-auto px-6 py-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+                        title="ارسال دستی و فوری پست جامع طبق تمامی تنظیمات به کانال"
                       >
                         <Send className="w-4 h-4" />
-                        <span>ارسال فوری پست تست به کانال</span>
+                        <span>ارسال جامع همه بخش‌ها (تست سراسری)</span>
                       </button>
                     </div>
-
-                    {autoPostForm.lastPostedAt && (
-                      <p className="text-[10px] text-slate-400 text-center sm:text-right">
-                        آخرین ارسال خودکار موفقیت‌آمیز: <strong>{new Date(autoPostForm.lastPostedAt).toLocaleString('fa-IR')}</strong>
-                      </p>
-                    )}
                   </form>
                 </motion.div>
               )}
 
               {/* --- TAB: SETTINGS --- */}
               {activeTab === 'settings' && (
-                <div key="settings" className="max-w-2xl mx-auto space-y-6">
+                <div key="settings" className="max-w-3xl mx-auto space-y-6">
+                  {/* Telegram Web App / Webview Integration Card */}
+                  <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 text-white rounded-2xl p-6 shadow-md border border-indigo-800/40 space-y-4">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 flex items-center justify-center">
+                          <Globe className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-white text-base flex items-center gap-2">
+                            <span>آدرس پنل وب و وب‌اپ تلگرام (Telegram Web App / TWA)</span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                              اتصال فعال
+                            </span>
+                          </h3>
+                          <p className="text-xs text-slate-300 mt-0.5">
+                            آدرس شناسایی شده پنل وب که می‌توانید به عنوان وب‌ویو (Web App) در دکمه‌های شیشه‌ای ربات یا منوی تلگرام تنظیم کنید.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                        <span>آدرس وب‌اپلیکیشن سرور (Web Panel URL)</span>
+                        <span className="text-[10px] text-indigo-300">مناسب باز کردن مستقیم در تلگرام</span>
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          readOnly
+                          value={detectedAppUrl || (typeof window !== 'undefined' ? window.location.origin : '')}
+                          className="w-full px-4 py-2.5 rounded-xl bg-slate-800/90 border border-indigo-700/50 text-xs font-mono text-indigo-200 select-all focus:outline-none"
+                          dir="ltr"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const url = detectedAppUrl || window.location.origin;
+                            navigator.clipboard.writeText(url);
+                            showToast('آدرس پنل وب با موفقیت کپی گردید.', 'success');
+                          }}
+                          className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer"
+                        >
+                          <Copy className="w-4 h-4" />
+                          <span>کپی آدرس</span>
+                        </button>
+                        <a
+                          href={detectedAppUrl || (typeof window !== 'undefined' ? window.location.origin : '#')}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shrink-0"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          <span>باز کردن در تب جدید</span>
+                        </a>
+                      </div>
+                    </div>
+
+                    <div className="bg-indigo-900/40 border border-indigo-700/30 rounded-xl p-3.5 text-xs text-indigo-200 space-y-1.5">
+                      <div className="font-bold flex items-center gap-1.5 text-indigo-100">
+                        <Bot className="w-4 h-4 text-indigo-300" />
+                        <span>نحوه اتصال به عنوان دکمه منوی ربات در BotFather@:</span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        ۱. به ربات <strong>BotFather@</strong> بروید و دستور <code className="bg-slate-800 px-1 py-0.5 rounded text-amber-300">/setmenubutton</code> را بفرستید.<br />
+                        ۲. ربات خود را انتخاب کرده و آدرس کپی شده بالا را به عنوان URL دکمه منو وارد کنید.<br />
+                        ۳. کاربران با زدن دکمه منو در پایین چت تلگرام، پنل وب را مستقیم به صورت Web App باز می‌کنند.
+                      </p>
+                    </div>
+                  </div>
+
                   <form onSubmit={handleSaveSettings} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
                     <div>
                       <h3 className="font-bold text-slate-900 text-base">پیکربندی کلیدها و سیستم ربات</h3>

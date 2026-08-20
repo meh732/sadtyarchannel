@@ -162,21 +162,40 @@ const DEFAULT_SOURCES: SourceItem[] = [
   }
 ];
 
+const DEFAULT_KNOWN_APP_URL = 'https://ais-dev-3wfduwtghl6fqrseyhtp5l-217900666396.europe-west2.run.app';
+
 const DEFAULT_AUTO_POST: AutoPostSettings = {
   enabled: false,
   targetChannel: '',
-  postIntervalHours: 4,
-  configCount: 1,
-  proxyCount: 1,
-  customText: '💎 کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده ما تقدیم به شما:',
   adText: 'Sponsor: @MyChannel',
   silentMode: true,
-  lastPostedAt: null,
-  techNewsCount: 1,
-  techTricksCount: 1,
-  techPostMode: 'combined',
+  postFiles: false,
   includeTechImportanceBadge: true,
-  autoPurgeOldTechDays: 2
+  autoPurgeOldTechDays: 7,
+  lastPostedAt: null,
+
+  // 1. Configs & Proxies Schedule
+  configsEnabled: true,
+  postIntervalHours: 4,
+  configIntervalHours: 4,
+  configCount: 5,
+  proxyCount: 1,
+  customText: '💎 کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده ما تقدیم به شما:',
+  lastConfigsPostedAt: null,
+
+  // 2. Tech News Schedule
+  techNewsEnabled: true,
+  techNewsIntervalHours: 4,
+  techNewsCount: 2,
+  lastTechNewsPostedAt: null,
+
+  // 3. Tech Tricks & Secrets Schedule
+  techTricksEnabled: true,
+  techTricksIntervalHours: 6,
+  techTricksCount: 2,
+  lastTechTricksPostedAt: null,
+
+  techPostMode: 'combined'
 };
 
 const DEFAULT_SETTINGS: SystemSettings = {
@@ -196,7 +215,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   backupIntervalHours: 24,
   lastBackupAt: null,
   botConnectionMode: 'polling',
-  publicUrl: '',
+  publicUrl: DEFAULT_KNOWN_APP_URL,
   maxConfigsRetention: 2000
 };
 
@@ -366,6 +385,24 @@ function addLog(level: 'info' | 'warn' | 'error' | 'success', message: string) {
   }
   saveDatabase();
   console.log(`[${level.toUpperCase()}] ${message}`);
+}
+
+// --- Public Web Panel URL Helper ---
+function getPublicAppUrl(req?: express.Request): string {
+  if (db.settings.publicUrl && db.settings.publicUrl.trim()) {
+    const raw = db.settings.publicUrl.trim();
+    return raw.startsWith('http') ? raw : `https://${raw}`;
+  }
+  if (process.env.APP_URL) return process.env.APP_URL;
+  if (process.env.DEV_APP_URL) return process.env.DEV_APP_URL;
+  if (req) {
+    const host = req.get('x-forwarded-host') || req.get('host');
+    const proto = req.get('x-forwarded-proto') || 'https';
+    if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+      return `${proto}://${host}`;
+    }
+  }
+  return DEFAULT_KNOWN_APP_URL;
 }
 
 // Ensure database is loaded right away
@@ -3140,7 +3177,7 @@ function formatTechItemForTelegram(item: TechItem, showBadge = true): string {
   return text;
 }
 
-// Standalone Tech Post Dispatcher
+// Standalone Tech Post Dispatcher (General)
 async function executeStandaloneTechPost(targetChannel: string, items: TechItem[]): Promise<boolean> {
   if (!items || items.length === 0) return false;
   try {
@@ -3190,24 +3227,27 @@ async function executeStandaloneTechPost(targetChannel: string, items: TechItem[
   }
 }
 
-// --- Auto-Posting Logic ---
-async function executeAutoPost(): Promise<boolean> {
+// ----------------------------------------------------
+// 1. DEDICATED EXECUTOR: CONFIGS & PROXIES AUTO-POST
+// ----------------------------------------------------
+async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boolean> {
   const settings = db.settings.autoPost;
-  if (!settings || !settings.enabled || !settings.targetChannel) {
-    addLog('warn', 'ارسال خودکار انجام نشد: غیرفعال است یا کانال هدف تنظیم نشده است.');
+  const targetChannel = customTargetChannel || settings?.targetChannel;
+  if (!targetChannel) {
+    addLog('warn', 'ارسال کانفیگ‌ها انجام نشد: کانال مقصد تنظیم نشده است.');
     return false;
   }
   if (!db.settings.botToken) {
-    addLog('warn', 'ارسال خودکار انجام نشد: توکن ربات فعال نیست.');
+    addLog('warn', 'ارسال کانفیگ‌ها انجام نشد: توکن ربات فعال نیست.');
     return false;
   }
 
   try {
-    addLog('info', `در حال آماده‌سازی و ارسال پست خودکار به کانال ${settings.targetChannel}...`);
+    addLog('info', `در حال آماده‌سازی و ارسال پست کانفیگ‌ها و پروکسی‌ها به کانال ${targetChannel}...`);
 
-    // Get requested configs count (supports 0, 1, 2, 3, 5, 10, 15, 20, 30, 50, etc.)
+    // Get requested configs count
     const rawConfCount = typeof settings.configCount === 'number' ? settings.configCount : parseInt(String(settings.configCount), 10);
-    const configLimit = !isNaN(rawConfCount) && rawConfCount >= 0 ? rawConfCount : 10;
+    const configLimit = !isNaN(rawConfCount) && rawConfCount >= 0 ? rawConfCount : 5;
     
     let availableConfigs = db.configs.filter(c => c.status === 'working');
     if (availableConfigs.length < configLimit) {
@@ -3223,7 +3263,7 @@ async function executeAutoPost(): Promise<boolean> {
 
     // Get requested proxies count
     const rawProxyCount = typeof settings.proxyCount === 'number' ? settings.proxyCount : parseInt(String(settings.proxyCount), 10);
-    const proxyLimit = !isNaN(rawProxyCount) && rawProxyCount >= 0 ? rawProxyCount : 0;
+    const proxyLimit = !isNaN(rawProxyCount) && rawProxyCount >= 0 ? rawProxyCount : 1;
     
     let availableProxies = (db.proxies || []).filter(p => p.status === 'working');
     if (availableProxies.length < proxyLimit) {
@@ -3237,44 +3277,19 @@ async function executeAutoPost(): Promise<boolean> {
     const shuffledProxies = [...availableProxies].sort(() => 0.5 - Math.random());
     const selectedProxies = proxyLimit === 0 ? [] : shuffledProxies.slice(0, Math.min(proxyLimit, shuffledProxies.length));
 
-    // Get requested tech items count
-    seedCuratedTechItems();
-    const rawTechNewsCount = typeof settings.techNewsCount === 'number' ? settings.techNewsCount : 0;
-    const techNewsLimit = !isNaN(rawTechNewsCount) && rawTechNewsCount >= 0 ? rawTechNewsCount : 0;
-
-    const rawTechTricksCount = typeof settings.techTricksCount === 'number' ? settings.techTricksCount : 0;
-    const techTricksLimit = !isNaN(rawTechTricksCount) && rawTechTricksCount >= 0 ? rawTechTricksCount : 0;
-
-    const allTech = db.techItems || [];
-    // Prioritize unposted items, then highest importance score, then newest
-    const sortTechFn = (a: TechItem, b: TechItem) => {
-      if (a.postedToChannel !== b.postedToChannel) {
-        return a.postedToChannel ? 1 : -1;
-      }
-      return (b.importanceScore || 50) - (a.importanceScore || 50);
-    };
-
-    const newsCandidates = allTech.filter(i => i.category === 'news').sort(sortTechFn);
-    const tricksCandidates = allTech.filter(i => i.category === 'trick' || i.category === 'secret').sort(sortTechFn);
-
-    const selectedTechNews = techNewsLimit > 0 ? newsCandidates.slice(0, techNewsLimit) : [];
-    const selectedTechTricks = techTricksLimit > 0 ? tricksCandidates.slice(0, techTricksLimit) : [];
-    const selectedTechItems = [...selectedTechNews, ...selectedTechTricks];
-
-    if (selectedConfigs.length === 0 && selectedProxies.length === 0 && selectedTechItems.length === 0) {
-      addLog('warn', 'ارسال خودکار انجام نشد زیرا هیچ کانفیگ، پروکسی یا مطلب تکنولوژی برای ارسال انتخاب نشده است.');
+    if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
+      addLog('warn', 'ارسال کانفیگ‌ها انجام نشد: هیچ کانفیگ یا پروکسی برای ارسال یافت نشد.');
       return false;
     }
 
-    let text = `🚀 <b>${escapeHtml(settings.customText || '💎 کانفیگ‌ها و پروکسی‌های جدید تقدیم به شما:')}</b>\n\n`;
+    let text = `🚀 <b>${escapeHtml(settings.customText || '💎 کانفیگ‌ها و پروکسی‌های جدید و پرسرعت تقدیم به شما:')}</b>\n\n`;
 
     let needsFullPackFile = false;
     let fullPackConfigsContent = '';
 
     if (selectedConfigs.length > 0) {
-      text += `📥 <b>پک ${selectedConfigs.length} کانفیگ جدید V2Ray:</b>\n`;
+      text += `📥 <b>پک ${selectedConfigs.length} کانفیگ اختصاصی V2Ray:</b>\n`;
       
-      // Detailed item listing for up to 6 configs
       const previewCount = Math.min(selectedConfigs.length, 6);
       for (let i = 0; i < previewCount; i++) {
         const conf = selectedConfigs[i];
@@ -3293,8 +3308,6 @@ async function executeAutoPost(): Promise<boolean> {
       const allBrandedList = selectedConfigs.map(conf => applyBrandingToConfig(conf.raw, db.settings.branding));
       fullPackConfigsContent = allBrandedList.join('\n');
 
-      // Check if all configs fit safely inside Telegram 4096 character limit
-      // Telegram blockquote character budget ~ 2500 chars to leave space for headers & proxies
       let inlineBatch = '';
       let inlineCount = 0;
       for (const confStr of allBrandedList) {
@@ -3334,15 +3347,6 @@ async function executeAutoPost(): Promise<boolean> {
       text += `\n👇 برای اتصال به پروکسی‌ها، روی دکمه‌های شیشه‌ای زیر کلیک کنید:\n\n`;
     }
 
-    // Append Tech News and Educational Mobile Tricks (if combined mode or default)
-    const isStandaloneOnly = settings.techPostMode === 'standalone';
-    if (!isStandaloneOnly && selectedTechItems.length > 0) {
-      text += `💡 <b>دانشنامه و تازه‌های دنیای تکنولوژی و ترفندها:</b>\n\n`;
-      for (const it of selectedTechItems) {
-        text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false) + '\n';
-      }
-    }
-
     if (needsFullPackFile) {
       text += `\n📁 <i>فایل متنی شامل تمام ${selectedConfigs.length} کانفیگ نیز ضمیمه شد.</i>\n`;
     }
@@ -3367,7 +3371,6 @@ async function executeAutoPost(): Promise<boolean> {
       inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url }]);
     }
 
-    // Add bot advertisement button
     const botUser = db.settings.botUsername;
     const botUrl = botUser ? `https://t.me/${botUser.replace('@', '')}` : null;
     if (botUrl) {
@@ -3377,10 +3380,8 @@ async function executeAutoPost(): Promise<boolean> {
       }]);
     }
 
-    // Ensure the message length strictly adheres to Telegram constraints
     const safeText = safeTelegramHtmlLength(text, 3900);
-
-    const channelHandle = settings.targetChannel.startsWith('@') ? settings.targetChannel : `@${settings.targetChannel.replace('@', '')}`;
+    const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     const sentMsg = await callTelegramApi('sendMessage', {
       chat_id: channelHandle,
       text: safeText,
@@ -3389,7 +3390,7 @@ async function executeAutoPost(): Promise<boolean> {
       disable_notification: !!settings.silentMode
     });
 
-    // If config pack has large count (e.g. 15, 20, 30, 50), upload the full .txt pack file
+    // If config pack has large count, upload full .txt pack file
     if (needsFullPackFile && fullPackConfigsContent) {
       try {
         const formData = new FormData();
@@ -3417,7 +3418,7 @@ async function executeAutoPost(): Promise<boolean> {
       }
     }
 
-    // Try to post an NPV/OVPN file alongside the configs if enabled
+    // Try to post an NPV/OVPN file alongside if enabled
     if (settings.postFiles && db.npvFiles && db.npvFiles.length > 0) {
       const npvFile = db.npvFiles[Math.floor(Math.random() * Math.min(db.npvFiles.length, 10))];
       if (npvFile) {
@@ -3442,9 +3443,7 @@ async function executeAutoPost(): Promise<boolean> {
           if (inlineButtons.length > 0) {
             formData.append('reply_markup', JSON.stringify({ inline_keyboard: inlineButtons }));
           }
-          if (settings.silentMode) {
-            formData.append('disable_notification', 'true');
-          }
+          if (settings.silentMode) formData.append('disable_notification', 'true');
 
           await fetch(`https://api.telegram.org/bot${db.settings.botToken}/sendDocument`, {
             method: 'POST',
@@ -3456,7 +3455,7 @@ async function executeAutoPost(): Promise<boolean> {
       }
     }
 
-    // Add to posted messages
+    // Track in posted messages for 5-day monitoring
     const postConfigs = selectedConfigs.map((c, idx) => ({
       id: c.id,
       raw: c.raw,
@@ -3489,32 +3488,299 @@ async function executeAutoPost(): Promise<boolean> {
       repliedMessageId: null
     });
 
-    // Mark selected tech items as posted
-    for (const t of selectedTechItems) {
-      t.postedToChannel = true;
-      t.postedAt = new Date().toISOString();
-    }
-
-    // If techPostMode is standalone or both, also dispatch standalone educational post
-    if ((settings.techPostMode === 'standalone' || settings.techPostMode === 'both') && selectedTechItems.length > 0) {
-      await executeStandaloneTechPost(channelHandle, selectedTechItems);
-    }
-
-    settings.lastPostedAt = new Date().toISOString();
+    const nowIso = new Date().toISOString();
+    settings.lastConfigsPostedAt = nowIso;
+    settings.lastPostedAt = nowIso;
     saveDatabase();
     
-    let summaryText = `پست خودکار با موفقیت به کانال ${settings.targetChannel} ارسال گردید`;
-    const parts: string[] = [];
-    if (selectedConfigs.length > 0) parts.push(`${selectedConfigs.length} کانفیگ`);
-    if (selectedProxies.length > 0) parts.push(`${selectedProxies.length} پروکسی`);
-    if (selectedTechItems.length > 0) parts.push(`${selectedTechItems.length} ترفند/خبر تکنولوژی`);
-    if (parts.length > 0) summaryText += ` (${parts.join('، ')})`;
-
-    addLog('success', summaryText + '.');
+    addLog('success', `پست کانفیگ‌ها (${selectedConfigs.length} کانفیگ، ${selectedProxies.length} پروکسی) با موفقیت به کانال ${targetChannel} ارسال گردید.`);
     return true;
   } catch (err: any) {
-    addLog('error', `خطا در ارسال پست خودکار به کانال: ${err.message || err}`);
+    addLog('error', `خطا در ارسال پست کانفیگ‌ها به کانال: ${err.message || err}`);
     return false;
+  }
+}
+
+// ----------------------------------------------------
+// 2. DEDICATED EXECUTOR: TECH & AI NEWS AUTO-POST
+// ----------------------------------------------------
+async function executeTechNewsAutoPost(customTargetChannel?: string): Promise<boolean> {
+  const settings = db.settings.autoPost;
+  const targetChannel = customTargetChannel || settings?.targetChannel;
+  if (!targetChannel) {
+    addLog('warn', 'ارسال اخبار روز انجام نشد: کانال مقصد تنظیم نشده است.');
+    return false;
+  }
+  if (!db.settings.botToken) {
+    addLog('warn', 'ارسال اخبار روز انجام نشد: توکن ربات فعال نیست.');
+    return false;
+  }
+
+  try {
+    addLog('info', `در حال آماده‌سازی و ارسال پست اخبار روز تکنولوژی به کانال ${targetChannel}...`);
+
+    seedCuratedTechItems();
+    const count = settings.techNewsCount && settings.techNewsCount > 0 ? settings.techNewsCount : 2;
+    const allTech = db.techItems || [];
+
+    // Filter news items
+    const newsItems = allTech.filter(i => i.category === 'news');
+    if (newsItems.length === 0) {
+      addLog('warn', 'هیچ خبر تکنولوژی در دیتابیس یافت نشد.');
+      return false;
+    }
+
+    // Sort: unposted first, then highest score, then newest
+    newsItems.sort((a, b) => {
+      if (a.postedToChannel !== b.postedToChannel) {
+        return a.postedToChannel ? 1 : -1;
+      }
+      return (b.importanceScore || 50) - (a.importanceScore || 50);
+    });
+
+    const selectedNews = newsItems.slice(0, count);
+
+    let text = `🔥 <b>تازه‌ترین اخبار دنیای تکنولوژی و هوش مصنوعی:</b>\n\n`;
+
+    for (let i = 0; i < selectedNews.length; i++) {
+      const it = selectedNews[i];
+      text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false);
+      if (i < selectedNews.length - 1) text += `\n───────────────\n\n`;
+    }
+
+    text += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
+
+    const inlineButtons: any[] = [];
+    const sponsorBtn = getSponsorChannelInlineButton();
+    if (sponsorBtn) {
+      inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url, style: 'primary' }]);
+    }
+    const botUser = db.settings.botUsername;
+    if (botUser) {
+      inlineButtons.push([{
+        text: '🤖 دسترسی به اخبار و کانفیگ‌های بیشتر',
+        url: `https://t.me/${botUser.replace('@', '')}`
+      }]);
+    }
+
+    const safeText = safeTelegramHtmlLength(text, 3900);
+    const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
+    
+    await callTelegramApi('sendMessage', {
+      chat_id: channelHandle,
+      text: safeText,
+      parse_mode: 'HTML',
+      reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+      disable_notification: !!settings.silentMode
+    });
+
+    const nowIso = new Date().toISOString();
+    for (const it of selectedNews) {
+      it.postedToChannel = true;
+      it.postedAt = nowIso;
+    }
+    settings.lastTechNewsPostedAt = nowIso;
+    saveDatabase();
+
+    addLog('success', `پست اخبار روز تکنولوژی (${selectedNews.length} خبر) با موفقیت به کانال ${targetChannel} ارسال گردید.`);
+    return true;
+  } catch (err: any) {
+    addLog('error', `خطا در ارسال اخبار روز به کانال: ${err.message || err}`);
+    return false;
+  }
+}
+
+// ----------------------------------------------------
+// 3. DEDICATED EXECUTOR: TECH TRICKS & SECRETS AUTO-POST
+// ----------------------------------------------------
+async function executeTechTricksAutoPost(customTargetChannel?: string): Promise<boolean> {
+  const settings = db.settings.autoPost;
+  const targetChannel = customTargetChannel || settings?.targetChannel;
+  if (!targetChannel) {
+    addLog('warn', 'ارسال ترفندها انجام نشد: کانال مقصد تنظیم نشده است.');
+    return false;
+  }
+  if (!db.settings.botToken) {
+    addLog('warn', 'ارسال ترفندها انجام نشد: توکن ربات فعال نیست.');
+    return false;
+  }
+
+  try {
+    addLog('info', `در حال آماده‌سازی و ارسال پست رازها و ترفندهای موبایل به کانال ${targetChannel}...`);
+
+    seedCuratedTechItems();
+    const count = settings.techTricksCount && settings.techTricksCount > 0 ? settings.techTricksCount : 2;
+    const allTech = db.techItems || [];
+
+    // Filter tricks & secrets
+    const tricksItems = allTech.filter(i => i.category === 'trick' || i.category === 'secret');
+    if (tricksItems.length === 0) {
+      addLog('warn', 'هیچ ترفند یا راز آموزشی در دیتابیس یافت نشد.');
+      return false;
+    }
+
+    // Sort: unposted first, then highest score, then newest
+    tricksItems.sort((a, b) => {
+      if (a.postedToChannel !== b.postedToChannel) {
+        return a.postedToChannel ? 1 : -1;
+      }
+      return (b.importanceScore || 50) - (a.importanceScore || 50);
+    });
+
+    const selectedTricks = tricksItems.slice(0, count);
+
+    let text = `💡 <b>ترفندها، رازها و آموزش‌های کاربردی موبایل و امنیت:</b>\n\n`;
+
+    for (let i = 0; i < selectedTricks.length; i++) {
+      const it = selectedTricks[i];
+      text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false);
+      if (i < selectedTricks.length - 1) text += `\n───────────────\n\n`;
+    }
+
+    text += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
+
+    const inlineButtons: any[] = [];
+    const sponsorBtn = getSponsorChannelInlineButton();
+    if (sponsorBtn) {
+      inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url, style: 'primary' }]);
+    }
+    const botUser = db.settings.botUsername;
+    if (botUser) {
+      inlineButtons.push([{
+        text: '🤖 دسترسی به ترفندها و آموزش‌های بیشتر',
+        url: `https://t.me/${botUser.replace('@', '')}`
+      }]);
+    }
+
+    const safeText = safeTelegramHtmlLength(text, 3900);
+    const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
+    
+    await callTelegramApi('sendMessage', {
+      chat_id: channelHandle,
+      text: safeText,
+      parse_mode: 'HTML',
+      reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+      disable_notification: !!settings.silentMode
+    });
+
+    const nowIso = new Date().toISOString();
+    for (const it of selectedTricks) {
+      it.postedToChannel = true;
+      it.postedAt = nowIso;
+    }
+    settings.lastTechTricksPostedAt = nowIso;
+    saveDatabase();
+
+    addLog('success', `پست ترفندها و رازهای موبایل (${selectedTricks.length} ترفند) با موفقیت به کانال ${targetChannel} ارسال گردید.`);
+    return true;
+  } catch (err: any) {
+    addLog('error', `خطا در ارسال ترفندها به کانال: ${err.message || err}`);
+    return false;
+  }
+}
+
+// Master Auto-Post Dispatcher
+async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' = 'all'): Promise<boolean> {
+  const settings = db.settings.autoPost;
+  if (!settings || !settings.enabled || !settings.targetChannel) {
+    addLog('warn', 'ارسال خودکار انجام نشد: غیرفعال است یا کانال هدف تنظیم نشده است.');
+    return false;
+  }
+  if (!db.settings.botToken) {
+    addLog('warn', 'ارسال خودکار انجام نشد: توکن ربات فعال نیست.');
+    return false;
+  }
+
+  if (mode === 'configs') {
+    return await executeConfigsAutoPost();
+  }
+  if (mode === 'news') {
+    return await executeTechNewsAutoPost();
+  }
+  if (mode === 'tricks') {
+    return await executeTechTricksAutoPost();
+  }
+
+  // mode === 'all'
+  let anySuccess = false;
+  if (settings.configsEnabled !== false && ((settings.configCount || 0) > 0 || (settings.proxyCount || 0) > 0)) {
+    const res = await executeConfigsAutoPost();
+    if (res) anySuccess = true;
+  }
+  if (settings.techNewsEnabled !== false && (settings.techNewsCount || 0) > 0) {
+    const res = await executeTechNewsAutoPost();
+    if (res) anySuccess = true;
+  }
+  if (settings.techTricksEnabled !== false && (settings.techTricksCount || 0) > 0) {
+    const res = await executeTechTricksAutoPost();
+    if (res) anySuccess = true;
+  }
+
+  // Fallback: if all three counts were 0, try sending configs
+  if (!anySuccess) {
+    anySuccess = await executeConfigsAutoPost();
+  }
+
+  return anySuccess;
+}
+
+// --- Granular Auto-Post Scheduler ---
+let autoPostCheckIntervalRef: NodeJS.Timeout | null = null;
+
+function setupAutoPostInterval() {
+  if (autoPostCheckIntervalRef) {
+    clearInterval(autoPostCheckIntervalRef);
+    autoPostCheckIntervalRef = null;
+  }
+
+  // Check every 3 minutes whether any of the 3 schedules (Configs, News, Tricks) is due
+  autoPostCheckIntervalRef = setInterval(() => {
+    checkAndTriggerAutoPost().catch(err => {
+      console.error('Error during auto-post schedule check:', err);
+    });
+  }, 3 * 60 * 1000);
+}
+
+async function checkAndTriggerAutoPost() {
+  const ap = db.settings.autoPost;
+  if (!ap || !ap.enabled || !ap.targetChannel || !db.settings.botToken) return;
+
+  const now = Date.now();
+
+  // 1. Configs & Proxies Schedule Check
+  const configsActive = ap.configsEnabled !== false && ((ap.configCount || 0) > 0 || (ap.proxyCount || 0) > 0);
+  if (configsActive) {
+    const configIntervalHours = ap.configIntervalHours || ap.postIntervalHours || 4;
+    const configIntervalMs = configIntervalHours * 60 * 60 * 1000;
+    const lastConfigTime = ap.lastConfigsPostedAt || ap.lastPostedAt;
+    const timeSinceLastConfig = lastConfigTime ? (now - new Date(lastConfigTime).getTime()) : Infinity;
+    if (timeSinceLastConfig >= configIntervalMs) {
+      await executeConfigsAutoPost();
+    }
+  }
+
+  // 2. Tech News Schedule Check
+  const newsActive = ap.techNewsEnabled !== false && (ap.techNewsCount || 0) > 0;
+  if (newsActive) {
+    const newsIntervalHours = ap.techNewsIntervalHours || 4;
+    const newsIntervalMs = newsIntervalHours * 60 * 60 * 1000;
+    const lastNewsTime = ap.lastTechNewsPostedAt;
+    const timeSinceLastNews = lastNewsTime ? (now - new Date(lastNewsTime).getTime()) : Infinity;
+    if (timeSinceLastNews >= newsIntervalMs) {
+      await executeTechNewsAutoPost();
+    }
+  }
+
+  // 3. Tech Tricks & Secrets Schedule Check
+  const tricksActive = ap.techTricksEnabled !== false && (ap.techTricksCount || 0) > 0;
+  if (tricksActive) {
+    const tricksIntervalHours = ap.techTricksIntervalHours || 6;
+    const tricksIntervalMs = tricksIntervalHours * 60 * 60 * 1000;
+    const lastTricksTime = ap.lastTechTricksPostedAt;
+    const timeSinceLastTricks = lastTricksTime ? (now - new Date(lastTricksTime).getTime()) : Infinity;
+    if (timeSinceLastTricks >= tricksIntervalMs) {
+      await executeTechTricksAutoPost();
+    }
   }
 }
 
@@ -3917,42 +4183,6 @@ async function checkAndTriggerBackup() {
     }
   } catch (e) {
     console.error('Error checking backup schedule:', e);
-  }
-}
-
-async function checkAndTriggerAutoPost() {
-  const settings = db.settings.autoPost;
-  if (!settings || !settings.enabled || !settings.targetChannel) return;
-
-  const lastPosted = settings.lastPostedAt;
-  if (!lastPosted) {
-    await executeAutoPost();
-    return;
-  }
-
-  try {
-    const diffMs = Date.now() - new Date(lastPosted).getTime();
-    const intervalMs = (settings.postIntervalHours || 4) * 60 * 60 * 1000;
-    if (diffMs >= intervalMs) {
-      await executeAutoPost();
-    }
-  } catch (e) {
-    console.error('Error checking auto post schedule:', e);
-  }
-}
-
-let autoPostIntervalRef: NodeJS.Timeout | null = null;
-function setupAutoPostInterval() {
-  if (autoPostIntervalRef) clearInterval(autoPostIntervalRef);
-
-  const settings = db.settings.autoPost;
-  if (settings && settings.enabled) {
-    // Check every 5 minutes if it's time to post
-    autoPostIntervalRef = setInterval(() => {
-      checkAndTriggerAutoPost();
-    }, 5 * 60 * 1000);
-    // Also run an initial check
-    checkAndTriggerAutoPost();
   }
 }
 
@@ -7470,27 +7700,46 @@ async function startExpressServer() {
         techTricksCount,
         techPostMode,
         autoPurgeOldTechDays,
-        includeTechImportanceBadge
+        includeTechImportanceBadge,
+        configsEnabled,
+        configIntervalHours,
+        techNewsEnabled,
+        techNewsIntervalHours,
+        techTricksEnabled,
+        techTricksIntervalHours
       } = req.body;
       
       db.settings.autoPost = {
         ...DEFAULT_AUTO_POST,
         ...db.settings.autoPost,
-        enabled: !!enabled,
+        enabled: typeof enabled !== 'undefined' ? !!enabled : db.settings.autoPost?.enabled ?? false,
         targetChannel: targetChannel || '',
-        postIntervalHours: Number(postIntervalHours) || 4,
+        postIntervalHours: Number(postIntervalHours) || Number(configIntervalHours) || 4,
         configCount: typeof configCount !== 'undefined' && !isNaN(Number(configCount)) ? Math.max(0, Number(configCount)) : 5,
         proxyCount: typeof proxyCount !== 'undefined' && !isNaN(Number(proxyCount)) ? Math.max(0, Number(proxyCount)) : 0,
         customText: customText || '',
         adText: adText || '',
         postFiles: !!postFiles,
         silentMode: !!silentMode,
-        techNewsCount: typeof techNewsCount !== 'undefined' && !isNaN(Number(techNewsCount)) ? Math.max(0, Number(techNewsCount)) : 0,
-        techTricksCount: typeof techTricksCount !== 'undefined' && !isNaN(Number(techTricksCount)) ? Math.max(0, Number(techTricksCount)) : 0,
+        techNewsCount: typeof techNewsCount !== 'undefined' && !isNaN(Number(techNewsCount)) ? Math.max(0, Number(techNewsCount)) : 2,
+        techTricksCount: typeof techTricksCount !== 'undefined' && !isNaN(Number(techTricksCount)) ? Math.max(0, Number(techTricksCount)) : 2,
         techPostMode: techPostMode || 'combined',
         autoPurgeOldTechDays: Number(autoPurgeOldTechDays) || 7,
         includeTechImportanceBadge: includeTechImportanceBadge !== false,
-        lastPostedAt: db.settings.autoPost?.lastPostedAt || null
+        lastPostedAt: db.settings.autoPost?.lastPostedAt || null,
+        
+        // Granular independent schedule fields
+        configsEnabled: typeof configsEnabled !== 'undefined' ? !!configsEnabled : db.settings.autoPost?.configsEnabled ?? true,
+        configIntervalHours: Number(configIntervalHours) || Number(postIntervalHours) || 4,
+        lastConfigsPostedAt: db.settings.autoPost?.lastConfigsPostedAt || null,
+
+        techNewsEnabled: typeof techNewsEnabled !== 'undefined' ? !!techNewsEnabled : db.settings.autoPost?.techNewsEnabled ?? true,
+        techNewsIntervalHours: Number(techNewsIntervalHours) || 4,
+        lastTechNewsPostedAt: db.settings.autoPost?.lastTechNewsPostedAt || null,
+
+        techTricksEnabled: typeof techTricksEnabled !== 'undefined' ? !!techTricksEnabled : db.settings.autoPost?.techTricksEnabled ?? true,
+        techTricksIntervalHours: Number(techTricksIntervalHours) || 6,
+        lastTechTricksPostedAt: db.settings.autoPost?.lastTechTricksPostedAt || null
       };
 
       saveDatabase();
@@ -7572,7 +7821,7 @@ async function startExpressServer() {
     }
   });
 
-  // API: Trigger Auto-Post manually
+  // API: Trigger Auto-Post manually (All / Default)
   app.post('/api/bot/auto-post/trigger', async (req, res) => {
     try {
       const success = await executeAutoPost();
@@ -7584,6 +7833,54 @@ async function startExpressServer() {
     } catch(err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
+  });
+
+  // API: Trigger Configs & Proxies Auto-Post manually
+  app.post('/api/bot/auto-post/trigger-configs', async (req, res) => {
+    try {
+      const success = await executeConfigsAutoPost();
+      if (success) {
+        res.json({ success: true, message: 'پست کانفیگ‌ها و پروکسی‌ها با موفقیت به کانال ارسال گردید.' });
+      } else {
+        res.status(400).json({ success: false, message: 'ارسال کانفیگ‌ها با خطا مواجه شد یا موردی یافت نشد.' });
+      }
+    } catch(err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Trigger Tech News Auto-Post manually
+  app.post('/api/bot/auto-post/trigger-tech-news', async (req, res) => {
+    try {
+      const success = await executeTechNewsAutoPost();
+      if (success) {
+        res.json({ success: true, message: 'پست اخبار تکنولوژی با موفقیت به کانال ارسال گردید.' });
+      } else {
+        res.status(400).json({ success: false, message: 'ارسال اخبار با خطا مواجه شد یا خبری یافت نشد.' });
+      }
+    } catch(err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Trigger Tech Tricks Auto-Post manually
+  app.post('/api/bot/auto-post/trigger-tech-tricks', async (req, res) => {
+    try {
+      const success = await executeTechTricksAutoPost();
+      if (success) {
+        res.json({ success: true, message: 'پست ترفندها و رازهای تکنولوژی با موفقیت به کانال ارسال گردید.' });
+      } else {
+        res.status(400).json({ success: false, message: 'ارسال ترفندها با خطا مواجه شد یا مطلبی یافت نشد.' });
+      }
+    } catch(err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Get Public App URL for TWA / WebApp
+  app.get('/api/app-url', (req, res) => {
+    const url = getPublicAppUrl(req);
+    res.json({ url });
   });
 
   // API: Get Logs
