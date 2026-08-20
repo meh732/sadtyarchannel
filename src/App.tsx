@@ -2387,15 +2387,31 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setActiveTab('public_panel')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
-              activeTab === 'public_panel'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10'
-                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
-            }`}
+            onClick={async () => {
+              setActionLoading('set_menu_button');
+              try {
+                const res = await fetch('/api/settings/set-menu-button', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                  showToast(data.message || 'منوی عمومی ربات به منوی اصلی تلگرام بازگردانی شد ✅', 'success');
+                } else {
+                  showToast(data.message || 'خطا در ثبت منوی ربات', 'error');
+                }
+              } catch (err) {
+                showToast('خطا در ارتباط با سرور', 'error');
+              } finally {
+                setActionLoading(null);
+              }
+            }}
+            disabled={actionLoading === 'set_menu_button'}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer text-slate-400 hover:bg-slate-800 hover:text-slate-100 disabled:opacity-50"
           >
-            <Globe className="w-4 h-4" />
-            <span>پیش‌نمایش پنل وب</span>
+            {actionLoading === 'set_menu_button' ? (
+              <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+            ) : (
+              <Globe className="w-4 h-4 text-indigo-400" />
+            )}
+            <span>تنظیم منوی اصلی ربات</span>
           </button>
 
           {!isTgWebApp && (
@@ -2411,7 +2427,7 @@ export default function App() {
 
         {/* Footer info */}
         <div className="p-6 border-t border-slate-800 bg-slate-950/20 text-xs text-slate-500 space-y-1">
-          <p>وضعیت سرور: کامپایل موفق 🟢</p>
+          <p>وضعیت سرور: فعال 🟢</p>
           <p>سیستم تست پورت: فعال در ایران</p>
           <p className="pt-2 text-[10px] text-slate-600">طراحی شده با React 19 + Express</p>
         </div>
@@ -2434,7 +2450,6 @@ export default function App() {
               {activeTab === 'settings' && 'پیکربندی هوشمند ربات و پلتفرم'}
               {activeTab === 'autopost' && 'زمان‌بندی و ارسال خودکار پست'}
               {activeTab === 'broadcast' && 'سیستم نوتیفیکیشن و پیام همگانی'}
-              {activeTab === 'public_panel' && 'پیش‌نمایش پنل وب عمومی کاربران'}
             </h2>
             <p className="text-xs text-slate-500 mt-1">
               {activeTab === 'dashboard' && 'خلاصه‌ای از عملکرد ربات، منابع پایش شده و گزارشات زنده.'}
@@ -2447,7 +2462,6 @@ export default function App() {
               {activeTab === 'settings' && 'تنظیم توکن API تلگرام، فواصل زمانی پویش خودکار و متن برندینگ شخصی.'}
               {activeTab === 'autopost' && 'پیکربندی هوشمند ربات برای ارسال اتوماتیک کانفیگ‌ها، پروکسی‌ها و ترفندهای تکنولوژی به کانال شما در فواصل مشخص.'}
               {activeTab === 'broadcast' && 'ارسال بیانیه‌ها، اخبار یا بنرهای تبلیغاتی به تمامی اعضای ذخیره شده در دیتابیس.'}
-              {activeTab === 'public_panel' && 'تست و مشاهده لحظه‌ای خروجی کانفیگ‌ها، پروکسی‌ها و مطالبی که در پنل وب عمومی نمایش داده می‌شوند.'}
             </p>
           </div>
 
@@ -5208,38 +5222,7 @@ export default function App() {
                 </motion.div>
               )}
 
-              {activeTab === 'public_panel' && (
-                <motion.div
-                  key="public_panel"
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -15 }}
-                  className="space-y-6"
-                >
-                  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                      <h3 className="font-bold text-slate-950 text-sm">پیش‌نمایش زنده خروجی پنل وب عمومی کاربران</h3>
-                      <p className="text-[11px] text-slate-500 mt-1">
-                        کاربران معمولی به جای دسترسی به داشبورد مدیریت، این خروجی زیبا را به صورت وب‌ویو تلگرام یا لینک مستقیم مشاهده خواهند کرد.
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          const url = settings.webPanelUrl || window.location.origin;
-                          navigator.clipboard.writeText(url);
-                          setToast({ type: 'success', message: 'لینک پنل وب با موفقیت کپی شد.' });
-                        }}
-                        className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>کپی لینک پنل وب</span>
-                      </button>
-                    </div>
-                  </div>
-                  {renderPublicWebPanel()}
-                </motion.div>
-              )}
+
 
             </AnimatePresence>
           )}

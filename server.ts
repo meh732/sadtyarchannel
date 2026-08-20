@@ -396,19 +396,31 @@ function addLog(level: 'info' | 'warn' | 'error' | 'success', message: string) {
 
 // --- Public Web Panel URL Helper ---
 function getPublicAppUrl(req?: express.Request): string {
-  if (db.settings.publicUrl && db.settings.publicUrl.trim()) {
-    const raw = db.settings.publicUrl.trim();
-    return raw.startsWith('http') ? raw : `https://${raw}`;
-  }
-  if (process.env.APP_URL) return process.env.APP_URL;
-  if (process.env.DEV_APP_URL) return process.env.DEV_APP_URL;
+  // 1. Prioritize active HTTP request context to find the real IP and port
   if (req) {
     const host = req.get('x-forwarded-host') || req.get('host');
-    const proto = req.get('x-forwarded-proto') || 'https';
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
     if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
-      return `${proto}://${host}`;
+      const url = `${proto}://${host}`;
+      // Save it automatically to settings so background bot triggers and menu configurations use it
+      if (db.settings.publicUrl !== url) {
+        db.settings.publicUrl = url;
+        saveDatabase();
+        addLog('success', `آدرس واقعی سرور شناسایی و ذخیره شد: ${url}`);
+      }
+      return url;
     }
   }
+
+  // 2. Fallback to saved settings if it's not the default sandbox URL
+  if (db.settings.publicUrl && db.settings.publicUrl.trim() && db.settings.publicUrl !== DEFAULT_KNOWN_APP_URL) {
+    const raw = db.settings.publicUrl.trim();
+    return raw.startsWith('http') ? raw : `http://${raw}`;
+  }
+
+  // 3. Environment variables or default
+  if (process.env.APP_URL) return process.env.APP_URL;
+  if (process.env.DEV_APP_URL) return process.env.DEV_APP_URL;
   return DEFAULT_KNOWN_APP_URL;
 }
 
@@ -4287,37 +4299,36 @@ function checkIsAdmin(userId?: string | number, username?: string | null): boole
 /**
  * Automatically sets the native Telegram Chat Menu button to launch the Web App (TWA)
  */
-async function setupBotMenuButton(token?: string): Promise<{ success: boolean; message: string }> {
+async function setupBotMenuButton(token?: string, req?: express.Request): Promise<{ success: boolean; message: string }> {
   const botToken = token || db.settings.botToken;
   if (!botToken) {
     return { success: false, message: 'توکن ربات تنظیم نشده است.' };
   }
-  const appUrl = getPublicAppUrl();
+  const appUrl = getPublicAppUrl(req);
   if (!appUrl) {
     return { success: false, message: 'آدرس دامنه پنل مشخص نیست.' };
   }
 
   try {
-    // 1. Set global menu button with WebApp
+    // 1. Set global menu button to standard command menu (type: 'commands') for all users (removing web_app for public)
     const res = await fetch(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         menu_button: {
-          type: 'web_app',
-          text: '🌐 پنل مدیریت',
-          web_app: { url: appUrl }
+          type: 'commands'
         }
       }),
       signal: AbortSignal.timeout(10000)
     });
     const data = await res.json();
     
-    // 2. Also attempt to set for admin chat id specifically
+    // 2. Set WebApp button ONLY and EXCLUSIVELY for the admin's chat id
+    let adminResult = '';
     if (db.settings.adminId) {
       const adminIdNum = Number(String(db.settings.adminId).replace(/[^0-9]/g, ''));
       if (adminIdNum) {
-        await fetch(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
+        const adminRes = await fetch(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -4329,13 +4340,17 @@ async function setupBotMenuButton(token?: string): Promise<{ success: boolean; m
             }
           }),
           signal: AbortSignal.timeout(10000)
-        }).catch(() => {});
+        });
+        const adminData = await adminRes.json();
+        if (adminData.ok) {
+          adminResult = ' و پنل وب‌ویو اختصاصی برای ادمین فعال شد';
+        }
       }
     }
 
     if (data.ok) {
-      addLog('success', `دکمه منوی وب‌ویو تلگرام (Web App) روی آدرس ${appUrl} با موفقیت تنظیم گردید.`);
-      return { success: true, message: `دکمه منوی وب‌ویو (Menu Button) با موفقیت در تلگرام فعال گردید.` };
+      addLog('success', `دکمه منوی کاربران عمومی به منوی دستورات تلگرام (Commands Hub) تغییر یافت${adminResult}.`);
+      return { success: true, message: `منوی عمومی ربات به منوی اصلی دستورات (Commands Hub) تغییر یافت${adminResult} ✅` };
     } else {
       return { success: false, message: data.description || 'خطا در ثبت دکمه منو در تلگرام.' };
     }
@@ -4355,8 +4370,6 @@ async function setBotCommands(token: string) {
       body: JSON.stringify({
         commands: [
           { command: 'start', description: '🚀 شروع کار ربات و منوی اصلی' },
-          { command: 'admin', description: '⚙️ ورود به پنل مدیریت (ادمین)' },
-          { command: 'panel', description: '🌐 وب‌ویو پنل مدیریت (WebApp)' },
           { command: 'help', description: 'ℹ️ راهنمای گام به گام اتصال' }
         ]
       }),
@@ -7646,7 +7659,7 @@ async function startExpressServer() {
   // API: Automatically configure Telegram Bot WebApp Menu Button
   app.post('/api/settings/set-menu-button', async (req, res) => {
     try {
-      const result = await setupBotMenuButton();
+      const result = await setupBotMenuButton(undefined, req);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message || 'Error setting Telegram WebApp menu button' });
