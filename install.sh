@@ -289,15 +289,32 @@ update_bot() {
     echo -e "${BLUE}متوقف‌سازی موقت سرویس...${PLAIN}"
     systemctl stop "$SERVICE_NAME"
 
+    echo -e "${BLUE}پشتیبان‌گیری امن از دیتابیس و تنظیمات قبل از آپدیت...${PLAIN}"
+    mkdir -p /tmp/sadtyar_safe_backup
+    [ -f "$INSTALL_DIR/data_store.json" ] && cp -f "$INSTALL_DIR/data_store.json" /tmp/sadtyar_safe_backup/
+    [ -f "$INSTALL_DIR/system_settings.json" ] && cp -f "$INSTALL_DIR/system_settings.json" /tmp/sadtyar_safe_backup/
+    [ -f "$INSTALL_DIR/data_store.json.bak" ] && cp -f "$INSTALL_DIR/data_store.json.bak" /tmp/sadtyar_safe_backup/
+    [ -f "$INSTALL_DIR/system_settings.json.bak" ] && cp -f "$INSTALL_DIR/system_settings.json.bak" /tmp/sadtyar_safe_backup/
+    [ -f "$INSTALL_DIR/.env" ] && cp -f "$INSTALL_DIR/.env" /tmp/sadtyar_safe_backup/
+
     echo -e "${BLUE}دریافت آخرین کدهای مخزن گیت‌هاب...${PLAIN}"
     if [ -d ".git" ]; then
-        git reset --hard HEAD
+        git stash 2>/dev/null || true
         git pull origin main || git pull origin master
+        git stash pop 2>/dev/null || true
     else
         git clone "$REPO_URL" /tmp/sadtyar_update
         cp -rf /tmp/sadtyar_update/* "$INSTALL_DIR/"
         rm -rf /tmp/sadtyar_update
     fi
+
+    echo -e "${BLUE}بازگردانی امن دیتابیس و تنظیمات قبلی...${PLAIN}"
+    [ -f /tmp/sadtyar_safe_backup/data_store.json ] && cp -f /tmp/sadtyar_safe_backup/data_store.json "$INSTALL_DIR/"
+    [ -f /tmp/sadtyar_safe_backup/system_settings.json ] && cp -f /tmp/sadtyar_safe_backup/system_settings.json "$INSTALL_DIR/"
+    [ -f /tmp/sadtyar_safe_backup/data_store.json.bak ] && cp -f /tmp/sadtyar_safe_backup/data_store.json.bak "$INSTALL_DIR/"
+    [ -f /tmp/sadtyar_safe_backup/system_settings.json.bak ] && cp -f /tmp/sadtyar_safe_backup/system_settings.json.bak "$INSTALL_DIR/"
+    [ -f /tmp/sadtyar_safe_backup/.env ] && cp -f /tmp/sadtyar_safe_backup/.env "$INSTALL_DIR/"
+    rm -rf /tmp/sadtyar_safe_backup
 
     install_xray_core
 
@@ -308,7 +325,7 @@ update_bot() {
     echo -e "${BLUE}راه‌اندازی مجدد سرویس...${PLAIN}"
     systemctl start "$SERVICE_NAME"
 
-    echo -e "${GREEN}${BOLD}🎉 بروزرسانی با موفقیت انجام شد و سرویس مجدداً فعال گردید!${PLAIN}"
+    echo -e "${GREEN}${BOLD}🎉 بروزرسانی با موفقیت انجام شد و اطلاعات دیتابیس کاملاً حفظ گردید!${PLAIN}"
     read -p "جهت بازگشت اینتر بزنید..."
 }
 

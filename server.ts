@@ -5651,7 +5651,7 @@ async function handleBotUpdate(update: any) {
             ],
             [
               { text: `📢 عضویت اجباری (Force Join)`, callback_data: 'admin_fj_list', style: 'primary' },
-              { text: `📝 تنظیم ارسال خودکار`, callback_data: 'admin_autopost_menu', style: 'primary' }
+              { text: `⏰ زمان‌بندی و کرون جاب (Cron Job)`, callback_data: 'admin_autopost_menu', style: 'primary' }
             ],
             [
               { text: `🌐 مدیریت منابع استخراج (کانال/لینک)`, callback_data: 'admin_sources_list', style: 'primary' }

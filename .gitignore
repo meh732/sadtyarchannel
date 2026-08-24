@@ -7,3 +7,12 @@ coverage/
 .env*
 !.env.example
 data_store.json
+data_store.json.bak
+data_store.json.*.tmp
+system_settings.json
+system_settings.json.bak
+system_settings.json.*.tmp
+*.bak
+*.tmp
+database.json
+database.json.bak

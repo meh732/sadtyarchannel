@@ -2393,8 +2393,8 @@ export default function App() {
                 : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
             }`}
           >
-            <Sliders className="w-4 h-4" />
-            <span>ارسال خودکار پست</span>
+            <Clock className="w-4 h-4 text-emerald-400" />
+            <span>کرون جاب و ارسال خودکار</span>
             {settings.autoPost?.enabled && (
               <span className="mr-auto bg-emerald-500 w-2.5 h-2.5 rounded-full animate-pulse" />
             )}
