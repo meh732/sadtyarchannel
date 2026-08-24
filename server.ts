@@ -396,26 +396,19 @@ function addLog(level: 'info' | 'warn' | 'error' | 'success', message: string) {
 
 // --- Public Web Panel URL Helper ---
 function getPublicAppUrl(req?: express.Request): string {
-  // 1. Prioritize active HTTP request context to find the real IP and port
+  // 1. Prioritize manually saved settings if it's not the default sandbox URL
+  if (db.settings.publicUrl && db.settings.publicUrl.trim() && db.settings.publicUrl !== DEFAULT_KNOWN_APP_URL) {
+    const raw = db.settings.publicUrl.trim();
+    return raw.startsWith('http') ? raw : `http://${raw}`;
+  }
+
+  // 2. Fallback to active HTTP request context (but do not overwrite the settings database)
   if (req) {
     const host = req.get('x-forwarded-host') || req.get('host');
     const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
     if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
-      const url = `${proto}://${host}`;
-      // Save it automatically to settings so background bot triggers and menu configurations use it
-      if (db.settings.publicUrl !== url) {
-        db.settings.publicUrl = url;
-        saveDatabase();
-        addLog('success', `آدرس واقعی سرور شناسایی و ذخیره شد: ${url}`);
-      }
-      return url;
+      return `${proto}://${host}`;
     }
-  }
-
-  // 2. Fallback to saved settings if it's not the default sandbox URL
-  if (db.settings.publicUrl && db.settings.publicUrl.trim() && db.settings.publicUrl !== DEFAULT_KNOWN_APP_URL) {
-    const raw = db.settings.publicUrl.trim();
-    return raw.startsWith('http') ? raw : `http://${raw}`;
   }
 
   // 3. Environment variables or default

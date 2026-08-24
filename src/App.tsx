@@ -4739,27 +4739,25 @@ export default function App() {
                           </select>
                         </div>
 
-                        {/* Public Domain URL (Only visible when Webhook is active) */}
-                        {settings.botConnectionMode === 'webhook' && (
-                          <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                              <span>آدرس دامنه عمومی سرور (بدون https)</span>
-                              <span className="text-[10px] text-indigo-600 font-semibold">مورد نیاز وب‌هوک</span>
-                            </label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="مثال: my-app-123.run.app"
-                              value={settings.publicUrl || ''}
-                              onChange={(e) => setSettings(prev => ({ ...prev, publicUrl: e.target.value }))}
-                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-mono text-left focus:border-indigo-500 focus:outline-none"
-                              dir="ltr"
-                            />
-                            <p className="text-[10px] text-slate-400">
-                              آدرس دامنه‌ای که در بالای مرورگر خود برای این پنل مشاهده می‌کنید را بدون بخش https:// کپی و وارد نمایید.
-                            </p>
-                          </div>
-                        )}
+                        {/* Public Domain URL */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                            <span>آدرس سرور یا دامنه عمومی پنل (بدون https)</span>
+                            <span className="text-[10px] text-indigo-600 font-semibold">برای منوی وب‌اپ و وب‌هوک</span>
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="مثال: 192.168.1.100:3000 یا my-domain.com"
+                            value={settings.publicUrl || ''}
+                            onChange={(e) => setSettings(prev => ({ ...prev, publicUrl: e.target.value }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-mono text-left focus:border-indigo-500 focus:outline-none"
+                            dir="ltr"
+                          />
+                          <p className="text-[10px] text-slate-400">
+                            آدرس آی‌پی لینوکس به همراه پورت نصب شده (مثل 12.34.56.78:3000) یا دامنه‌ای که پنل روی آن قرار دارد را بدون بخش http:// وارد نمایید.
+                          </p>
+                        </div>
                       </div>
 
                       {/* Admin Chat ID Input */}
