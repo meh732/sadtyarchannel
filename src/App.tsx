@@ -123,6 +123,7 @@ export default function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('adminToken'));
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [loginUsername, setLoginUsername] = useState<string>('');
   const [loginPassword, setLoginPassword] = useState<string>('');
   const [isTgWebApp, setIsTgWebApp] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
@@ -363,13 +364,14 @@ export default function App() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: loginPassword })
+        body: JSON.stringify({ username: loginUsername, password: loginPassword })
       });
       const data = await res.json();
       if (data.success && data.token) {
         localStorage.setItem('adminToken', data.token);
         setToken(data.token);
         setLoginPassword('');
+        setLoginUsername('');
         showToast('ورود با موفقیت انجام شد.', 'success');
       } else {
         setAuthError(data.message || 'رمز عبور وارد شده نادرست است.');
@@ -1468,6 +1470,16 @@ export default function App() {
           ) : (
             <form onSubmit={handlePasswordLogin} className="space-y-5">
               <div>
+                <label className="block text-xs font-bold text-slate-300 mb-2">نام کاربری:</label>
+                <input
+                  type="text"
+                  value={loginUsername}
+                  onChange={(e) => setLoginUsername(e.target.value)}
+                  placeholder="نام کاربری (مثال: admin)"
+                  className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-center tracking-widest text-white placeholder:tracking-normal transition-all"
+                />
+              </div>
+              <div>
                 <label className="block text-xs font-bold text-slate-300 mb-2">رمز عبور پنل مدیریت:</label>
                 <input
                   type="password"
@@ -2119,10 +2131,20 @@ export default function App() {
 
                 <form onSubmit={handlePasswordLogin} className="space-y-4">
                   <div className="space-y-1.5">
-                    <label className="block text-[11px] font-bold text-slate-300">گذرواژه مدیریت را وارد کنید:</label>
+                    <label className="block text-[11px] font-bold text-slate-300">نام کاربری:</label>
+                    <input
+                      type="text"
+                      autoFocus
+                      value={loginUsername}
+                      onChange={(e) => setLoginUsername(e.target.value)}
+                      placeholder="admin"
+                      className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs focus:outline-none focus:border-indigo-500 text-center tracking-widest text-white transition-all"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="block text-[11px] font-bold text-slate-300">گذرواژه مدیریت:</label>
                     <input
                       type="password"
-                      autoFocus
                       required
                       value={loginPassword}
                       onChange={(e) => setLoginPassword(e.target.value)}
@@ -4777,6 +4799,22 @@ export default function App() {
                         <p className="text-[10px] text-slate-400">
                           پس از عضویت در ربات تلگرام، شناسه خود را از لیست کاربران (در تب داشبورد) کپی کرده و در اینجا ذخیره کنید تا دکمه کنترل مدیریت زیر چت تلگرام برای شما فعال گردد.
                         </p>
+                      </div>
+
+                      {/* Admin Access Username Input */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                          <span>نام کاربری پنل مدیریت (Admin Username)</span>
+                          <span className="text-[10px] text-indigo-600 font-semibold">تأیید هویت مرورگر</span>
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="مثال: admin"
+                          value={settings.adminUsername || ''}
+                          onChange={(e) => setSettings(prev => ({ ...prev, adminUsername: e.target.value }))}
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-mono text-left focus:border-indigo-500 focus:outline-none"
+                          dir="ltr"
+                        />
                       </div>
 
                       {/* Admin Access Password Input */}

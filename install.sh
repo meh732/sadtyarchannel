@@ -146,6 +146,18 @@ prompt_credentials() {
             echo -e "${RED}خطا: پورت باید عددی بین ۱ تا ۶۵۵۳۵ باشد.${PLAIN}"
         fi
     done
+    # Prompt for Admin Username
+    read -p "نام کاربری ورود به پنل (Username) [پیش‌فرض: admin]: " admin_username
+    if [ -z "$admin_username" ]; then
+        admin_username="admin"
+    fi
+
+    # Prompt for Admin Password
+    read -p "رمز عبور ورود به پنل (Password) [پیش‌فرض: admin]: " admin_password
+    if [ -z "$admin_password" ]; then
+        admin_password="admin"
+    fi
+
     echo ""
 }
 
@@ -192,6 +204,8 @@ NODE_ENV=production
 ADMIN_ID="${admin_id}"
 BOT_TOKEN="${bot_token}"
 PORT="${web_port}"
+ADMIN_USERNAME="${admin_username:-admin}"
+ADMIN_PASSWORD="${admin_password:-admin}"
 EOF
 
     # 7. Build and Compile
@@ -348,6 +362,8 @@ NODE_ENV=production
 ADMIN_ID="${admin_id}"
 BOT_TOKEN="${bot_token}"
 PORT="${web_port}"
+ADMIN_USERNAME="${admin_username:-admin}"
+ADMIN_PASSWORD="${admin_password:-admin}"
 EOF
 
     echo -e "${BLUE}اعمال تنظیمات جدید و راه‌اندازی مجدد سرویس...${PLAIN}"

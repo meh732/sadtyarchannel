@@ -232,6 +232,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   lastBackupAt: null,
   botConnectionMode: 'polling',
   publicUrl: DEFAULT_KNOWN_APP_URL,
+  adminUsername: process.env.ADMIN_USERNAME || 'admin',
   adminPassword: process.env.ADMIN_PASSWORD || 'admin',
   maxConfigsRetention: 2000
 };
@@ -7358,13 +7359,18 @@ async function startExpressServer() {
   // API: Login with password
   app.post('/api/auth/login', (req, res) => {
     try {
-      const { password } = req.body;
+      const { username, password } = req.body;
       const adminPass = db.settings.adminPassword || 'admin';
+      const adminUser = db.settings.adminUsername || 'admin';
       
-      if (password === adminPass) {
+      // If only password is sent (legacy fallback) or both match
+      if (
+        (username === adminUser && password === adminPass) || 
+        (!username && password === adminPass)
+      ) {
         return res.json({ success: true, token: generateAdminToken() });
       }
-      return res.status(400).json({ success: false, message: 'رمز عبور وارد شده نادرست است.' });
+      return res.status(400).json({ success: false, message: 'نام کاربری یا رمز عبور اشتباه است.' });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
@@ -7627,6 +7633,7 @@ async function startExpressServer() {
         backupIntervalHours,
         botConnectionMode,
         publicUrl,
+        adminUsername,
         adminPassword,
         maxConfigsRetention
       } = req.body;
@@ -7637,6 +7644,9 @@ async function startExpressServer() {
       }
       if (adminId !== undefined) {
         db.settings.adminId = adminId;
+      }
+      if (adminUsername !== undefined) {
+        db.settings.adminUsername = adminUsername;
       }
       if (adminPassword !== undefined) {
         db.settings.adminPassword = adminPassword;
