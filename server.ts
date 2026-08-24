@@ -4,6 +4,22 @@ import fs from 'fs';
 import net from 'net';
 import dns from 'dns';
 import tls from 'tls';
+import os from 'os';
+
+// --- Local IP Helper ---
+function getMachineIp(): string {
+  try {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]!) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+           return iface.address;
+        }
+      }
+    }
+  } catch (e) {}
+  return '127.0.0.1';
+}
 import { spawn, exec, execSync } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { 
@@ -402,7 +418,7 @@ function getPublicAppUrl(req?: express.Request): string {
     return raw.startsWith('http') ? raw : `http://${raw}`;
   }
 
-  // 2. Fallback to active HTTP request context (but do not overwrite the settings database)
+  // 2. Fallback to active HTTP request context
   if (req) {
     const host = req.get('x-forwarded-host') || req.get('host');
     const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
@@ -411,8 +427,19 @@ function getPublicAppUrl(req?: express.Request): string {
     }
   }
 
-  // 3. Environment variables or default
+  // 3. Environment variables (if explicitly set)
   if (process.env.APP_URL) return process.env.APP_URL;
+
+  // 4. Auto-detect Linux server IP if we are NOT in the AI Studio environment
+  if (!process.env.DEV_APP_URL) {
+    const ip = getMachineIp();
+    if (ip && ip !== '127.0.0.1' && ip !== 'localhost') {
+      const port = process.env.PORT || 3000;
+      return `http://${ip}:${port}`;
+    }
+  }
+
+  // 5. Default Sandbox URL (only as last resort)
   if (process.env.DEV_APP_URL) return process.env.DEV_APP_URL;
   return DEFAULT_KNOWN_APP_URL;
 }
@@ -4321,22 +4348,27 @@ async function setupBotMenuButton(token?: string, req?: express.Request): Promis
     if (db.settings.adminId) {
       const adminIdNum = Number(String(db.settings.adminId).replace(/[^0-9]/g, ''));
       if (adminIdNum) {
+        const isHttps = appUrl.startsWith('https://');
         const adminRes = await fetch(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: adminIdNum,
-            menu_button: {
+            menu_button: isHttps ? {
               type: 'web_app',
               text: '⚙️ پنل مدیریت',
               web_app: { url: appUrl }
+            } : {
+              type: 'commands'
             }
           }),
           signal: AbortSignal.timeout(10000)
         });
         const adminData = await adminRes.json();
         if (adminData.ok) {
-          adminResult = ' و پنل وب‌ویو اختصاصی برای ادمین فعال شد';
+          adminResult = isHttps 
+            ? ' و پنل وب‌ویو اختصاصی برای ادمین فعال شد'
+            : ' (به دلیل عدم استفاده از HTTPS روی سرور لینوکس، منوی وب‌ویو غیرفعال شد)';
         }
       }
     }
@@ -4410,8 +4442,11 @@ function getReplyKeyboard(userId: string | number, username?: string | null) {
 
   if (isAdmin) {
     // Show Admin WebApp button & quick shortcut button directly in the bar below the chat for the admin!
+    const isHttps = appUrl.startsWith('https://');
     keyboard.unshift([
-      { text: '🌐 باز کردن وب‌ویو پنل مدیریت (WebApp) 🚀', web_app: { url: appUrl } }
+      isHttps 
+        ? { text: '🌐 باز کردن وب‌ویو پنل مدیریت (WebApp) 🚀', web_app: { url: appUrl } }
+        : { text: '🔗 باز کردن پنل مدیریت در مرورگر 🚀', url: appUrl }
     ]);
     keyboard.push([
       { text: '⚙️ ورود به پنل مدیریت در تلگرام 🔴', style: 'danger' }
@@ -5381,18 +5416,19 @@ async function handleBotUpdate(update: any) {
       if (messageText === '/panel' || callbackData === 'admin_webapp') {
         if (callbackQueryId) await answerCallback('پنل وب‌ویو 🌐');
         const appUrl = getPublicAppUrl();
+        const isHttps = appUrl.startsWith('https://');
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
           text: `🌐 **پنل تحت وب و وب‌اپلیکیشن مدیریت (Telegram WebApp)**\n\n` +
-            `👑 **مدیر گرامی**، برای باز کردن و مدیریت کلیه تنظیمات، آمار، استخراج و تست در محیط وب‌ویو تلگرام، روی دکمه زیر کلیک فرمایید:\n\n` +
+            `👑 **مدیر گرامی**، برای باز کردن و مدیریت کلیه تنظیمات، آمار، استخراج و تست، روی دکمه زیر کلیک فرمایید:\n\n` +
             `🔗 **آدرس مستقیم پنل:** \`${appUrl}\``,
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [{ text: '🌐 باز کردن وب‌ویو پنل مدیریت (Web App) 🚀', web_app: { url: appUrl } }],
+              isHttps ? [{ text: '🌐 باز کردن وب‌ویو پنل مدیریت (Web App) 🚀', web_app: { url: appUrl } }] : [],
               [{ text: '🔗 باز کردن در مرورگر اینترنت 🌍', url: appUrl }],
               [{ text: '⚙️ منوی مدیریت در تلگرام', callback_data: 'admin_menu' }]
-            ]
+            ].filter(row => row.length > 0)
           }
         });
         return;
@@ -5402,6 +5438,7 @@ async function handleBotUpdate(update: any) {
         if (callbackQueryId) await answerCallback('پنل مدیریت ⚙️');
         
         const appUrl = getPublicAppUrl();
+        const isHttps = appUrl.startsWith('https://');
         const welcome = `⚙️ **پنل فوق‌پیشرفته مدیریت ربات** ⚙️\n\n` +
           `👑 **مدیر گرامی، به مرکز کنترل خوش آمدید.**\n` +
           `برای استفاده از رابط کاربری گرافیکی، دکمه **«🌐 باز کردن وب‌ویو پنل مدیریت»** را بزنید یا از گزینه‌های تلگرامی زیر استفاده کنید:\n\n` +
@@ -5409,9 +5446,9 @@ async function handleBotUpdate(update: any) {
         
         const keyboard = {
           inline_keyboard: [
-            [
+            isHttps ? [
               { text: `🌐 باز کردن وب‌ویو پنل مدیریت (Web App) 🚀`, web_app: { url: appUrl } }
-            ],
+            ] : [],
             [
               { text: `🔗 باز کردن پنل در مرورگر خارجی 🌍`, url: appUrl }
             ],
@@ -5443,6 +5480,8 @@ async function handleBotUpdate(update: any) {
             ]
           ]
         };
+
+        keyboard.inline_keyboard = keyboard.inline_keyboard.filter(row => row.length > 0);
 
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
@@ -6559,9 +6598,12 @@ async function handleBotUpdate(update: any) {
 
       if (isAdmin) {
         const appUrl = getPublicAppUrl();
-        startInlineKeyboard.unshift([
-          { text: '👑 🌐 باز کردن وب‌ویو پنل مدیریت (WebApp) 🚀', web_app: { url: appUrl } }
-        ]);
+        const isHttps = appUrl.startsWith('https://');
+        startInlineKeyboard.unshift(
+          isHttps 
+            ? [{ text: '👑 🌐 باز کردن وب‌ویو پنل مدیریت (WebApp) 🚀', web_app: { url: appUrl } }]
+            : [{ text: '🔗 👑 باز کردن پنل مدیریت در مرورگر 🚀', url: appUrl }]
+        );
         startInlineKeyboard.splice(1, 0, [
           { text: '⚙️ ورود به منوی مدیریت در تلگرام', callback_data: 'admin_menu' }
         ]);
@@ -7227,6 +7269,24 @@ async function startExpressServer() {
   const app = express();
   app.use(express.json({ limit: '250mb' }));
   app.use(express.urlencoded({ limit: '250mb', extended: true }));
+
+  // --- Auto-Detect VPS Host Middleware ---
+  app.use((req, res, next) => {
+    // If we are not in the AI Studio environment, try to auto-save the host
+    if (!process.env.DEV_APP_URL) {
+      const host = req.get('x-forwarded-host') || req.get('host');
+      if (host && !host.includes('localhost') && !host.includes('127.0.0.1') && !host.includes('ais-dev')) {
+        if (!db.settings.publicUrl || db.settings.publicUrl.trim() === '' || db.settings.publicUrl === DEFAULT_KNOWN_APP_URL) {
+          const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+          const newUrl = `${proto}://${host}`;
+          db.settings.publicUrl = newUrl;
+          saveDatabase();
+          addLog('info', `آدرس پنل مدیریت شما به صورت خودکار شناسایی و ذخیره شد: ${newUrl}`);
+        }
+      }
+    }
+    next();
+  });
 
   // --- Admin Access Authentication Layer ---
   function verifyToken(token: string): boolean {
