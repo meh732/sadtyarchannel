@@ -3810,6 +3810,7 @@ async function checkAndTriggerAutoPost() {
     const timeSinceLastConfig = lastConfigTime ? (now - new Date(lastConfigTime).getTime()) : Infinity;
     if (timeSinceLastConfig >= configIntervalMs) {
       await executeConfigsAutoPost();
+      return;
     }
   }
 
@@ -3822,6 +3823,7 @@ async function checkAndTriggerAutoPost() {
     const timeSinceLastNews = lastNewsTime ? (now - new Date(lastNewsTime).getTime()) : Infinity;
     if (timeSinceLastNews >= newsIntervalMs) {
       await executeTechNewsAutoPost();
+      return;
     }
   }
 
@@ -3834,6 +3836,7 @@ async function checkAndTriggerAutoPost() {
     const timeSinceLastTricks = lastTricksTime ? (now - new Date(lastTricksTime).getTime()) : Infinity;
     if (timeSinceLastTricks >= tricksIntervalMs) {
       await executeTechTricksAutoPost();
+      return;
     }
   }
 }
@@ -6132,38 +6135,80 @@ async function handleBotUpdate(update: any) {
       }
 
       if (callbackData === 'admin_ap_interval_menu') {
-        await answerCallback('انتخاب بازه...');
+        await answerCallback('زمان‌بندی پست‌ها');
         const keyboard = [
-          [
-            { text: 'هر ۱ ساعت', callback_data: 'admin_ap_set_interval_1' },
-            { text: 'هر ۲ ساعت', callback_data: 'admin_ap_set_interval_2' }
-          ],
-          [
-            { text: 'هر ۴ ساعت', callback_data: 'admin_ap_set_interval_4' },
-            { text: 'هر ۶ ساعت', callback_data: 'admin_ap_set_interval_6' }
-          ],
-          [
-            { text: 'هر ۱۲ ساعت', callback_data: 'admin_ap_set_interval_12' },
-            { text: 'هر ۲۴ ساعت', callback_data: 'admin_ap_set_interval_24' }
-          ],
+          [{ text: `🕒 زمان‌بندی کانفیگ (${db.settings.autoPost.configIntervalHours || db.settings.autoPost.postIntervalHours} ساعت)`, callback_data: 'admin_ap_int_configs' }],
+          [{ text: `🕒 زمان‌بندی اخبار (${db.settings.autoPost.techNewsIntervalHours || 4} ساعت)`, callback_data: 'admin_ap_int_news' }],
+          [{ text: `🕒 زمان‌بندی ترفندها (${db.settings.autoPost.techTricksIntervalHours || 6} ساعت)`, callback_data: 'admin_ap_int_tricks' }],
           [{ text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }]
         ];
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `🕒 **فاصله زمانی ارسال خودکار را انتخاب کنید:**\n\nفاصله فعلی: **هر ${db.settings.autoPost.postIntervalHours} ساعت یکبار**`,
+          text: `🕒 **تنظیمات زمان‌بندی پست‌های خودکار**\n\nکدام زمان‌بندی را می‌خواهید تغییر دهید؟`,
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: keyboard }
         });
         return;
       }
 
-      if (callbackData?.startsWith('admin_ap_set_interval_')) {
-        const hrs = parseInt(callbackData.replace('admin_ap_set_interval_', '')) || 4;
-        db.settings.autoPost.postIntervalHours = hrs;
+      if (callbackData === 'admin_ap_int_configs' || callbackData === 'admin_ap_int_news' || callbackData === 'admin_ap_int_tricks') {
+        await answerCallback('انتخاب بازه...');
+        let prefix = 'c';
+        let currentHrs = db.settings.autoPost.configIntervalHours || db.settings.autoPost.postIntervalHours;
+        let title = 'کانفیگ و پروکسی';
+        
+        if (callbackData === 'admin_ap_int_news') {
+          prefix = 'n';
+          currentHrs = db.settings.autoPost.techNewsIntervalHours || 4;
+          title = 'اخبار تکنولوژی';
+        } else if (callbackData === 'admin_ap_int_tricks') {
+          prefix = 't';
+          currentHrs = db.settings.autoPost.techTricksIntervalHours || 6;
+          title = 'ترفندها و رازها';
+        }
+
+        const keyboard = [
+          [
+            { text: 'هر ۱ ساعت', callback_data: `admin_ap_setint_${prefix}_1` },
+            { text: 'هر ۲ ساعت', callback_data: `admin_ap_setint_${prefix}_2` }
+          ],
+          [
+            { text: 'هر ۴ ساعت', callback_data: `admin_ap_setint_${prefix}_4` },
+            { text: 'هر ۶ ساعت', callback_data: `admin_ap_setint_${prefix}_6` }
+          ],
+          [
+            { text: 'هر ۱۲ ساعت', callback_data: `admin_ap_setint_${prefix}_12` },
+            { text: 'هر ۲۴ ساعت', callback_data: `admin_ap_setint_${prefix}_24` }
+          ],
+          [{ text: '🔙 بازگشت', callback_data: 'admin_ap_interval_menu' }]
+        ];
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `🕒 **فاصله زمانی ارسال خودکار (${title}) را انتخاب کنید:**\n\nفاصله فعلی: **هر ${currentHrs} ساعت یکبار**`,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        return;
+      }
+
+      if (callbackData?.startsWith('admin_ap_setint_')) {
+        const parts = callbackData.replace('admin_ap_setint_', '').split('_');
+        const prefix = parts[0];
+        const hrs = parseInt(parts[1]) || 4;
+        
+        if (prefix === 'c') {
+          db.settings.autoPost.postIntervalHours = hrs;
+          db.settings.autoPost.configIntervalHours = hrs;
+        } else if (prefix === 'n') {
+          db.settings.autoPost.techNewsIntervalHours = hrs;
+        } else if (prefix === 't') {
+          db.settings.autoPost.techTricksIntervalHours = hrs;
+        }
+        
         saveDatabase();
         setupAutoPostInterval();
         await answerCallback(`فاصله زمانی به ${hrs} ساعت تغییر یافت.`);
-        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_interval_menu' } });
         return;
       }
 
