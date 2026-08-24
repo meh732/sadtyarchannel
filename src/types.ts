@@ -61,10 +61,15 @@ export interface AutoPostSettings {
   autoPurgeOldTechDays?: number; // Auto purge news older than X days (default: 7)
   lastPostedAt?: string | null;
 
+  // Global Anti-Flood delay between posts (in minutes)
+  antiFloodDelayMinutes?: number; // e.g. 3, 5, 10 minutes
+  lastAnyPostAt?: string | null;
+
   // 1. Configs & Proxies Schedule
   configsEnabled?: boolean; // Toggle for configs auto-posting
-  postIntervalHours: number; // e.g. 1, 2, 4, 8, 12, 24 (configs interval)
+  postIntervalHours: number; // e.g. 1, 2, 4, 8, 12, 24 (configs interval in hours)
   configIntervalHours?: number; // alias/explicit
+  configIntervalMinutes?: number; // minute precision (e.g. 30, 45, 60, 120, etc.)
   configCount: number; // number of configs (0, 1, 2, 3, 5, 10, 15, 20, 30, 50, etc.)
   proxyCount: number; // number of proxies (0, 1, 2, 3, 5, 10, 15, 20)
   customText: string; // custom Persian text to add to the config post
@@ -73,12 +78,14 @@ export interface AutoPostSettings {
   // 2. Tech News Schedule (Dedicated/Independent)
   techNewsEnabled?: boolean; // Toggle for tech news auto-posting
   techNewsIntervalHours?: number; // Interval in hours (1, 2, 4, 6, 8, 12, 24)
+  techNewsIntervalMinutes?: number; // minute precision (e.g. 30, 45, 60, 120, etc.)
   techNewsCount?: number; // Number of tech news to post (1, 2, 3, 5, etc.)
   lastTechNewsPostedAt?: string | null;
 
   // 3. Tech Tricks & Secrets Schedule (Dedicated/Independent)
   techTricksEnabled?: boolean; // Toggle for tricks/secrets auto-posting
   techTricksIntervalHours?: number; // Interval in hours (1, 2, 4, 6, 8, 12, 24)
+  techTricksIntervalMinutes?: number; // minute precision (e.g. 30, 45, 60, 120, etc.)
   techTricksCount?: number; // Number of mobile/tech tricks to post (1, 2, 3, etc.)
   lastTechTricksPostedAt?: string | null;
 

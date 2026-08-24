@@ -232,6 +232,7 @@ export default function App() {
     configsEnabled: true,
     postIntervalHours: 4,
     configIntervalHours: 4,
+    configIntervalMinutes: 240,
     configCount: 5,
     proxyCount: 1,
     customText: '',
@@ -244,10 +245,13 @@ export default function App() {
     lastTechTricksPostedAt: null,
     techNewsEnabled: true,
     techNewsIntervalHours: 4,
+    techNewsIntervalMinutes: 240,
     techNewsCount: 2,
     techTricksEnabled: true,
     techTricksIntervalHours: 6,
+    techTricksIntervalMinutes: 360,
     techTricksCount: 2,
+    antiFloodDelayMinutes: 3,
     techPostMode: 'combined',
     autoPurgeOldTechDays: 7,
     includeTechImportanceBadge: true
@@ -4244,6 +4248,49 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Anti-Flood Protection Card */}
+                    <div className="bg-white border border-emerald-100 rounded-2xl p-6 shadow-sm space-y-4">
+                      <div className="flex items-center gap-3 pb-3 border-b border-emerald-50">
+                        <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                          <ShieldCheck className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                            <span>محافظت هوشمند ضد رگباری (Anti-Flood Protection)</span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                              جلوگیری از اسپم کانال
+                            </span>
+                          </h4>
+                          <p className="text-[10px] text-slate-500">
+                            تنظیم حداقل فاصله زمانی اجباری بین دو پست متوالی تا از ارسال رگباری و پشت‌سرهم پست‌ها جلوگیری شود.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-slate-700">حداقل فاصله ایمن بین ارسال‌ها</label>
+                          <select
+                            value={autoPostForm.antiFloodDelayMinutes || 3}
+                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, antiFloodDelayMinutes: Number(e.target.value) }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-emerald-500 focus:outline-none bg-emerald-50/20 cursor-pointer font-medium"
+                          >
+                            <option value="1">۱ دقیقه فاصله</option>
+                            <option value="2">۲ دقیقه فاصله</option>
+                            <option value="3">۳ دقیقه فاصله (پیشنهادی)</option>
+                            <option value="5">۵ دقیقه فاصله</option>
+                            <option value="10">۱۰ دقیقه فاصله</option>
+                            <option value="15">۱۵ دقیقه فاصله</option>
+                            <option value="30">۳۰ دقیقه فاصله</option>
+                          </select>
+                        </div>
+
+                        <div className="text-xs text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100 leading-relaxed">
+                          اگر زمان ارسال دو دسته مختلف (مثلا اخبار و کانفیگ) همزمان برسد، کرون جاب بین آن‌ها حداقل <strong>{autoPostForm.antiFloodDelayMinutes || 3} دقیقه</strong> فاصله ایجاد می‌کند تا کانال شما اسپم نشود.
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Section 1: CONFIGS & PROXIES SCHEDULE */}
                     <div className="bg-white border border-indigo-100 rounded-2xl p-6 shadow-sm space-y-5">
                       <div className="flex items-center justify-between pb-3 border-b border-indigo-50">
@@ -4253,7 +4300,10 @@ export default function App() {
                           </div>
                           <div>
                             <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                              <span>زمان‌بندی ۱: ارسال کانفیگ‌ها و پروکسی‌ها (V2Ray & MTProto)</span>
+                              <span>زمان‌بندی ۱: ارسال کانفیگ‌ها و پروکسی‌ها (Configs Cron)</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${autoPostForm.configsEnabled !== false ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>
+                                {autoPostForm.configsEnabled !== false ? 'روشن' : 'خاموش'}
+                              </span>
                             </h4>
                             <p className="text-[10px] text-slate-400">بهترین کانفیگ‌های تست شده و پروکسی‌های پرسرعت فعال</p>
                           </div>
@@ -4277,21 +4327,25 @@ export default function App() {
                             <span>فاصله زمانی ارسال کانفیگ</span>
                           </label>
                           <select
-                            value={autoPostForm.configIntervalHours || autoPostForm.postIntervalHours || 4}
+                            value={autoPostForm.configIntervalMinutes || (autoPostForm.configIntervalHours ? autoPostForm.configIntervalHours * 60 : 240)}
                             onChange={(e) => {
-                              const val = Number(e.target.value);
-                              setAutoPostForm(prev => ({ ...prev, configIntervalHours: val, postIntervalHours: val }));
+                              const min = Number(e.target.value);
+                              const hrs = Math.max(1, Math.round(min / 60));
+                              setAutoPostForm(prev => ({ ...prev, configIntervalMinutes: min, configIntervalHours: hrs, postIntervalHours: hrs }));
                             }}
                             className="w-full px-4 py-2.5 rounded-xl border border-indigo-100 text-xs focus:border-indigo-500 focus:outline-none bg-indigo-50/30 cursor-pointer font-medium text-slate-800"
                           >
-                            <option value="1">هر ۱ ساعت یکبار</option>
-                            <option value="2">هر ۲ ساعت یکبار</option>
-                            <option value="3">هر ۳ ساعت یکبار</option>
-                            <option value="4">هر ۴ ساعت یکبار (پیش‌فرض)</option>
-                            <option value="6">هر ۶ ساعت یکبار</option>
-                            <option value="8">هر ۸ ساعت یکبار</option>
-                            <option value="12">هر ۱۲ ساعت یکبار</option>
-                            <option value="24">هر ۲۴ ساعت (یکبار در روز)</option>
+                            <option value="15">هر ۱۵ دقیقه یکبار</option>
+                            <option value="30">هر ۳۰ دقیقه یکبار</option>
+                            <option value="45">هر ۴۵ دقیقه یکبار</option>
+                            <option value="60">هر ۱ ساعت (۶۰ دقیقه)</option>
+                            <option value="120">هر ۲ ساعت یکبار</option>
+                            <option value="180">هر ۳ ساعت یکبار</option>
+                            <option value="240">هر ۴ ساعت یکبار (پیش‌فرض)</option>
+                            <option value="360">هر ۶ ساعت یکبار</option>
+                            <option value="480">هر ۸ ساعت یکبار</option>
+                            <option value="720">هر ۱۲ ساعت یکبار</option>
+                            <option value="1440">هر ۲۴ ساعت (یکبار در روز)</option>
                           </select>
                         </div>
 
@@ -4369,7 +4423,10 @@ export default function App() {
                           </div>
                           <div>
                             <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                              <span>زمان‌بندی ۲: ارسال اخبار روز دنیای تکنولوژی (Tech News)</span>
+                              <span>زمان‌بندی ۲: ارسال اخبار روز دنیای تکنولوژی (Tech News Cron)</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${autoPostForm.techNewsEnabled !== false ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>
+                                {autoPostForm.techNewsEnabled !== false ? 'روشن' : 'خاموش'}
+                              </span>
                             </h4>
                             <p className="text-[10px] text-slate-400">تازه‌ترین رویدادهای هوش مصنوعی، فناوری و اینترنت</p>
                           </div>
@@ -4393,18 +4450,25 @@ export default function App() {
                             <span>فاصله زمانی ارسال اخبار</span>
                           </label>
                           <select
-                            value={autoPostForm.techNewsIntervalHours || 4}
-                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, techNewsIntervalHours: Number(e.target.value) }))}
+                            value={autoPostForm.techNewsIntervalMinutes || (autoPostForm.techNewsIntervalHours ? autoPostForm.techNewsIntervalHours * 60 : 240)}
+                            onChange={(e) => {
+                              const min = Number(e.target.value);
+                              const hrs = Math.max(1, Math.round(min / 60));
+                              setAutoPostForm(prev => ({ ...prev, techNewsIntervalMinutes: min, techNewsIntervalHours: hrs }));
+                            }}
                             className="w-full px-4 py-2.5 rounded-xl border border-sky-100 text-xs focus:border-sky-500 focus:outline-none bg-sky-50/30 cursor-pointer font-medium text-slate-800"
                           >
-                            <option value="1">هر ۱ ساعت یکبار</option>
-                            <option value="2">هر ۲ ساعت یکبار</option>
-                            <option value="3">هر ۳ ساعت یکبار</option>
-                            <option value="4">هر ۴ ساعت یکبار (پیش‌فرض)</option>
-                            <option value="6">هر ۶ ساعت یکبار</option>
-                            <option value="8">هر ۸ ساعت یکبار</option>
-                            <option value="12">هر ۱۲ ساعت یکبار</option>
-                            <option value="24">هر ۲۴ ساعت (یکبار در روز)</option>
+                            <option value="15">هر ۱۵ دقیقه یکبار</option>
+                            <option value="30">هر ۳۰ دقیقه یکبار</option>
+                            <option value="45">هر ۴۵ دقیقه یکبار</option>
+                            <option value="60">هر ۱ ساعت (۶۰ دقیقه)</option>
+                            <option value="120">هر ۲ ساعت یکبار</option>
+                            <option value="180">هر ۳ ساعت یکبار</option>
+                            <option value="240">هر ۴ ساعت یکبار (پیش‌فرض)</option>
+                            <option value="360">هر ۶ ساعت یکبار</option>
+                            <option value="480">هر ۸ ساعت یکبار</option>
+                            <option value="720">هر ۱۲ ساعت یکبار</option>
+                            <option value="1440">هر ۲۴ ساعت (یکبار در روز)</option>
                           </select>
                         </div>
 
@@ -4454,7 +4518,10 @@ export default function App() {
                           </div>
                           <div>
                             <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                              <span>زمان‌بندی ۳: ارسال ترفندها و رازهای تکنولوژی (Tech Tricks & Secrets)</span>
+                              <span>زمان‌بندی ۳: ارسال ترفندها و رازهای تکنولوژی (Tech Tricks Cron)</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${autoPostForm.techTricksEnabled !== false ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                                {autoPostForm.techTricksEnabled !== false ? 'روشن' : 'خاموش'}
+                              </span>
                             </h4>
                             <p className="text-[10px] text-slate-400">ترفندهای موبایل، کامپیوتر، امنیت و دور زدن محدودیت‌ها</p>
                           </div>
@@ -4478,18 +4545,25 @@ export default function App() {
                             <span>فاصله زمانی ارسال ترفندها</span>
                           </label>
                           <select
-                            value={autoPostForm.techTricksIntervalHours || 6}
-                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, techTricksIntervalHours: Number(e.target.value) }))}
+                            value={autoPostForm.techTricksIntervalMinutes || (autoPostForm.techTricksIntervalHours ? autoPostForm.techTricksIntervalHours * 60 : 360)}
+                            onChange={(e) => {
+                              const min = Number(e.target.value);
+                              const hrs = Math.max(1, Math.round(min / 60));
+                              setAutoPostForm(prev => ({ ...prev, techTricksIntervalMinutes: min, techTricksIntervalHours: hrs }));
+                            }}
                             className="w-full px-4 py-2.5 rounded-xl border border-amber-100 text-xs focus:border-amber-500 focus:outline-none bg-amber-50/30 cursor-pointer font-medium text-slate-800"
                           >
-                            <option value="1">هر ۱ ساعت یکبار</option>
-                            <option value="2">هر ۲ ساعت یکبار</option>
-                            <option value="3">هر ۳ ساعت یکبار</option>
-                            <option value="4">هر ۴ ساعت یکبار</option>
-                            <option value="6">هر ۶ ساعت یکبار (پیش‌فرض)</option>
-                            <option value="8">هر ۸ ساعت یکبار</option>
-                            <option value="12">هر ۱۲ ساعت یکبار</option>
-                            <option value="24">هر ۲۴ ساعت (یکبار در روز)</option>
+                            <option value="15">هر ۱۵ دقیقه یکبار</option>
+                            <option value="30">هر ۳۰ دقیقه یکبار</option>
+                            <option value="45">هر ۴۵ دقیقه یکبار</option>
+                            <option value="60">هر ۱ ساعت (۶۰ دقیقه)</option>
+                            <option value="120">هر ۲ ساعت یکبار</option>
+                            <option value="180">هر ۳ ساعت یکبار</option>
+                            <option value="240">هر ۴ ساعت یکبار</option>
+                            <option value="360">هر ۶ ساعت یکبار (پیش‌فرض)</option>
+                            <option value="480">هر ۸ ساعت یکبار</option>
+                            <option value="720">هر ۱۲ ساعت یکبار</option>
+                            <option value="1440">هر ۲۴ ساعت (یکبار در روز)</option>
                           </select>
                         </div>
 

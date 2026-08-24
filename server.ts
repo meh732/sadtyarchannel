@@ -189,11 +189,14 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   includeTechImportanceBadge: true,
   autoPurgeOldTechDays: 7,
   lastPostedAt: null,
+  antiFloodDelayMinutes: 3,
+  lastAnyPostAt: null,
 
   // 1. Configs & Proxies Schedule
   configsEnabled: true,
   postIntervalHours: 4,
   configIntervalHours: 4,
+  configIntervalMinutes: 240,
   configCount: 5,
   proxyCount: 1,
   customText: '💎 کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده ما تقدیم به شما:',
@@ -202,12 +205,14 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   // 2. Tech News Schedule
   techNewsEnabled: true,
   techNewsIntervalHours: 4,
+  techNewsIntervalMinutes: 240,
   techNewsCount: 2,
   lastTechNewsPostedAt: null,
 
   // 3. Tech Tricks & Secrets Schedule
   techTricksEnabled: true,
   techTricksIntervalHours: 6,
+  techTricksIntervalMinutes: 360,
   techTricksCount: 2,
   lastTechTricksPostedAt: null,
 
@@ -3281,6 +3286,51 @@ async function executeStandaloneTechPost(targetChannel: string, items: TechItem[
   }
 }
 
+// Helper: format interval text for display
+function formatIntervalText(minutes?: number, hours?: number): string {
+  if (minutes && minutes > 0) {
+    if (minutes < 60) {
+      return `هر ${minutes} دقیقه`;
+    }
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    if (m === 0) return `هر ${h} ساعت`;
+    return `هر ${h} ساعت و ${m} دقیقه`;
+  }
+  if (hours && hours > 0) {
+    return `هر ${hours} ساعت`;
+  }
+  return 'هر ۴ ساعت';
+}
+
+// Helper: parse custom user interval text (e.g. "15m", "30 دقیقه", "2 ساعت", "1.5h", "90")
+function parseCustomIntervalText(text: string): number | null {
+  if (!text) return null;
+  const clean = text.trim().toLowerCase()
+    .replace(/۰/g, '0').replace(/۱/g, '1').replace(/۲/g, '2').replace(/۳/g, '3').replace(/۴/g, '4')
+    .replace(/۵/g, '5').replace(/۶/g, '6').replace(/۷/g, '7').replace(/۸/g, '8').replace(/۹/g, '9');
+
+  // Check for hours: e.g. "2 ساعت", "2h", "1.5 ساعت", "1.5h", "2 hour"
+  const hourMatch = clean.match(/^([\d\.]+)\s*(ساعت|hour|hours|h|hr|hrs)$/);
+  if (hourMatch) {
+    const hrs = parseFloat(hourMatch[1]);
+    if (!isNaN(hrs) && hrs > 0) {
+      return Math.round(hrs * 60);
+    }
+  }
+
+  // Check for minutes: e.g. "30 دقیقه", "30m", "45 min", "45"
+  const minMatch = clean.match(/^([\d\.]+)\s*(دقیقه|min|minute|minutes|m)?$/);
+  if (minMatch) {
+    const mins = parseFloat(minMatch[1]);
+    if (!isNaN(mins) && mins >= 1) {
+      return Math.round(mins);
+    }
+  }
+
+  return null;
+}
+
 // ----------------------------------------------------
 // 1. DEDICATED EXECUTOR: CONFIGS & PROXIES AUTO-POST
 // ----------------------------------------------------
@@ -3545,6 +3595,7 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
     const nowIso = new Date().toISOString();
     settings.lastConfigsPostedAt = nowIso;
     settings.lastPostedAt = nowIso;
+    settings.lastAnyPostAt = nowIso;
     saveDatabase();
     
     addLog('success', `پست کانفیگ‌ها (${selectedConfigs.length} کانفیگ، ${selectedProxies.length} پروکسی) با موفقیت به کانال ${targetChannel} ارسال گردید.`);
@@ -3634,6 +3685,7 @@ async function executeTechNewsAutoPost(customTargetChannel?: string): Promise<bo
       it.postedAt = nowIso;
     }
     settings.lastTechNewsPostedAt = nowIso;
+    settings.lastAnyPostAt = nowIso;
     saveDatabase();
 
     addLog('success', `پست اخبار روز تکنولوژی (${selectedNews.length} خبر) با موفقیت به کانال ${targetChannel} ارسال گردید.`);
@@ -3723,6 +3775,7 @@ async function executeTechTricksAutoPost(customTargetChannel?: string): Promise<
       it.postedAt = nowIso;
     }
     settings.lastTechTricksPostedAt = nowIso;
+    settings.lastAnyPostAt = nowIso;
     saveDatabase();
 
     addLog('success', `پست ترفندها و رازهای موبایل (${selectedTricks.length} ترفند) با موفقیت به کانال ${targetChannel} ارسال گردید.`);
@@ -3787,12 +3840,12 @@ function setupAutoPostInterval() {
     autoPostCheckIntervalRef = null;
   }
 
-  // Check every 3 minutes whether any of the 3 schedules (Configs, News, Tricks) is due
+  // Check every 1 minute for accurate cron timing
   autoPostCheckIntervalRef = setInterval(() => {
     checkAndTriggerAutoPost().catch(err => {
       console.error('Error during auto-post schedule check:', err);
     });
-  }, 3 * 60 * 1000);
+  }, 60 * 1000);
 }
 
 async function checkAndTriggerAutoPost() {
@@ -3801,42 +3854,52 @@ async function checkAndTriggerAutoPost() {
 
   const now = Date.now();
 
+  // Anti-Flood delay check (prevents back-to-back spamming of posts)
+  const antiFloodMinutes = typeof ap.antiFloodDelayMinutes === 'number' ? ap.antiFloodDelayMinutes : 3;
+  const antiFloodDelayMs = antiFloodMinutes * 60 * 1000;
+  if (ap.lastAnyPostAt) {
+    const timeSinceAny = now - new Date(ap.lastAnyPostAt).getTime();
+    if (timeSinceAny < antiFloodDelayMs) {
+      return; // Cooldown between posts is active!
+    }
+  }
+
   // 1. Configs & Proxies Schedule Check
   const configsActive = ap.configsEnabled !== false && ((ap.configCount || 0) > 0 || (ap.proxyCount || 0) > 0);
   if (configsActive) {
-    const configIntervalHours = ap.configIntervalHours || ap.postIntervalHours || 4;
-    const configIntervalMs = configIntervalHours * 60 * 60 * 1000;
+    const configMinutes = ap.configIntervalMinutes || (ap.configIntervalHours ? ap.configIntervalHours * 60 : (ap.postIntervalHours ? ap.postIntervalHours * 60 : 240));
+    const configIntervalMs = configMinutes * 60 * 1000;
     const lastConfigTime = ap.lastConfigsPostedAt || ap.lastPostedAt;
     const timeSinceLastConfig = lastConfigTime ? (now - new Date(lastConfigTime).getTime()) : Infinity;
     if (timeSinceLastConfig >= configIntervalMs) {
       await executeConfigsAutoPost();
-      return;
+      return; // Return immediately to let anti-flood protect next schedule
     }
   }
 
   // 2. Tech News Schedule Check
   const newsActive = ap.techNewsEnabled !== false && (ap.techNewsCount || 0) > 0;
   if (newsActive) {
-    const newsIntervalHours = ap.techNewsIntervalHours || 4;
-    const newsIntervalMs = newsIntervalHours * 60 * 60 * 1000;
+    const newsMinutes = ap.techNewsIntervalMinutes || (ap.techNewsIntervalHours ? ap.techNewsIntervalHours * 60 : 240);
+    const newsIntervalMs = newsMinutes * 60 * 1000;
     const lastNewsTime = ap.lastTechNewsPostedAt;
     const timeSinceLastNews = lastNewsTime ? (now - new Date(lastNewsTime).getTime()) : Infinity;
     if (timeSinceLastNews >= newsIntervalMs) {
       await executeTechNewsAutoPost();
-      return;
+      return; // Return immediately to let anti-flood protect next schedule
     }
   }
 
   // 3. Tech Tricks & Secrets Schedule Check
   const tricksActive = ap.techTricksEnabled !== false && (ap.techTricksCount || 0) > 0;
   if (tricksActive) {
-    const tricksIntervalHours = ap.techTricksIntervalHours || 6;
-    const tricksIntervalMs = tricksIntervalHours * 60 * 60 * 1000;
+    const tricksMinutes = ap.techTricksIntervalMinutes || (ap.techTricksIntervalHours ? ap.techTricksIntervalHours * 60 : 360);
+    const tricksIntervalMs = tricksMinutes * 60 * 1000;
     const lastTricksTime = ap.lastTechTricksPostedAt;
     const timeSinceLastTricks = lastTricksTime ? (now - new Date(lastTricksTime).getTime()) : Infinity;
     if (timeSinceLastTricks >= tricksIntervalMs) {
       await executeTechTricksAutoPost();
-      return;
+      return; // Return immediately to let anti-flood protect next schedule
     }
   }
 }
@@ -5063,6 +5126,12 @@ async function handleBotUpdate(update: any) {
         return;
       }
 
+      // Direct Cron Job / Auto-Post command
+      if (messageText === '/cron' || messageText === '/autopost' || messageText === '/schedule' || messageText === 'ارسال خودکار' || messageText === 'کرون جاب') {
+        await handleBotUpdate({ callback_query: { id: '', message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
+        return;
+      }
+
       // Backup document restore check for Admin (handles any uploaded or forwarded document by admin)
       if (update.message?.document) {
         const doc = update.message.document;
@@ -5429,6 +5498,104 @@ async function handleBotUpdate(update: any) {
             chat_id: chatId,
             text: `✅ متن توضیحات پست خودکار با موفقیت تغییر یافت.`,
             reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به تنظیمات خودکار', callback_data: 'admin_autopost_menu' }]] }
+          });
+          return;
+        }
+
+        if (state.action === 'await_custom_cron_time') {
+          const type = state.data?.type || 'configs'; // 'configs' | 'news' | 'tricks'
+          if (!messageText || messageText.trim() === '' || messageText.trim() === 'لغو' || messageText.trim() === 'انصراف') {
+            delete adminStates[chatId];
+            const backMenu = type === 'news' ? 'admin_ap_menu_news' : type === 'tricks' ? 'admin_ap_menu_tricks' : 'admin_ap_menu_configs';
+            await callTelegramApi('sendMessage', {
+              chat_id: chatId,
+              text: '❌ عملیات لغو شد.',
+              reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: backMenu }]] }
+            });
+            return;
+          }
+
+          const parsedMinutes = parseCustomIntervalText(messageText.trim());
+          if (parsedMinutes <= 0) {
+            await callTelegramApi('sendMessage', {
+              chat_id: chatId,
+              text: `⚠️ **فرمت وارد شده نامعتبر است!**\n\nلطفاً یک عدد به دقیقه یا ساعت وارد فرمایید.\n\n*مثال‌های معتبر:*\n• \`45 دقیقه\` یا \`45m\`\n• \`2 ساعت\` یا \`2h\`\n• \`90\` (به معنی ۹۰ دقیقه)\n• \`1.5 ساعت\`\n\nبرای انصراف کلمه **لغو** را بفرستید.`,
+              parse_mode: 'Markdown'
+            });
+            return;
+          }
+
+          delete adminStates[chatId];
+          let typeTitle = 'کانفیگ و پروکسی';
+          let returnCallback = 'admin_ap_menu_configs';
+
+          if (type === 'news') {
+            typeTitle = 'اخبار تکنولوژی';
+            returnCallback = 'admin_ap_menu_news';
+            db.settings.autoPost.techNewsIntervalMinutes = parsedMinutes;
+            db.settings.autoPost.techNewsIntervalHours = Math.max(1, Math.round(parsedMinutes / 60));
+          } else if (type === 'tricks') {
+            typeTitle = 'ترفندها و رازها';
+            returnCallback = 'admin_ap_menu_tricks';
+            db.settings.autoPost.techTricksIntervalMinutes = parsedMinutes;
+            db.settings.autoPost.techTricksIntervalHours = Math.max(1, Math.round(parsedMinutes / 60));
+          } else {
+            typeTitle = 'کانفیگ و پروکسی';
+            returnCallback = 'admin_ap_menu_configs';
+            db.settings.autoPost.configIntervalMinutes = parsedMinutes;
+            db.settings.autoPost.configIntervalHours = Math.max(1, Math.round(parsedMinutes / 60));
+            db.settings.autoPost.postIntervalHours = Math.max(1, Math.round(parsedMinutes / 60));
+          }
+
+          saveDatabase();
+          setupAutoPostInterval();
+
+          const formattedStr = formatIntervalText(parsedMinutes);
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `✅ **زمان‌بندی کرون جاب با موفقیت تنظیم گردید!**\n\n🎯 بخش: **${typeTitle}**\n⏱ بازه زمانی جدید: **${formattedStr}**\n\nربات از این پس به صورت خودکار و بدون رگباری شدن، طبق این زمان‌بندی مطالب را به کانال ارسال خواهد نمود.`,
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: `⚙️ بازگشت به تنظیمات ${typeTitle}`, callback_data: returnCallback }],
+                [{ text: '📋 منوی اصلی کرون جاب', callback_data: 'admin_autopost_menu' }]
+              ]
+            }
+          });
+          return;
+        }
+
+        if (state.action === 'await_custom_antiflood') {
+          if (!messageText || messageText.trim() === '' || messageText.trim() === 'لغو' || messageText.trim() === 'انصراف') {
+            delete adminStates[chatId];
+            await callTelegramApi('sendMessage', {
+              chat_id: chatId,
+              text: '❌ عملیات لغو شد.',
+              reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }]] }
+            });
+            return;
+          }
+
+          const parsedMinutes = parseCustomIntervalText(messageText.trim());
+          if (parsedMinutes <= 0 || parsedMinutes > 120) {
+            await callTelegramApi('sendMessage', {
+              chat_id: chatId,
+              text: `⚠️ **مقدار وارد شده نامعتبر است!**\n\nلطفاً یک عدد بین ۱ تا ۱۲۰ دقیقه وارد فرمایید (مثلاً \`3 دقیقه\` یا \`5\`).\n\nبرای انصراف کلمه **لغو** را بفرستید.`,
+              parse_mode: 'Markdown'
+            });
+            return;
+          }
+
+          delete adminStates[chatId];
+          db.settings.autoPost.antiFloodDelayMinutes = parsedMinutes;
+          saveDatabase();
+          setupAutoPostInterval();
+
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `✅ **فاصله ایمن ضد رگباری با موفقیت به ${parsedMinutes} دقیقه تغییر یافت.**\n\nدر صورتی که چند تسک کرون همزمان آماده ارسال باشند، حداقل ${parsedMinutes} دقیقه بین هر پست فاصله خواهد افتاد تا کانال اسپم نشود.`,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به تنظیمات کرون جاب', callback_data: 'admin_autopost_menu' }]] }
           });
           return;
         }
@@ -6021,46 +6188,67 @@ async function handleBotUpdate(update: any) {
         return;
       }
 
-      // --- Auto Post Menu ---
+      // --- Auto Post / Cron Job Master Menu ---
       if (callbackData === 'admin_autopost_menu') {
-        await answerCallback('ارسال خودکار...');
+        await answerCallback('زمان‌بندی و کرون جاب...');
         const ap = db.settings.autoPost;
-        let msg = `📝 **تنظیمات سیستم ارسال خودکار به کانال (Auto-Post)**\n\n`;
-        msg += `وضعیت ارسال: ${ap.enabled ? '🟢 فعال و اتوماتیک' : '🔴 خاموش'}\n`;
-        msg += `کانال هدف: \`${ap.targetChannel || 'تنظیم نشده'}\`\n`;
-        msg += `بازه زمانی ارسال: **هر ${ap.postIntervalHours} ساعت**\n`;
-        msg += `تعداد کانفیگ ویتوری: **${ap.configCount} عدد**\n`;
-        msg += `تعداد پروکسی تلگرام: **${ap.proxyCount} عدد**\n`;
-        msg += `اخبار تکنولوژی: **${ap.techNewsCount || 0} عدد**\n`;
-        msg += `رازها و ترفندهای موبایل: **${ap.techTricksCount || 0} عدد**\n`;
-        msg += `ارسال بدون صدا (Silent): **${ap.silentMode ? '🟢 فعال' : '🔴 غیرفعال'}**\n`;
-        msg += `آخرین ارسال موفق: **${ap.lastPostedAt ? new Date(ap.lastPostedAt).toLocaleString('fa-IR') : 'هنوز ارسالی ثبت نشده'}**\n\n`;
-        msg += `تنظیمات زیر را ویرایش کنید:`;
+        const configMin = ap.configIntervalMinutes || (ap.configIntervalHours ? ap.configIntervalHours * 60 : (ap.postIntervalHours ? ap.postIntervalHours * 60 : 240));
+        const newsMin = ap.techNewsIntervalMinutes || (ap.techNewsIntervalHours ? ap.techNewsIntervalHours * 60 : 240);
+        const tricksMin = ap.techTricksIntervalMinutes || (ap.techTricksIntervalHours ? ap.techTricksIntervalHours * 60 : 360);
+        const afMin = ap.antiFloodDelayMinutes || 3;
+
+        let msg = `⏰ **سیستم پیشرفته کرون جاب و ارسال خودکار (Auto-Post & Cron)**\n\n`;
+        msg += `🎯 **وضعیت کل سیستم:** ${ap.enabled ? '🟢 فعال و اتوماتیک' : '🔴 خاموش'}\n`;
+        msg += `📢 **کانال هدف:** \`${ap.targetChannel || 'تنظیم نشده'}\`\n`;
+        msg += `🛡 **فاصله ایمن ضد رگباری:** **${afMin} دقیقه**\n`;
+        msg += `🔇 **ارسال بدون صدا (Silent):** ${ap.silentMode ? '🟢 فعال' : '🔴 غیرفعال'}\n\n`;
+
+        msg += `➖➖➖➖➖➖➖➖➖➖\n`;
+        msg += `⚡️ **کرون کانفیگ و پروکسی:**\n`;
+        msg += `• وضعیت: ${ap.configsEnabled !== false ? '🟢 روشن' : '🔴 خاموش'}\n`;
+        msg += `• زمان‌بندی: **هر ${formatIntervalText(configMin)}**\n`;
+        msg += `• محتوا: **${ap.configCount} کانفیگ** + **${ap.proxyCount} پروکسی**\n`;
+        msg += `• آخرین ارسال: ${ap.lastConfigsPostedAt || ap.lastPostedAt ? new Date(ap.lastConfigsPostedAt || ap.lastPostedAt!).toLocaleString('fa-IR') : 'ثبت نشده'}\n\n`;
+
+        msg += `📰 **کرون اخبار روز تکنولوژی:**\n`;
+        msg += `• وضعیت: ${ap.techNewsEnabled !== false ? '🟢 روشن' : '🔴 خاموش'}\n`;
+        msg += `• زمان‌بندی: **هر ${formatIntervalText(newsMin)}**\n`;
+        msg += `• محتوا: **${ap.techNewsCount || 0} خبر فناوری**\n`;
+        msg += `• آخرین ارسال: ${ap.lastTechNewsPostedAt ? new Date(ap.lastTechNewsPostedAt).toLocaleString('fa-IR') : 'ثبت نشده'}\n\n`;
+
+        msg += `💡 **کرون ترفندها و رازهای موبایل:**\n`;
+        msg += `• وضعیت: ${ap.techTricksEnabled !== false ? '🟢 روشن' : '🔴 خاموش'}\n`;
+        msg += `• زمان‌بندی: **هر ${formatIntervalText(tricksMin)}**\n`;
+        msg += `• محتوا: **${ap.techTricksCount || 0} ترفند آموزشی**\n`;
+        msg += `• آخرین ارسال: ${ap.lastTechTricksPostedAt ? new Date(ap.lastTechTricksPostedAt).toLocaleString('fa-IR') : 'ثبت نشده'}\n`;
+        msg += `➖➖➖➖➖➖➖➖➖➖\n\n`;
+        msg += `جهت تنظیم زمان‌بندی یا خاموش/روشن کردن هر بخش، روی دکمه‌های زیر کلیک فرمایید:`;
 
         const keyboard = [
           [
-            { text: `${ap.enabled ? '🔴 خاموش کردن ارسال' : '🟢 روشن کردن ارسال'}`, callback_data: 'admin_ap_toggle' },
-            { text: `${ap.silentMode ? '🔴 نوتیفیکیشن‌دار' : '🟢 بدون صدا'}`, callback_data: 'admin_ap_silent' }
+            { text: `${ap.enabled ? '🔴 خاموش کردن کل ارسال' : '🟢 روشن کردن کل ارسال'}`, callback_data: 'admin_ap_toggle' },
+            { text: `${ap.silentMode ? '🔔 نوتیفیکیشن‌دار' : '🔇 ارسال بدون صدا'}`, callback_data: 'admin_ap_silent' }
           ],
           [
-            { text: `📢 کانال هدف: ${ap.targetChannel || 'ثبت نشده'}`, callback_data: 'admin_ap_channel' },
-            { text: `🕒 فاصله: ${ap.postIntervalHours} ساعت`, callback_data: 'admin_ap_interval_menu' }
+            { text: `⚡️ تنظیمات کرون کانفیگ (${ap.configsEnabled !== false ? '🟢' : '🔴'})`, callback_data: 'admin_ap_menu_configs' },
+            { text: `📰 تنظیمات کرون اخبار (${ap.techNewsEnabled !== false ? '🟢' : '🔴'})`, callback_data: 'admin_ap_menu_news' }
           ],
           [
-            { text: `📦 کانفیگ: ${ap.configCount} عدد`, callback_data: 'admin_ap_conf_count' },
-            { text: `🔌 پروکسی: ${ap.proxyCount} عدد`, callback_data: 'admin_ap_proxy_count' }
+            { text: `💡 تنظیمات کرون ترفندها (${ap.techTricksEnabled !== false ? '🟢' : '🔴'})`, callback_data: 'admin_ap_menu_tricks' },
+            { text: `🛡 فاصله ضد رگباری (${afMin} دقیقه)`, callback_data: 'admin_ap_antiflood_menu' }
           ],
           [
-            { text: `📰 اخبار تکنولوژی: ${ap.techNewsCount || 0} عدد`, callback_data: 'admin_ap_tech_news_count' },
-            { text: `💡 ترفند و راز: ${ap.techTricksCount || 0} عدد`, callback_data: 'admin_ap_tech_tricks_count' }
+            { text: `📢 کانال: ${ap.targetChannel || 'تنظیم نشده'}`, callback_data: 'admin_ap_channel' },
+            { text: `✍️ ویرایش متن سربرگ`, callback_data: 'admin_ap_edit_text' }
           ],
           [
-            { text: `🔄 بروزرسانی فوری اخبار و ترفندها`, callback_data: 'admin_ap_refresh_tech' },
-            { text: `✍️ تغییر متن اصلی`, callback_data: 'admin_ap_edit_text' }
+            { text: `📢 ویرایش تبلیغات اسپانسر`, callback_data: 'admin_ap_edit_ad' },
+            { text: `🔄 دریافت اخبار و ترفندهای تازه`, callback_data: 'admin_ap_refresh_tech' }
           ],
           [
-            { text: `📢 ویرایش تبلیغات (Sponsor Ad)`, callback_data: 'admin_ap_edit_ad' },
-            { text: `🚀 ارسال فوری تست`, callback_data: 'admin_ap_trigger' }
+            { text: `🚀 تست ارسال کانفیگ`, callback_data: 'admin_ap_trigger_c' },
+            { text: `🚀 تست ارسال اخبار`, callback_data: 'admin_ap_trigger_n' },
+            { text: `🚀 تست ارسال ترفند`, callback_data: 'admin_ap_trigger_t' }
           ],
           [{ text: '🔙 بازگشت به منوی مدیریت', callback_data: 'admin_menu' }]
         ];
@@ -6079,7 +6267,7 @@ async function handleBotUpdate(update: any) {
         db.settings.autoPost.enabled = !db.settings.autoPost.enabled;
         saveDatabase();
         setupAutoPostInterval();
-        await answerCallback(`ارسال خودکار: ${db.settings.autoPost.enabled ? 'روشن' : 'خاموش'}`);
+        await answerCallback(`کل ارسال خودکار: ${db.settings.autoPost.enabled ? 'روشن' : 'خاموش'}`);
         await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
         return;
       }
@@ -6089,6 +6277,323 @@ async function handleBotUpdate(update: any) {
         saveDatabase();
         await answerCallback(`حالت بی‌صدا: ${db.settings.autoPost.silentMode ? 'فعال' : 'غیرفعال'}`);
         await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
+        return;
+      }
+
+      // --- Submenu: Configs & Proxies Cron ---
+      if (callbackData === 'admin_ap_menu_configs') {
+        await answerCallback('کرون کانفیگ');
+        const ap = db.settings.autoPost;
+        const configMin = ap.configIntervalMinutes || (ap.configIntervalHours ? ap.configIntervalHours * 60 : (ap.postIntervalHours ? ap.postIntervalHours * 60 : 240));
+        let msg = `⚡️ **تنظیمات کرون جاب کانفیگ و پروکسی (Configs & Proxies Cron)**\n\n`;
+        msg += `• وضعیت: ${ap.configsEnabled !== false ? '🟢 روشن و فعال' : '🔴 خاموش'}\n`;
+        msg += `• زمان‌بندی ارسال: **هر ${formatIntervalText(configMin)}**\n`;
+        msg += `• تعداد کانفیگ در هر پست: **${ap.configCount} عدد**\n`;
+        msg += `• تعداد پروکسی در هر پست: **${ap.proxyCount} عدد**\n`;
+        msg += `• آخرین ارسال موفق: ${ap.lastConfigsPostedAt || ap.lastPostedAt ? new Date(ap.lastConfigsPostedAt || ap.lastPostedAt!).toLocaleString('fa-IR') : 'هنوز ارسالی ثبت نشده'}\n\n`;
+        msg += `گزینه مورد نظر را جهت تغییر انتخاب فرمایید:`;
+
+        const keyboard = [
+          [
+            { text: `${ap.configsEnabled !== false ? '🔴 خاموش کردن این کرون' : '🟢 روشن کردن این کرون'}`, callback_data: 'admin_ap_toggle_configs' }
+          ],
+          [
+            { text: `⏱ تنظیم زمان‌بندی (${formatIntervalText(configMin)})`, callback_data: 'admin_ap_setint_menu_c' }
+          ],
+          [
+            { text: `📦 تعداد کانفیگ: ${ap.configCount} عدد`, callback_data: 'admin_ap_conf_count' },
+            { text: `🔌 تعداد پروکسی: ${ap.proxyCount} عدد`, callback_data: 'admin_ap_proxy_count' }
+          ],
+          [
+            { text: `🚀 ارسال فوری تست به کانال`, callback_data: 'admin_ap_trigger_c' }
+          ],
+          [
+            { text: '🔙 بازگشت به منوی کرون جاب', callback_data: 'admin_autopost_menu' }
+          ]
+        ];
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: msg,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        return;
+      }
+
+      if (callbackData === 'admin_ap_toggle_configs') {
+        db.settings.autoPost.configsEnabled = db.settings.autoPost.configsEnabled === false ? true : false;
+        saveDatabase();
+        setupAutoPostInterval();
+        await answerCallback(`کرون کانفیگ: ${db.settings.autoPost.configsEnabled ? 'روشن' : 'خاموش'}`);
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_menu_configs' } });
+        return;
+      }
+
+      // --- Submenu: Tech News Cron ---
+      if (callbackData === 'admin_ap_menu_news') {
+        await answerCallback('کرون اخبار');
+        const ap = db.settings.autoPost;
+        const newsMin = ap.techNewsIntervalMinutes || (ap.techNewsIntervalHours ? ap.techNewsIntervalHours * 60 : 240);
+        let msg = `📰 **تنظیمات کرون جاب اخبار روز تکنولوژی (Tech News Cron)**\n\n`;
+        msg += `• وضعیت: ${ap.techNewsEnabled !== false ? '🟢 روشن و فعال' : '🔴 خاموش'}\n`;
+        msg += `• زمان‌بندی ارسال: **هر ${formatIntervalText(newsMin)}**\n`;
+        msg += `• تعداد اخبار در هر پست: **${ap.techNewsCount || 0} عدد**\n`;
+        msg += `• کل اخبار در دیتابیس: **${(db.techItems || []).filter(t => t.category === 'news').length} عدد**\n`;
+        msg += `• آخرین ارسال موفق: ${ap.lastTechNewsPostedAt ? new Date(ap.lastTechNewsPostedAt).toLocaleString('fa-IR') : 'هنوز ارسالی ثبت نشده'}\n\n`;
+        msg += `گزینه مورد نظر را جهت تغییر انتخاب فرمایید:`;
+
+        const keyboard = [
+          [
+            { text: `${ap.techNewsEnabled !== false ? '🔴 خاموش کردن این کرون' : '🟢 روشن کردن این کرون'}`, callback_data: 'admin_ap_toggle_news' }
+          ],
+          [
+            { text: `⏱ تنظیم زمان‌بندی (${formatIntervalText(newsMin)})`, callback_data: 'admin_ap_setint_menu_n' }
+          ],
+          [
+            { text: `📰 تعداد اخبار: ${ap.techNewsCount || 0} عدد`, callback_data: 'admin_ap_tech_news_count' },
+            { text: `🔄 دریافت اخبار تازه`, callback_data: 'admin_ap_refresh_tech' }
+          ],
+          [
+            { text: `🚀 ارسال فوری تست به کانال`, callback_data: 'admin_ap_trigger_n' }
+          ],
+          [
+            { text: '🔙 بازگشت به منوی کرون جاب', callback_data: 'admin_autopost_menu' }
+          ]
+        ];
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: msg,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        return;
+      }
+
+      if (callbackData === 'admin_ap_toggle_news') {
+        db.settings.autoPost.techNewsEnabled = db.settings.autoPost.techNewsEnabled === false ? true : false;
+        saveDatabase();
+        setupAutoPostInterval();
+        await answerCallback(`کرون اخبار: ${db.settings.autoPost.techNewsEnabled ? 'روشن' : 'خاموش'}`);
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_menu_news' } });
+        return;
+      }
+
+      // --- Submenu: Tech Tricks Cron ---
+      if (callbackData === 'admin_ap_menu_tricks') {
+        await answerCallback('کرون ترفندها');
+        const ap = db.settings.autoPost;
+        const tricksMin = ap.techTricksIntervalMinutes || (ap.techTricksIntervalHours ? ap.techTricksIntervalHours * 60 : 360);
+        let msg = `💡 **تنظیمات کرون جاب ترفندها و رازهای موبایل (Tech Tricks Cron)**\n\n`;
+        msg += `• وضعیت: ${ap.techTricksEnabled !== false ? '🟢 روشن و فعال' : '🔴 خاموش'}\n`;
+        msg += `• زمان‌بندی ارسال: **هر ${formatIntervalText(tricksMin)}**\n`;
+        msg += `• تعداد ترفند در هر پست: **${ap.techTricksCount || 0} عدد**\n`;
+        msg += `• کل ترفندها در دیتابیس: **${(db.techItems || []).filter(t => t.category !== 'news').length} عدد**\n`;
+        msg += `• آخرین ارسال موفق: ${ap.lastTechTricksPostedAt ? new Date(ap.lastTechTricksPostedAt).toLocaleString('fa-IR') : 'هنوز ارسالی ثبت نشده'}\n\n`;
+        msg += `گزینه مورد نظر را جهت تغییر انتخاب فرمایید:`;
+
+        const keyboard = [
+          [
+            { text: `${ap.techTricksEnabled !== false ? '🔴 خاموش کردن این کرون' : '🟢 روشن کردن این کرون'}`, callback_data: 'admin_ap_toggle_tricks' }
+          ],
+          [
+            { text: `⏱ تنظیم زمان‌بندی (${formatIntervalText(tricksMin)})`, callback_data: 'admin_ap_setint_menu_t' }
+          ],
+          [
+            { text: `💡 تعداد ترفندها: ${ap.techTricksCount || 0} عدد`, callback_data: 'admin_ap_tech_tricks_count' },
+            { text: `🔄 دریافت ترفندهای تازه`, callback_data: 'admin_ap_refresh_tech' }
+          ],
+          [
+            { text: `🚀 ارسال فوری تست به کانال`, callback_data: 'admin_ap_trigger_t' }
+          ],
+          [
+            { text: '🔙 بازگشت به منوی کرون جاب', callback_data: 'admin_autopost_menu' }
+          ]
+        ];
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: msg,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        return;
+      }
+
+      if (callbackData === 'admin_ap_toggle_tricks') {
+        db.settings.autoPost.techTricksEnabled = db.settings.autoPost.techTricksEnabled === false ? true : false;
+        saveDatabase();
+        setupAutoPostInterval();
+        await answerCallback(`کرون ترفندها: ${db.settings.autoPost.techTricksEnabled ? 'روشن' : 'خاموش'}`);
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_menu_tricks' } });
+        return;
+      }
+
+      // --- Anti-Flood Protection Menu ---
+      if (callbackData === 'admin_ap_antiflood_menu') {
+        await answerCallback('ضد رگباری');
+        const afMin = db.settings.autoPost.antiFloodDelayMinutes || 3;
+        let msg = `🛡 **تنظیمات سیستم هوشمند ضد رگباری (Anti-Flood Protection)**\n\n`;
+        msg += `این سیستم مانع از این می‌شود که چندین پست (مثلاً کانفیگ، اخبار و ترفند) به صورت همزمان یا رگباری پشت سر هم در کانال شما ارسال شوند و کانال را اسپم کنند.\n\n`;
+        msg += `فاصله ایمن فعلی بین هر ارسال: **${afMin} دقیقه**\n\n`;
+        msg += `یک بازه زمانی آماده را انتخاب کنید یا زمان دلخواه خود را تایپ نمایید:`;
+
+        const keyboard = [
+          [
+            { text: '۱ دقیقه', callback_data: 'admin_ap_set_af_1' },
+            { text: '۲ دقیقه', callback_data: 'admin_ap_set_af_2' },
+            { text: '۳ دقیقه (پیشنهادی)', callback_data: 'admin_ap_set_af_3' }
+          ],
+          [
+            { text: '۵ دقیقه', callback_data: 'admin_ap_set_af_5' },
+            { text: '۱۰ دقیقه', callback_data: 'admin_ap_set_af_10' },
+            { text: '۱۵ دقیقه', callback_data: 'admin_ap_set_af_15' }
+          ],
+          [
+            { text: '✍️ تایپ زمان دلخواه با پیام', callback_data: 'admin_ap_custom_af' }
+          ],
+          [
+            { text: '🔙 بازگشت به منوی کرون جاب', callback_data: 'admin_autopost_menu' }
+          ]
+        ];
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: msg,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        return;
+      }
+
+      if (callbackData?.startsWith('admin_ap_set_af_')) {
+        const mins = parseInt(callbackData.replace('admin_ap_set_af_', '')) || 3;
+        db.settings.autoPost.antiFloodDelayMinutes = mins;
+        saveDatabase();
+        setupAutoPostInterval();
+        await answerCallback(`فاصله ضد رگباری به ${mins} دقیقه تنظیم شد.`);
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_antiflood_menu' } });
+        return;
+      }
+
+      if (callbackData === 'admin_ap_custom_af') {
+        adminStates[chatId] = { action: 'await_custom_antiflood' };
+        await answerCallback('تایپ زمان ضد رگباری...');
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `✍️ **تنظیم زمان دلخواه ضد رگباری**\n\nلطفاً حداقل فاصله زمانی بین دو پست متوالی را به دقیقه ارسال فرمایید (بین ۱ تا ۱۲۰ دقیقه):\n\n*(مثال: \`5\` یا \`10 دقیقه\`)*\n\nبرای انصراف کلمه **لغو** را بفرستید.`,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '🔙 انصراف', callback_data: 'admin_ap_antiflood_menu' }]] }
+        });
+        return;
+      }
+
+      // --- Granular Interval Selection Menus (Configs, News, Tricks) ---
+      if (callbackData === 'admin_ap_setint_menu_c' || callbackData === 'admin_ap_setint_menu_n' || callbackData === 'admin_ap_setint_menu_t') {
+        await answerCallback('انتخاب بازه...');
+        let prefix = 'c';
+        let currentMinutes = db.settings.autoPost.configIntervalMinutes || 240;
+        let title = 'کانفیگ و پروکسی';
+        let backMenu = 'admin_ap_menu_configs';
+        
+        if (callbackData === 'admin_ap_setint_menu_n') {
+          prefix = 'n';
+          currentMinutes = db.settings.autoPost.techNewsIntervalMinutes || 240;
+          title = 'اخبار تکنولوژی';
+          backMenu = 'admin_ap_menu_news';
+        } else if (callbackData === 'admin_ap_setint_menu_t') {
+          prefix = 't';
+          currentMinutes = db.settings.autoPost.techTricksIntervalMinutes || 360;
+          title = 'ترفندها و رازها';
+          backMenu = 'admin_ap_menu_tricks';
+        }
+
+        const keyboard = [
+          [
+            { text: '⏱ ۱۵ دقیقه', callback_data: `admin_ap_setint_${prefix}_15` },
+            { text: '⏱ ۳۰ دقیقه', callback_data: `admin_ap_setint_${prefix}_30` },
+            { text: '⏱ ۴۵ دقیقه', callback_data: `admin_ap_setint_${prefix}_45` }
+          ],
+          [
+            { text: '⏱ ۱ ساعت', callback_data: `admin_ap_setint_${prefix}_60` },
+            { text: '⏱ ۲ ساعت', callback_data: `admin_ap_setint_${prefix}_120` },
+            { text: '⏱ ۳ ساعت', callback_data: `admin_ap_setint_${prefix}_180` }
+          ],
+          [
+            { text: '⏱ ۴ ساعت', callback_data: `admin_ap_setint_${prefix}_240` },
+            { text: '⏱ ۶ ساعت', callback_data: `admin_ap_setint_${prefix}_360` },
+            { text: '⏱ ۸ ساعت', callback_data: `admin_ap_setint_${prefix}_480` }
+          ],
+          [
+            { text: '⏱ ۱۲ ساعت', callback_data: `admin_ap_setint_${prefix}_720` },
+            { text: '⏱ ۲۴ ساعت', callback_data: `admin_ap_setint_${prefix}_1440` }
+          ],
+          [
+            { text: '✍️ وارد کردن زمان دلخواه با پیام (متنی)', callback_data: `admin_ap_int_custom_${prefix}` }
+          ],
+          [{ text: '🔙 بازگشت', callback_data: backMenu }]
+        ];
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `⏱ **تنظیم زمان‌بندی کرون جاب (${title})**\n\nفاصله زمانی فعلی: **هر ${formatIntervalText(currentMinutes)}**\n\nمی‌توانید یکی از بازه‌های پیشنهادی زیر را انتخاب نمایید یا روی دکمه تایپ زمان دلخواه بزنید:`,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        return;
+      }
+
+      if (callbackData?.startsWith('admin_ap_int_custom_')) {
+        const prefix = callbackData.replace('admin_ap_int_custom_', '');
+        const type = prefix === 'n' ? 'news' : prefix === 't' ? 'tricks' : 'configs';
+        const typeTitle = prefix === 'n' ? 'اخبار تکنولوژی' : prefix === 't' ? 'ترفندها و رازها' : 'کانفیگ و پروکسی';
+        const backMenu = prefix === 'n' ? 'admin_ap_menu_news' : prefix === 't' ? 'admin_ap_menu_tricks' : 'admin_ap_menu_configs';
+
+        adminStates[chatId] = { action: 'await_custom_cron_time', data: { type } };
+        await answerCallback('تایپ زمان دلخواه...');
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `✍️ **تعیین زمان دلخواه کرون جاب (${typeTitle})**\n\nلطفاً فاصله زمانی مورد نظر خود را ارسال فرمایید.\n\n*مثال‌های قابل قبول:*\n• \`45 دقیقه\` یا \`45m\`\n• \`2 ساعت\` یا \`2h\`\n• \`90\` (به معنی ۹۰ دقیقه)\n• \`1.5 ساعت\` (به معنی ۹۰ دقیقه)\n\nبرای انصراف کلمه **لغو** را بفرستید.`,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[{ text: '🔙 انصراف و بازگشت', callback_data: backMenu }]]
+          }
+        });
+        return;
+      }
+
+      if (callbackData?.startsWith('admin_ap_setint_')) {
+        const parts = callbackData.replace('admin_ap_setint_', '').split('_');
+        const prefix = parts[0];
+        const minutes = parseInt(parts[1]) || 240;
+        
+        let title = 'کانفیگ و پروکسی';
+        let backMenu = 'admin_ap_menu_configs';
+
+        if (prefix === 'c') {
+          db.settings.autoPost.configIntervalMinutes = minutes;
+          db.settings.autoPost.configIntervalHours = Math.max(1, Math.round(minutes / 60));
+          db.settings.autoPost.postIntervalHours = Math.max(1, Math.round(minutes / 60));
+          title = 'کانفیگ و پروکسی';
+          backMenu = 'admin_ap_menu_configs';
+        } else if (prefix === 'n') {
+          db.settings.autoPost.techNewsIntervalMinutes = minutes;
+          db.settings.autoPost.techNewsIntervalHours = Math.max(1, Math.round(minutes / 60));
+          title = 'اخبار تکنولوژی';
+          backMenu = 'admin_ap_menu_news';
+        } else if (prefix === 't') {
+          db.settings.autoPost.techTricksIntervalMinutes = minutes;
+          db.settings.autoPost.techTricksIntervalHours = Math.max(1, Math.round(minutes / 60));
+          title = 'ترفندها و رازها';
+          backMenu = 'admin_ap_menu_tricks';
+        }
+        
+        saveDatabase();
+        setupAutoPostInterval();
+        const formattedStr = formatIntervalText(minutes);
+        await answerCallback(`زمان‌بندی ${title} به ${formattedStr} تغییر یافت.`);
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: backMenu } });
         return;
       }
 
@@ -6134,84 +6639,6 @@ async function handleBotUpdate(update: any) {
         return;
       }
 
-      if (callbackData === 'admin_ap_interval_menu') {
-        await answerCallback('زمان‌بندی پست‌ها');
-        const keyboard = [
-          [{ text: `🕒 زمان‌بندی کانفیگ (${db.settings.autoPost.configIntervalHours || db.settings.autoPost.postIntervalHours} ساعت)`, callback_data: 'admin_ap_int_configs' }],
-          [{ text: `🕒 زمان‌بندی اخبار (${db.settings.autoPost.techNewsIntervalHours || 4} ساعت)`, callback_data: 'admin_ap_int_news' }],
-          [{ text: `🕒 زمان‌بندی ترفندها (${db.settings.autoPost.techTricksIntervalHours || 6} ساعت)`, callback_data: 'admin_ap_int_tricks' }],
-          [{ text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }]
-        ];
-        await callTelegramApi('sendMessage', {
-          chat_id: chatId,
-          text: `🕒 **تنظیمات زمان‌بندی پست‌های خودکار**\n\nکدام زمان‌بندی را می‌خواهید تغییر دهید؟`,
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: keyboard }
-        });
-        return;
-      }
-
-      if (callbackData === 'admin_ap_int_configs' || callbackData === 'admin_ap_int_news' || callbackData === 'admin_ap_int_tricks') {
-        await answerCallback('انتخاب بازه...');
-        let prefix = 'c';
-        let currentHrs = db.settings.autoPost.configIntervalHours || db.settings.autoPost.postIntervalHours;
-        let title = 'کانفیگ و پروکسی';
-        
-        if (callbackData === 'admin_ap_int_news') {
-          prefix = 'n';
-          currentHrs = db.settings.autoPost.techNewsIntervalHours || 4;
-          title = 'اخبار تکنولوژی';
-        } else if (callbackData === 'admin_ap_int_tricks') {
-          prefix = 't';
-          currentHrs = db.settings.autoPost.techTricksIntervalHours || 6;
-          title = 'ترفندها و رازها';
-        }
-
-        const keyboard = [
-          [
-            { text: 'هر ۱ ساعت', callback_data: `admin_ap_setint_${prefix}_1` },
-            { text: 'هر ۲ ساعت', callback_data: `admin_ap_setint_${prefix}_2` }
-          ],
-          [
-            { text: 'هر ۴ ساعت', callback_data: `admin_ap_setint_${prefix}_4` },
-            { text: 'هر ۶ ساعت', callback_data: `admin_ap_setint_${prefix}_6` }
-          ],
-          [
-            { text: 'هر ۱۲ ساعت', callback_data: `admin_ap_setint_${prefix}_12` },
-            { text: 'هر ۲۴ ساعت', callback_data: `admin_ap_setint_${prefix}_24` }
-          ],
-          [{ text: '🔙 بازگشت', callback_data: 'admin_ap_interval_menu' }]
-        ];
-        await callTelegramApi('sendMessage', {
-          chat_id: chatId,
-          text: `🕒 **فاصله زمانی ارسال خودکار (${title}) را انتخاب کنید:**\n\nفاصله فعلی: **هر ${currentHrs} ساعت یکبار**`,
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: keyboard }
-        });
-        return;
-      }
-
-      if (callbackData?.startsWith('admin_ap_setint_')) {
-        const parts = callbackData.replace('admin_ap_setint_', '').split('_');
-        const prefix = parts[0];
-        const hrs = parseInt(parts[1]) || 4;
-        
-        if (prefix === 'c') {
-          db.settings.autoPost.postIntervalHours = hrs;
-          db.settings.autoPost.configIntervalHours = hrs;
-        } else if (prefix === 'n') {
-          db.settings.autoPost.techNewsIntervalHours = hrs;
-        } else if (prefix === 't') {
-          db.settings.autoPost.techTricksIntervalHours = hrs;
-        }
-        
-        saveDatabase();
-        setupAutoPostInterval();
-        await answerCallback(`فاصله زمانی به ${hrs} ساعت تغییر یافت.`);
-        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_interval_menu' } });
-        return;
-      }
-
       if (callbackData === 'admin_ap_conf_count') {
         const confKeyboard = [
           [
@@ -6233,7 +6660,7 @@ async function handleBotUpdate(update: any) {
             { text: '0 (بدون کانفیگ)', callback_data: 'admin_ap_set_conf_0' }
           ],
           [
-            { text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }
+            { text: '🔙 بازگشت', callback_data: 'admin_ap_menu_configs' }
           ]
         ];
         await callTelegramApi('sendMessage', {
@@ -6251,7 +6678,7 @@ async function handleBotUpdate(update: any) {
         db.settings.autoPost.configCount = count;
         saveDatabase();
         await answerCallback(`تعداد کانفیگ به ${count} عدد تغییر یافت.`);
-        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_menu_configs' } });
         return;
       }
 
@@ -6272,7 +6699,7 @@ async function handleBotUpdate(update: any) {
             { text: '0 (بدون پروکسی)', callback_data: 'admin_ap_set_proxy_0' }
           ],
           [
-            { text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }
+            { text: '🔙 بازگشت', callback_data: 'admin_ap_menu_configs' }
           ]
         ];
         await callTelegramApi('sendMessage', {
@@ -6290,7 +6717,7 @@ async function handleBotUpdate(update: any) {
         db.settings.autoPost.proxyCount = count;
         saveDatabase();
         await answerCallback(`تعداد پروکسی به ${count} عدد تغییر یافت.`);
-        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_menu_configs' } });
         return;
       }
 
@@ -6305,7 +6732,7 @@ async function handleBotUpdate(update: any) {
             { text: '3 عدد', callback_data: 'admin_ap_set_technews_3' },
             { text: '5 عدد', callback_data: 'admin_ap_set_technews_5' }
           ],
-          [{ text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }]
+          [{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_news' }]
         ];
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
@@ -6322,7 +6749,7 @@ async function handleBotUpdate(update: any) {
         db.settings.autoPost.techNewsCount = count;
         saveDatabase();
         await answerCallback(`تعداد اخبار تکنولوژی به ${count} عدد تنظیم شد.`);
-        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_menu_news' } });
         return;
       }
 
@@ -6337,7 +6764,7 @@ async function handleBotUpdate(update: any) {
             { text: '3 عدد', callback_data: 'admin_ap_set_techtricks_3' },
             { text: '5 عدد', callback_data: 'admin_ap_set_techtricks_5' }
           ],
-          [{ text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }]
+          [{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_tricks' }]
         ];
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
@@ -6354,7 +6781,7 @@ async function handleBotUpdate(update: any) {
         db.settings.autoPost.techTricksCount = count;
         saveDatabase();
         await answerCallback(`تعداد ترفندهای آموزشی به ${count} عدد تنظیم شد.`);
-        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_autopost_menu' } });
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_menu_tricks' } });
         return;
       }
 
@@ -6370,22 +6797,65 @@ async function handleBotUpdate(update: any) {
         return;
       }
 
-      if (callbackData === 'admin_ap_trigger') {
-        await answerCallback('⏳ در حال تلاش برای ارسال پست تست...', true);
-        const ok = await executeAutoPost();
+      // --- Manual Triggers ---
+      if (callbackData === 'admin_ap_trigger' || callbackData === 'admin_ap_trigger_c') {
+        await answerCallback('⏳ در حال تلاش برای ارسال کانفیگ‌ها به کانال...', true);
+        const ok = await executeConfigsAutoPost();
         if (ok) {
           await callTelegramApi('sendMessage', {
             chat_id: chatId,
-            text: `✅ **پست تست با موفقیت به کانال ارسال گردید!**\n\nلطفاً کانال خود (\`${db.settings.autoPost.targetChannel}\`) را بررسی نمایید.`,
+            text: `✅ **پست کانفیگ و پروکسی با موفقیت به کانال ارسال گردید!**\n\nلطفاً کانال خود (\`${db.settings.autoPost.targetChannel}\`) را بررسی نمایید.`,
             parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }]] }
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_configs' }]] }
           });
         } else {
           await callTelegramApi('sendMessage', {
             chat_id: chatId,
-            text: `❌ **ارسال پست تست ناموفق بود.**\n\nمطمئن شوید که ربات ادمین کانال با دسترسی ارسال مطلب است.`,
+            text: `❌ **ارسال پست تست ناموفق بود.**\n\nمطمئن شوید که ربات ادمین کانال با دسترسی ارسال مطلب است یا کانفیگ سالمی در دیتابیس وجود دارد.`,
             parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_autopost_menu' }]] }
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_configs' }]] }
+          });
+        }
+        return;
+      }
+
+      if (callbackData === 'admin_ap_trigger_n') {
+        await answerCallback('⏳ در حال تلاش برای ارسال اخبار به کانال...', true);
+        const ok = await executeTechNewsAutoPost();
+        if (ok) {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `✅ **پست اخبار تکنولوژی با موفقیت به کانال ارسال گردید!**\n\nلطفاً کانال خود (\`${db.settings.autoPost.targetChannel}\`) را بررسی نمایید.`,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_news' }]] }
+          });
+        } else {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `❌ **ارسال اخبار با خطا مواجه شد.**\n\nمطمئن شوید که ربات ادمین کانال است و اخباری در دیتابیس وجود دارد.`,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_news' }]] }
+          });
+        }
+        return;
+      }
+
+      if (callbackData === 'admin_ap_trigger_t') {
+        await answerCallback('⏳ در حال تلاش برای ارسال ترفندها به کانال...', true);
+        const ok = await executeTechTricksAutoPost();
+        if (ok) {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `✅ **پست ترفندها و رازهای تکنولوژی با موفقیت به کانال ارسال گردید!**\n\nلطفاً کانال خود (\`${db.settings.autoPost.targetChannel}\`) را بررسی نمایید.`,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_tricks' }]] }
+          });
+        } else {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `❌ **ارسال ترفندها با خطا مواجه شد.**\n\nمطمئن شوید که ربات ادمین کانال است و ترفندی در دیتابیس وجود دارد.`,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_tricks' }]] }
           });
         }
         return;
@@ -8133,20 +8603,28 @@ async function startExpressServer() {
         techPostMode,
         autoPurgeOldTechDays,
         includeTechImportanceBadge,
+        antiFloodDelayMinutes,
         configsEnabled,
         configIntervalHours,
+        configIntervalMinutes,
         techNewsEnabled,
         techNewsIntervalHours,
+        techNewsIntervalMinutes,
         techTricksEnabled,
-        techTricksIntervalHours
+        techTricksIntervalHours,
+        techTricksIntervalMinutes
       } = req.body;
       
+      const parsedConfigMinutes = Number(configIntervalMinutes) || (Number(configIntervalHours) ? Number(configIntervalHours) * 60 : (Number(postIntervalHours) ? Number(postIntervalHours) * 60 : (db.settings.autoPost?.configIntervalMinutes || 240)));
+      const parsedNewsMinutes = Number(techNewsIntervalMinutes) || (Number(techNewsIntervalHours) ? Number(techNewsIntervalHours) * 60 : (db.settings.autoPost?.techNewsIntervalMinutes || 240));
+      const parsedTricksMinutes = Number(techTricksIntervalMinutes) || (Number(techTricksIntervalHours) ? Number(techTricksIntervalHours) * 60 : (db.settings.autoPost?.techTricksIntervalMinutes || 360));
+
       db.settings.autoPost = {
         ...DEFAULT_AUTO_POST,
         ...db.settings.autoPost,
         enabled: typeof enabled !== 'undefined' ? !!enabled : db.settings.autoPost?.enabled ?? false,
         targetChannel: targetChannel || '',
-        postIntervalHours: Number(postIntervalHours) || Number(configIntervalHours) || 4,
+        postIntervalHours: Math.max(1, Math.round(parsedConfigMinutes / 60)),
         configCount: typeof configCount !== 'undefined' && !isNaN(Number(configCount)) ? Math.max(0, Number(configCount)) : 5,
         proxyCount: typeof proxyCount !== 'undefined' && !isNaN(Number(proxyCount)) ? Math.max(0, Number(proxyCount)) : 0,
         customText: customText || '',
@@ -8159,23 +8637,28 @@ async function startExpressServer() {
         autoPurgeOldTechDays: Number(autoPurgeOldTechDays) || 7,
         includeTechImportanceBadge: includeTechImportanceBadge !== false,
         lastPostedAt: db.settings.autoPost?.lastPostedAt || null,
+        antiFloodDelayMinutes: typeof antiFloodDelayMinutes !== 'undefined' && !isNaN(Number(antiFloodDelayMinutes)) ? Math.max(1, Number(antiFloodDelayMinutes)) : (db.settings.autoPost?.antiFloodDelayMinutes ?? 3),
+        lastAnyPostAt: db.settings.autoPost?.lastAnyPostAt || null,
         
         // Granular independent schedule fields
         configsEnabled: typeof configsEnabled !== 'undefined' ? !!configsEnabled : db.settings.autoPost?.configsEnabled ?? true,
-        configIntervalHours: Number(configIntervalHours) || Number(postIntervalHours) || 4,
+        configIntervalMinutes: parsedConfigMinutes,
+        configIntervalHours: Math.max(1, Math.round(parsedConfigMinutes / 60)),
         lastConfigsPostedAt: db.settings.autoPost?.lastConfigsPostedAt || null,
 
         techNewsEnabled: typeof techNewsEnabled !== 'undefined' ? !!techNewsEnabled : db.settings.autoPost?.techNewsEnabled ?? true,
-        techNewsIntervalHours: Number(techNewsIntervalHours) || 4,
+        techNewsIntervalMinutes: parsedNewsMinutes,
+        techNewsIntervalHours: Math.max(1, Math.round(parsedNewsMinutes / 60)),
         lastTechNewsPostedAt: db.settings.autoPost?.lastTechNewsPostedAt || null,
 
         techTricksEnabled: typeof techTricksEnabled !== 'undefined' ? !!techTricksEnabled : db.settings.autoPost?.techTricksEnabled ?? true,
-        techTricksIntervalHours: Number(techTricksIntervalHours) || 6,
+        techTricksIntervalMinutes: parsedTricksMinutes,
+        techTricksIntervalHours: Math.max(1, Math.round(parsedTricksMinutes / 60)),
         lastTechTricksPostedAt: db.settings.autoPost?.lastTechTricksPostedAt || null
       };
 
       saveDatabase();
-      addLog('success', 'تنظیمات ارسال خودکار پست با موفقیت بروزرسانی شد.');
+      addLog('success', 'تنظیمات کرون جاب و ارسال خودکار پست‌ها با موفقیت بروزرسانی شد.');
       
       // Update intervals/timers
       setupAutoPostInterval();
