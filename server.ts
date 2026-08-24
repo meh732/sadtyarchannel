@@ -4451,8 +4451,8 @@ function getReplyKeyboard(userId: string | number, username?: string | null) {
       { text: '📊 وضعیت شبکه و پینگ نت 🟢', style: 'primary' }
     ],
     [
-      { text: '💡 ترفندهای تکنولوژی 📱', style: 'primary' },
-      { text: '📰 اخبار تکنولوژی 🌐', style: 'primary' }
+      { text: '💡 ترفندها 📱', style: 'primary' },
+      { text: '📰 اخبار روز تکنولوژی 🌐', style: 'primary' }
     ],
     [
       { text: 'ℹ️ راهنمای اتصال گام به گام 📚', style: 'primary' }
@@ -6586,8 +6586,8 @@ async function handleBotUpdate(update: any) {
       else if (messageText.includes('دریافت پروکسی')) callbackData = 'get_proxies';
       else if (messageText.includes('وضعیت شبکه و پینگ نت')) callbackData = 'get_net_status';
       else if (messageText.includes('راهنمای اتصال')) callbackData = 'get_help';
-      else if (messageText.includes('ترفندهای تکنولوژی')) callbackData = 'get_tech_tricks';
-      else if (messageText.includes('اخبار تکنولوژی')) callbackData = 'get_tech_news';
+      else if (messageText.includes('ترفند')) callbackData = 'get_tech_tricks';
+      else if (messageText.includes('اخبار')) callbackData = 'get_tech_news';
     }
 
     if (messageText === '/start' || callbackData === 'back_to_main' || callbackData === 'start_refresh' || callbackData === 'start') {
@@ -6623,8 +6623,8 @@ async function handleBotUpdate(update: any) {
           { text: '📊 وضعیت شبکه و پینگ نت 🟢', callback_data: 'get_net_status', style: 'primary' }
         ],
         [
-          { text: '💡 ترفندهای تکنولوژی 📱', callback_data: 'get_tech_tricks', style: 'primary' },
-          { text: '📰 اخبار تکنولوژی 🌐', callback_data: 'get_tech_news', style: 'primary' }
+          { text: '💡 ترفندها 📱', callback_data: 'get_tech_tricks', style: 'primary' },
+          { text: '📰 اخبار روز تکنولوژی 🌐', callback_data: 'get_tech_news', style: 'primary' }
         ],
         [
           { text: 'ℹ️ راهنمای اتصال آسان 📚', callback_data: 'get_help' },
