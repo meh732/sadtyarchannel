@@ -263,6 +263,8 @@ function loadDatabase() {
   try {
     const envAdminId = process.env.ADMIN_ID ? process.env.ADMIN_ID.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
     const envBotToken = process.env.BOT_TOKEN ? process.env.BOT_TOKEN.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+    const envAdminUsername = process.env.ADMIN_USERNAME ? process.env.ADMIN_USERNAME.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+    const envAdminPassword = process.env.ADMIN_PASSWORD ? process.env.ADMIN_PASSWORD.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
 
     // 1. Try loading system_settings.json first
     let loadedSettings = safeReadJson(SETTINGS_FILE);
@@ -285,6 +287,8 @@ function loadDatabase() {
       ...(loadedSettings?.settings || {}),
       adminId: envAdminId || loadedSettings?.settings?.adminId || loadedDataStore?.settings?.adminId || '',
       botToken: envBotToken || loadedSettings?.settings?.botToken || loadedDataStore?.settings?.botToken || '',
+      adminUsername: envAdminUsername || loadedSettings?.settings?.adminUsername || loadedDataStore?.settings?.adminUsername || 'admin',
+      adminPassword: envAdminPassword || loadedSettings?.settings?.adminPassword || loadedDataStore?.settings?.adminPassword || 'admin',
       autoPost: { ...DEFAULT_AUTO_POST, ...(loadedSettings?.settings?.autoPost || loadedDataStore?.settings?.autoPost || {}) }
     };
 
