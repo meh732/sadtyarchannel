@@ -199,7 +199,10 @@ install_bot() {
 
     # 6. Write Environment File
     echo -e "${BLUE}[4/5] ایجاد فایل تنظیمات محیطی (.env)...${PLAIN}"
+    server_ip=$(curl -s https://api.ipify.org || wget -qO- https://api.ipify.org || echo "127.0.0.1")
+    app_url="http://${server_ip}:${web_port}"
     cat <<EOF > "$INSTALL_DIR/.env"
+APP_URL="${app_url}"
 NODE_ENV=production
 ADMIN_ID="${admin_id}"
 BOT_TOKEN="${bot_token}"
@@ -357,7 +360,10 @@ configure_credentials() {
 
     prompt_credentials
 
+    server_ip=$(curl -s https://api.ipify.org || wget -qO- https://api.ipify.org || echo "127.0.0.1")
+    app_url="http://${server_ip}:${web_port}"
     cat <<EOF > "$INSTALL_DIR/.env"
+APP_URL="${app_url}"
 NODE_ENV=production
 ADMIN_ID="${admin_id}"
 BOT_TOKEN="${bot_token}"

@@ -417,10 +417,18 @@ function addLog(level: 'info' | 'warn' | 'error' | 'success', message: string) {
 
 // --- Public Web Panel URL Helper ---
 function getPublicAppUrl(req?: express.Request): string {
-  // 1. Prioritize manually saved settings if it's not the default sandbox URL
-  if (db.settings.publicUrl && db.settings.publicUrl.trim() && db.settings.publicUrl !== DEFAULT_KNOWN_APP_URL) {
+  // Check if we are running in AI Studio sandbox
+  const isAIStudio = !!process.env.DEV_APP_URL;
+
+  // 1. Prioritize manually saved settings if it's not a sandbox URL (when outside sandbox)
+  if (db.settings.publicUrl && db.settings.publicUrl.trim()) {
     const raw = db.settings.publicUrl.trim();
-    return raw.startsWith('http') ? raw : `http://${raw}`;
+    const isSandboxUrl = raw.includes('ais-dev-') || raw.includes('ais-pre-') || raw.includes('europe-west2.run.app');
+    
+    // Only use the saved URL if we are in AI Studio, OR if it's not an AI Studio URL
+    if (isAIStudio || !isSandboxUrl) {
+      return raw.startsWith('http') ? raw : `http://${raw}`;
+    }
   }
 
   // 2. Fallback to active HTTP request context
@@ -436,15 +444,17 @@ function getPublicAppUrl(req?: express.Request): string {
   if (process.env.APP_URL) return process.env.APP_URL;
 
   // 4. Auto-detect Linux server IP if we are NOT in the AI Studio environment
-  if (!process.env.DEV_APP_URL) {
+  if (!isAIStudio) {
     const ip = getMachineIp();
     if (ip && ip !== '127.0.0.1' && ip !== 'localhost') {
       const port = process.env.PORT || 3000;
       return `http://${ip}:${port}`;
     }
+    // Final fallback for Linux
+    return `http://localhost:${process.env.PORT || 3000}`;
   }
 
-  // 5. Default Sandbox URL (only as last resort)
+  // 5. Default Sandbox URL (only as last resort for AI Studio)
   if (process.env.DEV_APP_URL) return process.env.DEV_APP_URL;
   return DEFAULT_KNOWN_APP_URL;
 }
@@ -4441,6 +4451,10 @@ function getReplyKeyboard(userId: string | number, username?: string | null) {
       { text: '📊 وضعیت شبکه و پینگ نت 🟢', style: 'primary' }
     ],
     [
+      { text: '💡 ترفندهای تکنولوژی 📱', style: 'primary' },
+      { text: '📰 اخبار تکنولوژی 🌐', style: 'primary' }
+    ],
+    [
       { text: 'ℹ️ راهنمای اتصال گام به گام 📚', style: 'primary' }
     ]
   ];
@@ -6561,8 +6575,21 @@ async function handleBotUpdate(update: any) {
     }
 
     // --- Action Handlers ---
-
     // Handle button selections or commands
+    if (messageText) {
+      if (messageText.includes('دریافت یکجای ۵۰ کانفیگ')) callbackData = 'v2ray_qty_50';
+      else if (messageText.includes('دریافت یکجای ۱۵ کانفیگ')) callbackData = 'v2ray_qty_15';
+      else if (messageText.includes('دریافت کانفیگ ویتوری')) callbackData = 'get_v2ray_configs';
+      else if (messageText.includes('فایل .NPVT')) callbackData = 'get_file_npvt';
+      else if (messageText.includes('فایل .OVPN')) callbackData = 'get_file_ovpn';
+      else if (messageText.includes('فایل .TXT')) callbackData = 'get_file_txt';
+      else if (messageText.includes('دریافت پروکسی')) callbackData = 'get_proxies';
+      else if (messageText.includes('وضعیت شبکه و پینگ نت')) callbackData = 'get_net_status';
+      else if (messageText.includes('راهنمای اتصال')) callbackData = 'get_help';
+      else if (messageText.includes('ترفندهای تکنولوژی')) callbackData = 'get_tech_tricks';
+      else if (messageText.includes('اخبار تکنولوژی')) callbackData = 'get_tech_news';
+    }
+
     if (messageText === '/start' || callbackData === 'back_to_main' || callbackData === 'start_refresh' || callbackData === 'start') {
       if (callbackData) {
         await answerCallback('🔄 منوی اصلی و ربات بروزرسانی شد');
@@ -6594,6 +6621,10 @@ async function handleBotUpdate(update: any) {
         [
           { text: '🔌 دریافت پروکسی جدید تلگرام', callback_data: 'get_proxies', style: 'primary' },
           { text: '📊 وضعیت شبکه و پینگ نت 🟢', callback_data: 'get_net_status', style: 'primary' }
+        ],
+        [
+          { text: '💡 ترفندهای تکنولوژی 📱', callback_data: 'get_tech_tricks', style: 'primary' },
+          { text: '📰 اخبار تکنولوژی 🌐', callback_data: 'get_tech_news', style: 'primary' }
         ],
         [
           { text: 'ℹ️ راهنمای اتصال آسان 📚', callback_data: 'get_help' },
@@ -6655,6 +6686,41 @@ async function handleBotUpdate(update: any) {
         reply_markup: {
           inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]]
         }
+      });
+      return;
+    }
+
+    if (callbackData === 'get_tech_news' || callbackData === 'get_tech_tricks') {
+      const isNews = callbackData === 'get_tech_news';
+      await answerCallback(isNews ? 'دریافت اخبار...' : 'دریافت ترفندها...');
+      
+      seedCuratedTechItems();
+      const allTech = db.techItems || [];
+      const filtered = allTech.filter(t => t.category === (isNews ? 'news' : 'trick'));
+      
+      if (filtered.length === 0) {
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `⚠️ **هیچ ${isNews ? 'خبری' : 'ترفندی'} در حال حاضر موجود نیست!**\nلطفاً بعداً تلاش کنید.`,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]] }
+        });
+        return;
+      }
+      
+      // Select 2 items randomly or the top 2 latest
+      const selected = filtered.slice(0, 2);
+      
+      let msgText = isNews ? '📰 **جدیدترین اخبار تکنولوژی:**\n\n' : '💡 **ترفندهای کاربردی موبایل:**\n\n';
+      selected.forEach(it => {
+        msgText += formatTechItemForTelegram(it, true);
+      });
+      
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: msgText,
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]] }
       });
       return;
     }

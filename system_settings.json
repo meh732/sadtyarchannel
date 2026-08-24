@@ -42,6 +42,7 @@
     "lastBackupAt": null,
     "botConnectionMode": "polling",
     "publicUrl": "https://ais-dev-3wfduwtghl6fqrseyhtp5l-217900666396.europe-west2.run.app",
+    "adminUsername": "admin",
     "adminPassword": "admin",
     "maxConfigsRetention": 2000
   },
@@ -61,8 +62,8 @@
       "name": "V2Ray Free Configs",
       "urlOrHandle": "@v2ray_free_conf",
       "enabled": true,
-      "extractedCount": 0,
-      "lastExtracted": null
+      "extractedCount": 321,
+      "lastExtracted": "2026-08-24T06:57:09.348Z"
     },
     {
       "id": "src-3",
@@ -88,8 +89,8 @@
       "name": "BarryFar All Configs Sub",
       "urlOrHandle": "https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_Sub.txt",
       "enabled": true,
-      "extractedCount": 0,
-      "lastExtracted": null
+      "extractedCount": 6118,
+      "lastExtracted": "2026-08-24T06:56:58.282Z"
     }
   ],
   "forceJoinChannels": [],
