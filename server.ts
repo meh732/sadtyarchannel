@@ -2079,16 +2079,68 @@ function parseAndRestoreBackup(textOrBuffer: string | Buffer, shouldSkipConfigs:
   };
 }
 
+let isRetentionCheckingActive = false;
+
 /**
  * Enforces max configs retention limit (1 to 10000, default 2000).
- * Trims excess oldest configs if array length exceeds maxConfigsRetention.
+ * Intelligently checks health of configs when the limit is exceeded:
+ * 1. Checks untested or old configs to keep working ones and purge broken ones.
+ * 2. If healthy configs still exceed the retention limit, trims oldest healthy configs to allow fresh ones.
  */
-function enforceConfigsRetentionLimit() {
+async function enforceConfigsRetentionLimit() {
   const maxRetention = Math.max(1, Math.min(10000, Number(db.settings?.maxConfigsRetention) || 2000));
-  if (db.configs && db.configs.length > maxRetention) {
-    const removedCount = db.configs.length - maxRetention;
+  if (!db.configs || db.configs.length <= maxRetention) return;
+
+  // Immediate fast cleanup of already confirmed failed configs if over limit
+  const initialCount = db.configs.length;
+  const failedCount = db.configs.filter(c => c.status === 'failed').length;
+  if (failedCount > 0 && db.configs.length > maxRetention) {
+    db.configs = db.configs.filter(c => c.status !== 'failed');
+    const pruned = initialCount - db.configs.length;
+    addLog('info', `🧹 پاکسازی اولیه: تعداد ${pruned} کانفیگ غیرفعال (failed) به منظور آزادسازی فضای ذخیره‌سازی از دیتابیس حذف شدند.`);
+    saveDatabase();
+  }
+
+  // If still over retention limit and auto-check isn't already running in background
+  if (db.configs.length > maxRetention && !isRetentionCheckingActive) {
+    isRetentionCheckingActive = true;
+    setTimeout(async () => {
+      try {
+        addLog('info', `🔍 ظرفیت دیتابیس به سقف مجاز (${maxRetention} کانفیگ) رسید. آغاز بررسی و پایش هوشمند سلامت کانفیگ‌ها جهت نگهداری موارد سالم و حذف موارد غیرفعال...`);
+        
+        // Prioritize testing untested or checking or older configs
+        const configsToTest = db.configs.filter(c => c.status === 'untested' || c.status === 'checking' || !c.lastChecked);
+        const idsToTest = configsToTest.map(c => c.id);
+        
+        if (idsToTest.length > 0) {
+          await testConfigsBatch(idsToTest);
+          // Purge newly identified failed configs
+          const beforePurge = db.configs.length;
+          db.configs = db.configs.filter(c => c.status !== 'failed');
+          const purged = beforePurge - db.configs.length;
+          if (purged > 0) {
+            addLog('success', `🧹 پایش هوشمند: تعداد ${purged} کانفیگ غیرفعال پس از تست سلامت پاکسازی شدند.`);
+            saveDatabase();
+          }
+        }
+
+        // If even with only working/untested configs it exceeds maxRetention, trim oldest to make room for fresh incoming
+        if (db.configs.length > maxRetention) {
+          const excess = db.configs.length - maxRetention;
+          db.configs = db.configs.slice(0, maxRetention);
+          addLog('info', `سقف مجاز کانفیگ‌های سالم (${maxRetention} عدد) تکمیل شد. تعداد ${excess} کانفیگ قدیمی‌تر جهت جایگزینی با کانفیگ‌های تازه‌نفس حذف شدند.`);
+          saveDatabase();
+        }
+      } catch (err: any) {
+        addLog('error', `خطا در پایش هوشمند سقف کانفیگ‌ها: ${err?.message || err}`);
+      } finally {
+        isRetentionCheckingActive = false;
+      }
+    }, 100);
+  } else if (db.configs.length > maxRetention) {
+    // If check already active or synchronous slice needed
+    const excess = db.configs.length - maxRetention;
     db.configs = db.configs.slice(0, maxRetention);
-    addLog('info', `سقف مجاز نگهداری کانفیگ‌ها در دیتابیس (${maxRetention} مورد) اعمال شد. تعداد ${removedCount} کانفیگ قدیمی‌تر پاکسازی شدند.`);
     saveDatabase();
   }
 }
@@ -2830,6 +2882,30 @@ function cleanHtmlText(html: string): string {
     .trim();
 }
 
+function extractImageUrlFromXmlBlock(block: string): string | undefined {
+  if (!block) return undefined;
+  
+  // 1. Check <enclosure url="..." type="image/..." />
+  const enclosureMatch = block.match(/<enclosure[^>]*url=["']([^"']+)["'][^>]*>/i);
+  if (enclosureMatch && enclosureMatch[1] && (/\.(jpe?g|png|webp|gif)/i.test(enclosureMatch[1]) || /image/i.test(enclosureMatch[0]))) {
+    return enclosureMatch[1].trim();
+  }
+
+  // 2. Check <media:content url="..." /> or <media:thumbnail url="..." />
+  const mediaMatch = block.match(/<media:(?:content|thumbnail)[^>]*url=["']([^"']+)["'][^>]*>/i);
+  if (mediaMatch && mediaMatch[1]) {
+    return mediaMatch[1].trim();
+  }
+
+  // 3. Check standard <img src="..." /> inside content or description
+  const imgMatch = block.match(/<img[^>]+src=["']([^"']+)["']/i);
+  if (imgMatch && imgMatch[1] && /^https?:\/\//i.test(imgMatch[1])) {
+    return imgMatch[1].trim();
+  }
+
+  return undefined;
+}
+
 function calculateTechImportance(title: string, summary: string): { importance: TechImportance; score: number } {
   const text = `${title} ${summary}`.toLowerCase();
   let score = 50;
@@ -3131,6 +3207,8 @@ async function fetchLiveTechFromRss(): Promise<number> {
           if (!isNaN(d.getTime())) pubDate = d.toISOString();
         }
 
+        const imageUrl = extractImageUrlFromXmlBlock(block);
+
         // Categorize based on keywords
         let category: TechItemCategory = 'news';
         if (/ترفند|آموزش|چگونه|روش|راهکار|حل مشکل|کد مخفی/i.test(rawTitle)) {
@@ -3155,6 +3233,7 @@ async function fetchLiveTechFromRss(): Promise<number> {
           tags,
           source: feed.name,
           sourceUrl: link || undefined,
+          imageUrl: imageUrl || undefined,
           importance,
           importanceScore: score,
           createdAt: pubDate,
@@ -3199,35 +3278,41 @@ async function refreshTechContentAndPurgeOld(force = false): Promise<{ added: nu
   };
 }
 
-// Helper to format a tech item cleanly for Telegram
+// Helper to format a tech item cleanly and beautifully for Telegram
 function formatTechItemForTelegram(item: TechItem, showBadge = true): string {
   let badgeEmoji = '💡';
   let badgeTitle = 'ترفند تکنولوژی';
+  let headerBorder = '━━━━━━━━━━━━━━━━━━━━';
   if (item.category === 'news') {
-    badgeEmoji = item.importance === 'breaking' ? '🔥' : '📰';
-    badgeTitle = item.importance === 'breaking' ? 'خبر فوری' : 'خبر فناوری';
+    badgeEmoji = item.importance === 'breaking' ? '🚨' : '📰';
+    badgeTitle = item.importance === 'breaking' ? 'خبر داغ و فوری' : 'تازه‌های فناوری و هوش مصنوعی';
   } else if (item.category === 'secret') {
     badgeEmoji = '🔐';
-    badgeTitle = 'راز تکنولوژی و امنیت';
+    badgeTitle = 'راز و کد مخفی امنیتی';
   } else if (item.category === 'trick') {
-    badgeEmoji = '📱';
-    badgeTitle = 'ترفند و آموزش موبایل';
+    badgeEmoji = '🚀';
+    badgeTitle = 'ترفند طلایی و کاربردی موبایل';
   }
 
   let text = '';
   if (showBadge) {
-    text += `${badgeEmoji} <b>[${badgeTitle}] ${escapeHtml(item.title)}</b>\n`;
+    text += `${badgeEmoji} <b>« ${badgeTitle} »</b>\n`;
+    text += `📌 <b>${escapeHtml(item.title)}</b>\n\n`;
   } else {
-    text += `🔹 <b>${escapeHtml(item.title)}</b>\n`;
+    text += `🔹 <b>${escapeHtml(item.title)}</b>\n\n`;
   }
   
   if (item.summary) {
-    text += `▫️ ${escapeHtml(item.summary)}\n`;
+    text += `<blockquote>${escapeHtml(item.summary)}</blockquote>\n\n`;
+  }
+
+  if (item.source) {
+    text += `🔍 منبع: <i>${escapeHtml(item.source)}</i>\n`;
   }
 
   if (item.tags && item.tags.length > 0) {
     const formattedTags = item.tags
-      .slice(0, 4)
+      .slice(0, 5)
       .map(t => `#${t.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '')}`)
       .join(' ');
     text += `🏷 <i>${formattedTags}</i>\n`;
@@ -3266,13 +3351,35 @@ async function executeStandaloneTechPost(targetChannel: string, items: TechItem[
     const safeText = safeTelegramHtmlLength(msg, 3900);
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
-    await callTelegramApi('sendMessage', {
-      chat_id: channelHandle,
-      text: safeText,
-      parse_mode: 'HTML',
-      reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-      disable_notification: !!db.settings.autoPost.silentMode
-    });
+    const itemWithImage = items.find(n => !!n.imageUrl);
+    let sendSuccess = false;
+
+    if (itemWithImage && itemWithImage.imageUrl) {
+      try {
+        const photoCaption = safeTelegramHtmlLength(msg, 1024);
+        await callTelegramApi('sendPhoto', {
+          chat_id: channelHandle,
+          photo: itemWithImage.imageUrl,
+          caption: photoCaption,
+          parse_mode: 'HTML',
+          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+          disable_notification: !!db.settings.autoPost.silentMode
+        });
+        sendSuccess = true;
+      } catch (photoErr: any) {
+        // Fallback to text
+      }
+    }
+
+    if (!sendSuccess) {
+      await callTelegramApi('sendMessage', {
+        chat_id: channelHandle,
+        text: safeText,
+        parse_mode: 'HTML',
+        reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+        disable_notification: !!db.settings.autoPost.silentMode
+      });
+    }
 
     for (const it of items) {
       it.postedToChannel = true;
@@ -3386,26 +3493,27 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
       return false;
     }
 
-    let text = `🚀 <b>${escapeHtml(settings.customText || '💎 کانفیگ‌ها و پروکسی‌های جدید و پرسرعت تقدیم به شما:')}</b>\n\n`;
+    let text = `⚡ <b>${escapeHtml(settings.customText || '💎 پک اختصاصی کانفیگ‌های پرسرعت و پروکسی‌های جدید')}</b>\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     let needsFullPackFile = false;
     let fullPackConfigsContent = '';
 
     if (selectedConfigs.length > 0) {
-      text += `📥 <b>پک ${selectedConfigs.length} کانفیگ اختصاصی V2Ray:</b>\n`;
+      text += `🚀 <b>پک ${selectedConfigs.length} کانفیگ پرسرعت V2Ray (تست شده):</b>\n\n`;
       
       const previewCount = Math.min(selectedConfigs.length, 6);
       for (let i = 0; i < previewCount; i++) {
         const conf = selectedConfigs[i];
         const loc = await getIpLocation(conf.server || '');
         const flag = getFlagEmoji(loc.countryCode);
-        const pingText = conf.latency ? `پینگ: ${conf.latency}ms` : 'فعال 🟢';
+        const pingText = conf.latency ? `⚡ <code>${conf.latency}ms</code>` : '🟢 فعال';
         const proto = (conf.protocol || 'V2RAY').toUpperCase();
-        text += `🔹 کانفیگ ${i + 1} [${proto}] | ${pingText} | ${loc.country} ${flag}\n`;
+        text += `▫️ <b>[${proto}]</b> ${loc.country} ${flag} ╶─╴ ${pingText}\n`;
       }
 
       if (selectedConfigs.length > previewCount) {
-        text += `<i>و ${selectedConfigs.length - previewCount} کانفیگ دیگر در بسته زیر...</i>\n`;
+        text += `\n<i>▫️ و ${selectedConfigs.length - previewCount} کانفیگ دیگر در کادر زیر...</i>\n`;
       }
 
       // Generate all branded configs
@@ -3429,26 +3537,26 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
 
       if (inlineBatch) {
         const copyTitle = inlineCount === selectedConfigs.length 
-          ? `کپی یکجای تمامی ${selectedConfigs.length} کانفیگ (جهت ایمپورت روی کادر زیر لمس کنید):`
-          : `کپی یکجای برترین کانفیگ‌ها (${inlineCount} از ${selectedConfigs.length} عدد):`;
-        text += `\n📋 <b>${copyTitle}</b>\n`;
+          ? `📋 <b>کپی یکجای تمامی ${selectedConfigs.length} کانفیگ (روی کادر زیر لمس کنید):</b>`
+          : `📋 <b>کپی یکجای کانفیگ‌ها (${inlineCount} از ${selectedConfigs.length} عدد):</b>`;
+        text += `\n${copyTitle}\n`;
         text += `<blockquote expandable><code>${escapeHtml(inlineBatch)}</code></blockquote>\n\n`;
       }
     }
 
     // Append proxies
     if (selectedProxies.length > 0) {
-      text += `🔌 <b>لیست پروکسی‌های جدید تلگرام:</b>\n`;
+      text += `🔌 <b>پروکسی‌های فعال و بدون قطعی تلگرام:</b>\n\n`;
       const proxyPreviewCount = Math.min(selectedProxies.length, 6);
       for (let i = 0; i < proxyPreviewCount; i++) {
         const proxy = selectedProxies[i];
         const loc = await getIpLocation(proxy.server || '');
         const flag = getFlagEmoji(loc.countryCode);
-        const pingText = proxy.latency ? `پینگ: ${proxy.latency}ms` : 'فعال 🟢';
+        const pingText = proxy.latency ? `⚡ <code>${proxy.latency}ms</code>` : '🟢 فعال';
         const pType = (proxy.type || 'MTPROTO').toUpperCase();
-        text += `🔹 پروکسی ${pType} | ${pingText} | ${loc.country} ${flag}\n`;
+        text += `▫️ <b>[${pType}]</b> ${loc.country} ${flag} ╶─╴ ${pingText}\n`;
       }
-      text += `\n👇 برای اتصال به پروکسی‌ها، روی دکمه‌های شیشه‌ای زیر کلیک کنید:\n\n`;
+      text += `\n<i>👇 جهت اتصال به پروکسی‌ها دکمه‌های زیر را لمس نمایید:</i>\n\n`;
     }
 
     if (needsFullPackFile) {
@@ -3671,13 +3779,36 @@ async function executeTechNewsAutoPost(customTargetChannel?: string): Promise<bo
     const safeText = safeTelegramHtmlLength(text, 3900);
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
-    await callTelegramApi('sendMessage', {
-      chat_id: channelHandle,
-      text: safeText,
-      parse_mode: 'HTML',
-      reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-      disable_notification: !!settings.silentMode
-    });
+    // Check if any selected news item has an image to attach
+    const itemWithImage = selectedNews.find(n => !!n.imageUrl);
+    let sendSuccess = false;
+
+    if (itemWithImage && itemWithImage.imageUrl) {
+      try {
+        const photoCaption = safeTelegramHtmlLength(text, 1024);
+        await callTelegramApi('sendPhoto', {
+          chat_id: channelHandle,
+          photo: itemWithImage.imageUrl,
+          caption: photoCaption,
+          parse_mode: 'HTML',
+          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+          disable_notification: !!settings.silentMode
+        });
+        sendSuccess = true;
+      } catch (photoErr: any) {
+        addLog('warn', `ارسال عکس برای پست اخبار با خطا مواجه شد، ارسال متنی جایگزین می‌شود: ${photoErr?.message || photoErr}`);
+      }
+    }
+
+    if (!sendSuccess) {
+      await callTelegramApi('sendMessage', {
+        chat_id: channelHandle,
+        text: safeText,
+        parse_mode: 'HTML',
+        reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+        disable_notification: !!settings.silentMode
+      });
+    }
 
     const nowIso = new Date().toISOString();
     for (const it of selectedNews) {
@@ -3761,13 +3892,36 @@ async function executeTechTricksAutoPost(customTargetChannel?: string): Promise<
     const safeText = safeTelegramHtmlLength(text, 3900);
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
-    await callTelegramApi('sendMessage', {
-      chat_id: channelHandle,
-      text: safeText,
-      parse_mode: 'HTML',
-      reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-      disable_notification: !!settings.silentMode
-    });
+    // Check if any selected trick item has an image to attach
+    const itemWithImage最佳 = selectedTricks.find(n => !!n.imageUrl);
+    let sendSuccess = false;
+
+    if (itemWithImage最佳 && itemWithImage最佳.imageUrl) {
+      try {
+        const photoCaption纯 = safeTelegramHtmlLength(text, 1024);
+        await callTelegramApi('sendPhoto', {
+          chat_id: channelHandle,
+          photo: itemWithImage最佳.imageUrl,
+          caption: photoCaption纯,
+          parse_mode: 'HTML',
+          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+          disable_notification: !!settings.silentMode
+        });
+        sendSuccess = true;
+      } catch (photoErr: any) {
+        addLog('warn', `ارسال عکس برای پست ترفندها با خطا مواجه شد، ارسال متنی جایگزین می‌شود: ${photoErr?.message || photoErr}`);
+      }
+    }
+
+    if (!sendSuccess) {
+      await callTelegramApi('sendMessage', {
+        chat_id: channelHandle,
+        text: safeText,
+        parse_mode: 'HTML',
+        reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+        disable_notification: !!settings.silentMode
+      });
+    }
 
     const nowIso = new Date().toISOString();
     for (const it of selectedTricks) {

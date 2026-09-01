@@ -170,6 +170,7 @@ export interface TechItem {
   title: string;
   summary: string;
   fullText?: string;
+  imageUrl?: string;
   category: TechItemCategory; // 'news' (اخبار تکنولوژی), 'trick' (ترفندهای گوشی و تکنولوژی), 'secret' (رازهای تکنولوژی و امنیت)
   tags: string[];
   source: string;
