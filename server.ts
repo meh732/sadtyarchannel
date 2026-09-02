@@ -563,159 +563,32 @@ async function fetchLiveTrendingAiPromptFromInternet(categoryKey?: string): Prom
   tags: string[];
   tipsForPersonalPhoto?: string;
 }> {
-  const ai = getGeminiClient();
-  if (ai) {
-    try {
-      const categoryThemes: Record<string, { name: string; queries: string[]; guide: string }> = {
-        pixar: {
-          name: 'انیمیشن و کارتون ۳ بعدی دیزنی/پیکسار (تبدیل عکس شخصی)',
-          queries: [
-            'disney pixar 3d character portrait prompt midjourney prompthero',
-            '3d cartoon cute avatar personal photo prompt lexica art',
-            'pixar style cute child adult 3d render midjourney reddit'
-          ],
-          guide: 'تبدیل عکس پرتره چهره یا فرزند به کاراکتر انیمیشنی سه بعدی کمپانی پیکسار و دیزنی با نورپردازی لطیف و بامزه'
-        },
-        family: {
-          name: 'پرتره خانوادگی، کودک و والدین (ترکیب عکس‌های عزیزانتان)',
-          queries: [
-            'cozy family portrait photography warm golden hour prompt midjourney',
-            'cute baby toddler angelic portrait prompt playgroundai',
-            'elderly grandparents vintage emotional portrait prompt midjourney prompthero'
-          ],
-          guide: 'خلق عکس‌های شگفت‌انگیز و احساسی از اعضای خانواده، فرزندان و پدر و مادر با تم‌های گرم، رویایی و آتلیه‌ای'
-        },
-        couple: {
-          name: 'دونفره، عاشقانه، عروسی و فرمالیته (عکس با همسر)',
-          queries: [
-            'romantic couple wedding photo shoot sunset cinematic prompt midjourney',
-            'couple holding hands rainy paris streets moody photography prompt reddit',
-            'luxury aesthetic formal couple portrait prompt prompthero'
-          ],
-          guide: 'ترکیب عکس دونفره با همسر در لوکیشن‌های رمانتیک، کافه‌های پاریس، غروب دریا، یا آتلیه عروس'
-        },
-        cyberpunk: {
-          name: 'سایبرپانک، نئونی، فیوچریستیک و سینمایی',
-          queries: [
-            'cyberpunk neon portrait glowing lights rainy city prompt midjourney',
-            'futuristic sci-fi cinematic character portrait prompt lexica art',
-            'cybernetic glow street portrait prompt prompthero'
-          ],
-          guide: 'تبدیل چهره شما به قهرمان فیلم‌های علمی‌تخیلی و سایبرپانک با نورهای نئونی و لباس‌های آینده‌نگرانه'
-        },
-        royal: {
-          name: 'سلطنتی، اشرافی، درباری و کلاسیک رنسانس',
-          queries: [
-            'royal king queen renaissance oil painting portrait prompt midjourney',
-            'victorian royalty ornate crown gold embroidery portrait prompt reddit',
-            'persian ancient royal aesthetic portrait prompt prompthero'
-          ],
-          guide: 'ترکیب عکس چهره با شاهزادگان، درباریان، تاج‌های مجلل طلاکاری و نقاشی‌های کلاسیک رنسانس'
-        },
-        artistic: {
-          name: 'نقاشی روغنی، آبرنگ، طراحی دستی و انیمه جیبلی',
-          queries: [
-            'studio ghibli aesthetic anime portrait prompt midjourney',
-            'textured oil painting expressive portrait prompt lexica art',
-            'watercolor splash portrait character prompt prompthero'
-          ],
-          guide: 'تبدیل عکس شخصی به تابلوی نقاشی گران‌قیمت رنگ روغن، نقاشی آبرنگ یا سبک انیمه‌های نوستالژیک استودیو جیبلی'
-        },
-        fashion: {
-          name: 'مدلینگ، ووگ، عکاسی استودیویی و فشن اینستاگرامی',
-          queries: [
-            'vogue magazine cover editorial fashion portrait prompt midjourney',
-            'studio glamour portrait dramatic rim lighting prompt prompthero',
-            'aesthetic minimal luxury fashion portrait prompt reddit'
-          ],
-          guide: 'تبدیل ژست و عکس شما به کاور مجلات بین‌المللی مد و فشن (Vogue, GQ) با نورپردازی استودیویی فوق‌حرفه‌ای'
-        },
-        random: {
-          name: 'ترندهای داغ و ویرال شبکه‌های اجتماعی (TikTok / Instagram)',
-          queries: [
-            'viral trending portrait midjourney prompts reddit',
-            'most popular character portrait prompt prompthero lexica',
-            'trending aesthetic portrait prompts civitai'
-          ],
-          guide: 'جدیدترین و داغ‌ترین ترندهای وایرال شبکه‌های اجتماعی در ترکیب عکس‌های شخصی'
-        }
-      };
-
-      const selectedKey = (categoryKey && categoryThemes[categoryKey]) ? categoryKey : 'random';
-      const catConfig = categoryThemes[selectedKey];
-      const randomQuery = catConfig.queries[Math.floor(Math.random() * catConfig.queries.length)];
-
-      const systemPrompt = `You are an elite AI Prompt Engineer and internet researcher specializing in REAL-WORLD VIRAL PROMPTS for PERSONAL PHOTO TRANSFORMATIONS (turning selfies, family photos, couples, children, parents into stunning styles).
-
-TASK: Search the web via googleSearch for REAL, POPULAR, AND VIRAL prompts used on Midjourney, Stable Diffusion, DALL-E, or PromptHero for category: "${catConfig.name}".
-Search Query: "${randomQuery}".
-
-RULES & STRUCTURE:
-1. Extract an authentic, highly-praised English prompt from real community shares (Reddit, PromptHero, Lexica, etc.).
-2. The prompt should be formatted so users can combine it with their own uploaded photo (e.g. using Midjourney's [photo_link] + prompt + parameters like --cw 20 --cref [photo_link] or FaceSwap tools).
-3. Title: A catchy and beautiful Persian title (3-6 words).
-4. Description: A complete Persian explanation explaining the aesthetic style, what makes it special, and naming the source platform (e.g. PromptHero, Reddit r/midjourney).
-5. TipsForPersonalPhoto: Practical step-by-step Persian advice on what kind of personal photo (lighting, angle, selfie/full-body) works best for this style and how to plug it into Midjourney or FaceSwap tools.
-6. Tags: 3 to 4 Persian tags without '#'.
-7. UnsplashSearchTerm: Specific English keywords to fetch a matching preview photo.`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: systemPrompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING, description: "Descriptive Persian title for the prompt" },
-              promptText: { type: Type.STRING, description: "The actual exact English prompt text found from the source" },
-              description: { type: Type.STRING, description: "Detailed Persian explanation of the aesthetic and source platform" },
-              tipsForPersonalPhoto: { type: Type.STRING, description: "Persian practical tips on choosing the right personal photo and combining it" },
-              tags: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: "3 to 4 Persian tags without '#' symbol"
-              },
-              unsplashSearchTerm: { type: Type.STRING, description: "Specific english keywords for Unsplash background" }
-            },
-            required: ["title", "promptText", "description", "tipsForPersonalPhoto", "tags", "unsplashSearchTerm"]
-          }
-        }
-      });
-
-      if (response && response.text) {
-        const parsed = JSON.parse(response.text);
-        const imageUrl = `https://images.unsplash.com/featured/800x600/?${encodeURIComponent(parsed.unsplashSearchTerm || parsed.title)}`;
-
-        return {
-          title: parsed.title,
-          category: 'image',
-          styleCategory: selectedKey,
-          description: parsed.description,
-          promptText: parsed.promptText,
-          tipsForPersonalPhoto: parsed.tipsForPersonalPhoto,
-          imageUrl,
-          tags: parsed.tags || []
-        };
-      }
-    } catch (e) {
-      console.error('Gemini live prompt generation error:', e);
+  const allLocal = db.aiPrompts || [];
+  let candidates = allLocal.filter(p => !p.postedToChannel);
+  
+  if (categoryKey && categoryKey !== 'random') {
+    let specificCandidates = candidates.filter(p => p.styleCategory === categoryKey || p.tags.includes(categoryKey));
+    if (specificCandidates.length === 0) {
+      specificCandidates = allLocal.filter(p => p.styleCategory === categoryKey || p.tags.includes(categoryKey));
     }
+    if (specificCandidates.length > 0) candidates = specificCandidates;
+  }
+  
+  if (candidates.length === 0 && allLocal.length > 0) {
+    candidates = allLocal;
   }
 
-  // Fallback to offline / local database prompts
-  const allLocal = db.aiPrompts || [];
-  if (allLocal.length > 0) {
-    const p = allLocal[Math.floor(Math.random() * allLocal.length)];
+  if (candidates.length > 0) {
+    const p = candidates[Math.floor(Math.random() * candidates.length)];
     return {
       title: p.title,
       category: p.category as any,
+      styleCategory: p.styleCategory || categoryKey,
       description: p.description,
       promptText: p.promptText,
       imageUrl: p.imageUrl,
       tags: p.tags,
-      tipsForPersonalPhoto: 'برای این پرامپت، یک عکس سلفی واضح و با نور مناسب از چهره خود را به عنوان مرجع به همراه پرامپت آپلود کنید.'
+      tipsForPersonalPhoto: p.tipsForPersonalPhoto || 'برای این پرامپت، یک عکس سلفی واضح از چهره خود آپلود کنید.'
     };
   }
 
@@ -3588,6 +3461,137 @@ async function fetchLiveTechFromRss(): Promise<number> {
   }
 
   return addedCount;
+}
+
+
+// --- AI Prompts Background Auto-Updater ---
+async function fetchLiveAiPromptsFromWeb(): Promise<number> {
+  const ai = getGeminiClient();
+  if (!ai) return 0;
+  
+  const categories = [
+    { key: 'pixar', query: 'disney pixar 3d character prompt midjourney lexica' },
+    { key: 'family', query: 'family portrait baby parents cozy photography prompt midjourney' },
+    { key: 'couple', query: 'romantic couple wedding photoshoot cinematic prompt midjourney' },
+    { key: 'cyberpunk', query: 'cyberpunk neon futuristic portrait prompt midjourney' },
+    { key: 'royal', query: 'royal king queen historical portrait oil painting prompt' },
+    { key: 'artistic', query: 'studio ghibli anime style portrait prompt midjourney' },
+    { key: 'fashion', query: 'high fashion editorial studio lighting portrait prompt lexica' },
+    { key: 'random', query: 'top trending latest hyperrealistic photography prompt midjourney 2024' }
+  ];
+
+  let addedCount = 0;
+  
+  // Pick 3 random categories to refresh each time to avoid giant requests
+  const shuffledCats = categories.sort(() => 0.5 - Math.random()).slice(0, 3);
+  
+  for (const cat of shuffledCats) {
+    try {
+      const prompt = `You are an expert AI Prompt Engineer. Use Google Search to find the LATEST and most trending prompts for Midjourney/Stable Diffusion related to: "${cat.query}".
+Find exactly 2 unique, highly detailed, and professional English prompts. Do not repeat generic ones. Find complex and beautiful ones.
+Return a valid JSON array of objects (no markdown, just JSON) with this exact structure:
+[
+  {
+    "title": "A catchy Persian title (e.g. پرتره سایبرپانک نئونی)",
+    "description": "A very attractive Persian description of the result.",
+    "promptText": "The exact original English prompt text.",
+    "tipsForPersonalPhoto": "یک نکته کوتاه فارسی برای ترکیب این پرامپت با عکس شخصی کاربر",
+    "tags": ["پرامپت", "میدجرنی"]
+  }
+]`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.7-flash',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          tools: [{ googleSearch: {} }],
+          temperature: 0.9,
+          responseMimeType: 'application/json'
+        }
+      });
+
+      const content = response.text();
+      if (content) {
+        let parsed = [];
+        try {
+          const cleaned = content.replace(/```json\n?|\n?```/g, '').trim();
+          parsed = JSON.parse(cleaned);
+        } catch(e) { continue; }
+        
+        if (!db.aiPrompts) db.aiPrompts = [];
+        const existingTexts = new Set(db.aiPrompts.map(p => p.promptText.trim().toLowerCase()));
+        
+        for (const p of parsed) {
+          if (!p.promptText || p.promptText.length < 15) continue;
+          if (existingTexts.has(p.promptText.trim().toLowerCase())) continue;
+          
+          db.aiPrompts.unshift({
+            id: 'prompt-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+            title: p.title || 'پرامپت هوش مصنوعی',
+            category: 'image',
+            styleCategory: cat.key,
+            description: p.description || 'پرامپت جذاب و کاربردی',
+            promptText: p.promptText,
+            tipsForPersonalPhoto: p.tipsForPersonalPhoto,
+            imageUrl: 'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=800&auto=format&fit=crop&q=60',
+            tags: Array.isArray(p.tags) ? [...p.tags, cat.key] : [cat.key],
+            createdAt: new Date().toISOString()
+          });
+          addedCount++;
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching prompt for cat', cat.key, err);
+    }
+    // Small delay between searches
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  return addedCount;
+}
+
+function purgeOldAiPrompts(maxDays = 7): number {
+  if (!db.aiPrompts || db.aiPrompts.length === 0) return 0;
+  
+  const initialCount = db.aiPrompts.length;
+  const cutoffTime = Date.now() - (maxDays * 24 * 60 * 60 * 1000);
+  
+  db.aiPrompts = db.aiPrompts.filter(item => {
+    if (!item.postedToChannel) return true;
+    if (item.id.startsWith('prompt-') && item.id.length < 10) return true;
+    
+    if (item.postedAt) {
+      const postedTime = new Date(item.postedAt).getTime();
+      return postedTime > cutoffTime;
+    }
+    
+    const createdTime = new Date(item.createdAt).getTime();
+    return createdTime > cutoffTime;
+  });
+  
+  if (db.aiPrompts.length > 50) {
+    db.aiPrompts = db.aiPrompts.slice(0, 50);
+  }
+  
+  return initialCount - db.aiPrompts.length;
+}
+
+async function refreshAiPromptsAndPurgeOld(force = false): Promise<{ added: number; purged: number; total: number }> {
+  const maxDays = 7;
+  const purged = purgeOldAiPrompts(maxDays);
+  const added = await fetchLiveAiPromptsFromWeb();
+  
+  if (added > 0 || purged > 0 || force) {
+    saveDatabase();
+    if (added > 0) {
+      addLog('info', `🎨 بروزرسانی پرامپت‌های هوش مصنوعی: ${added} پرامپت جدید از وب دریافت شد.`);
+    }
+  }
+  
+  return {
+    added,
+    purged,
+    total: db.aiPrompts ? db.aiPrompts.length : 0
+  };
 }
 
 // Master refresh function that seeds, fetches fresh RSS, purges old and saves
@@ -8812,20 +8816,30 @@ function setupIntervals() {
     }
   }, 15000);
 
+  
   // Auto refresh Tech News/Tricks content & purge old items every 6 hours
   setInterval(() => {
     refreshTechContentAndPurgeOld().catch(err => console.error('Tech auto-refresh error:', err));
   }, 6 * 60 * 60 * 1000);
 
+  // Auto refresh AI Prompts every 2 hours
+  setInterval(() => {
+    refreshAiPromptsAndPurgeOld().catch(err => console.error('AiPrompts auto-refresh error:', err));
+  }, 2 * 60 * 60 * 1000);
+
+
   // Set up auto post interval
   setupAutoPostInterval();
 
+  
   // Run initial checks shortly after startup
   setTimeout(() => {
     monitorChannelPosts();
     checkAndTriggerBackup();
     refreshTechContentAndPurgeOld().catch(() => {});
+    refreshAiPromptsAndPurgeOld().catch(() => {});
   }, 5 * 1000);
+
 }
 
 // Initialize background schedules

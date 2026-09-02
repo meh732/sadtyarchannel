@@ -195,11 +195,13 @@ export interface AiPrompt {
   id: string;
   title: string;
   category: AiPromptCategory; // 'image' (تصویر), 'video' (ویدیو), 'chat' (متنی / هوش مصنوعی), 'other' (سایر)
+  styleCategory?: string; // e.g. 'pixar', 'cyberpunk'
   description: string; // توضیحات فارسی پرامپت و نتیجه حاصله
   promptText: string; // متن اصلی انگلیسی پرامپت جهت کپی کردن آسان
   imageUrl?: string; // تصویر نمونه برای پیش‌نمایش بصری (از لئوناردو، میدجرنی، دالی و غیره)
   tags: string[]; // هشتگ‌ها
   importance?: 'hot' | 'normal'; // داغ و ترند یا معمولی
+  tipsForPersonalPhoto?: string; // راهنمای فارسی ترکیب با عکس
   createdAt: string;
   postedToChannel?: boolean;
   postedAt?: string | null;
