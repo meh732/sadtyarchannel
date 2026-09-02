@@ -47,7 +47,10 @@ import {
   Globe,
   ExternalLink,
   Zap,
-  Newspaper
+  Newspaper,
+  Image,
+  Palette,
+  Edit
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -63,7 +66,9 @@ import {
   AutoPostSettings,
   TechItem,
   TechItemCategory,
-  TechImportance
+  TechImportance,
+  AiPrompt,
+  AiPromptCategory
 } from './types';
 
 // Define custom window type extensions for Telegram WebApp
@@ -130,8 +135,8 @@ export default function App() {
   const [logoClickCount, setLogoClickCount] = useState<number>(0);
 
   // Navigation & View State
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'configs' | 'proxies' | 'vpn_files' | 'tech' | 'join' | 'settings' | 'autopost' | 'broadcast' | 'public_panel'>('dashboard');
-  const [publicSubTab, setPublicSubTab] = useState<'configs' | 'proxies' | 'vpn_files' | 'tech'>('configs');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'configs' | 'proxies' | 'vpn_files' | 'tech' | 'prompts' | 'join' | 'settings' | 'autopost' | 'broadcast' | 'public_panel'>('dashboard');
+  const [publicSubTab, setPublicSubTab] = useState<'configs' | 'proxies' | 'vpn_files' | 'tech' | 'prompts'>('configs');
   
   // Data States
   const [stats, setStats] = useState<DashboardStats>({
@@ -152,6 +157,7 @@ export default function App() {
   const [proxies, setProxies] = useState<ProxyItem[]>([]);
   const [vpnFiles, setVpnFiles] = useState<any[]>([]);
   const [techItems, setTechItems] = useState<TechItem[]>([]);
+  const [aiPrompts, setAiPrompts] = useState<AiPrompt[]>([]);
   const [users, setUsers] = useState<BotUser[]>([]);
   const [logs, setLogs] = useState<BotLog[]>([]);
   const [settings, setSettings] = useState<SystemSettings>({
@@ -213,6 +219,19 @@ export default function App() {
     importance: 'high' as TechImportance
   });
 
+  // AI Prompts Search, Filter & Form States
+  const [showPromptModal, setShowPromptModal] = useState(false);
+  const [editingPrompt, setEditingPrompt] = useState<AiPrompt | null>(null);
+  const [promptForm, setPromptForm] = useState({
+    title: '',
+    category: 'image' as AiPromptCategory,
+    description: '',
+    promptText: '',
+    imageUrl: ''
+  });
+  const [promptSearch, setPromptSearch] = useState('');
+  const [promptCategoryFilter, setPromptCategoryFilter] = useState<string>('all');
+
   // Form Input States
   const [newSource, setNewSource] = useState({
     name: '',
@@ -243,6 +262,7 @@ export default function App() {
     lastConfigsPostedAt: null,
     lastTechNewsPostedAt: null,
     lastTechTricksPostedAt: null,
+    lastAiPromptsPostedAt: null,
     techNewsEnabled: true,
     techNewsIntervalHours: 4,
     techNewsIntervalMinutes: 240,
@@ -251,6 +271,10 @@ export default function App() {
     techTricksIntervalHours: 6,
     techTricksIntervalMinutes: 360,
     techTricksCount: 2,
+    aiPromptsEnabled: true,
+    aiPromptsIntervalHours: 6,
+    aiPromptsIntervalMinutes: 360,
+    aiPromptsCount: 1,
     antiFloodDelayMinutes: 3,
     techPostMode: 'combined',
     autoPurgeOldTechDays: 7,
@@ -401,7 +425,7 @@ export default function App() {
     try {
       if (!silent) {
         if (token) {
-          const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes, techRes, appUrlRes] = await Promise.all([
+          const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes, techRes, appUrlRes, promptsRes] = await Promise.all([
             fetch('/api/stats').then(r => r.json()).catch(() => ({})),
             fetch('/api/sources').then(r => r.json()).catch(() => []),
             fetch('/api/force-join').then(r => r.json()).catch(() => []),
@@ -412,7 +436,8 @@ export default function App() {
             fetch('/api/settings').then(r => r.json()).catch(() => ({})),
             fetch('/api/vpn-files').then(r => r.json()).catch(() => []),
             fetch('/api/tech-items').then(r => r.json()).catch(() => []),
-            fetch('/api/app-url').then(r => r.json()).catch(() => ({ url: window.location.origin }))
+            fetch('/api/app-url').then(r => r.json()).catch(() => ({ url: window.location.origin })),
+            fetch('/api/ai-prompts').then(r => r.json()).catch(() => [])
           ]);
 
           setStats(statsRes);
@@ -422,6 +447,7 @@ export default function App() {
           setProxies(proxiesRes || []);
           setVpnFiles(vpnRes || []);
           setTechItems(techRes || []);
+          setAiPrompts(promptsRes || []);
           setUsers(usersRes);
           setLogs(logsRes);
           setSettings(settingsRes);
@@ -436,17 +462,19 @@ export default function App() {
           }
         } else {
           // Regular user data fetch - only public routes
-          const [configsRes, proxiesRes, vpnRes, techRes] = await Promise.all([
+          const [configsRes, proxiesRes, vpnRes, techRes, promptsRes] = await Promise.all([
             fetch('/api/configs?limit=500').then(r => r.json()).catch(() => []),
             fetch('/api/proxies?limit=500').then(r => r.json()).catch(() => []),
             fetch('/api/vpn-files').then(r => r.json()).catch(() => []),
-            fetch('/api/tech-items').then(r => r.json()).catch(() => [])
+            fetch('/api/tech-items').then(r => r.json()).catch(() => []),
+            fetch('/api/ai-prompts').then(r => r.json()).catch(() => [])
           ]);
 
           setConfigs(configsRes);
           setProxies(proxiesRes || []);
           setVpnFiles(vpnRes || []);
           setTechItems(techRes || []);
+          setAiPrompts(promptsRes || []);
         }
       } else {
         if (token) {
@@ -463,6 +491,7 @@ export default function App() {
           const fetchVpnNeeded = activeTab === 'vpn_files';
           const fetchJoinNeeded = activeTab === 'join';
           const fetchUsersNeeded = activeTab === 'broadcast';
+          const fetchPromptsNeeded = activeTab === 'prompts';
 
           if (fetchConfigsNeeded) promises.push(fetch('/api/configs?limit=500').then(r => r.json()).catch(() => []));
           if (fetchProxiesNeeded) promises.push(fetch('/api/proxies?limit=500').then(r => r.json()).catch(() => []));
@@ -470,6 +499,7 @@ export default function App() {
           if (fetchVpnNeeded) promises.push(fetch('/api/vpn-files').then(r => r.json()).catch(() => []));
           if (fetchJoinNeeded) promises.push(fetch('/api/force-join').then(r => r.json()).catch(() => []));
           if (fetchUsersNeeded) promises.push(fetch('/api/users').then(r => r.json()).catch(() => []));
+          if (fetchPromptsNeeded) promises.push(fetch('/api/ai-prompts').then(r => r.json()).catch(() => []));
 
           const results = await Promise.all(promises);
           setStats(results[0]);
@@ -482,6 +512,7 @@ export default function App() {
           if (fetchVpnNeeded) { setVpnFiles(results[idx] || []); idx++; }
           if (fetchJoinNeeded) { setForceJoinChannels(results[idx]); idx++; }
           if (fetchUsersNeeded) { setUsers(results[idx]); idx++; }
+          if (fetchPromptsNeeded) { setAiPrompts(results[idx] || []); idx++; }
         } else {
           // Silent poll for public users
           const promises: Promise<any>[] = [];
@@ -489,11 +520,13 @@ export default function App() {
           const fetchProxiesNeeded = activeTab === 'proxies';
           const fetchVpnNeeded = activeTab === 'vpn_files';
           const fetchTechNeeded = activeTab === 'tech';
+          const fetchPromptsNeeded = activeTab === 'prompts';
 
           if (fetchConfigsNeeded) promises.push(fetch('/api/configs?limit=500').then(r => r.json()).catch(() => []));
           if (fetchProxiesNeeded) promises.push(fetch('/api/proxies?limit=500').then(r => r.json()).catch(() => []));
           if (fetchVpnNeeded) promises.push(fetch('/api/vpn-files').then(r => r.json()).catch(() => []));
           if (fetchTechNeeded) promises.push(fetch('/api/tech-items').then(r => r.json()).catch(() => []));
+          if (fetchPromptsNeeded) promises.push(fetch('/api/ai-prompts').then(r => r.json()).catch(() => []));
 
           if (promises.length > 0) {
             const results = await Promise.all(promises);
@@ -502,6 +535,7 @@ export default function App() {
             if (fetchProxiesNeeded) { setProxies(results[idx] || []); idx++; }
             if (fetchVpnNeeded) { setVpnFiles(results[idx] || []); idx++; }
             if (fetchTechNeeded) { setTechItems(results[idx] || []); idx++; }
+            if (fetchPromptsNeeded) { setAiPrompts(results[idx] || []); idx++; }
           }
         }
       }
@@ -1219,6 +1253,96 @@ export default function App() {
     } finally {
       setActionLoading(null);
       fetchData(true);
+    }
+  };
+
+  // --- AI Prompts Handlers ---
+  const handleTriggerAiPromptsAutoPost = async () => {
+    setActionLoading('trigger_ai_prompts_autopost');
+    try {
+      await fetch('/api/settings/auto-post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(autoPostForm)
+      });
+
+      const res = await fetch('/api/bot/auto-post/trigger-ai-prompts', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('پست آزمایشی پرامپت‌های طلایی با موفقیت به کانال ارسال شد.', 'success');
+      } else {
+        showToast(data.message || 'خطا در ارسال پرامپت‌ها', 'error');
+      }
+    } catch (err) {
+      showToast('خطا در ارسال پرامپت‌ها به کانال', 'error');
+    } finally {
+      setActionLoading(null);
+      fetchData(true);
+    }
+  };
+
+  const handleCreateOrUpdatePrompt = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!promptForm.title || !promptForm.promptText) {
+      showToast('لطفا عنوان و متن انگلیسی پرامپت را وارد نمایید.', 'error');
+      return;
+    }
+
+    setActionLoading('save_prompt');
+    try {
+      const isEdit = !!editingPrompt;
+      const url = isEdit ? `/api/ai-prompts/${editingPrompt.id}` : '/api/ai-prompts';
+      const method = isEdit ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(promptForm)
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        showToast(isEdit ? 'پرامپت با موفقیت بروزرسانی شد.' : 'پرامپت جدید با موفقیت ثبت گردید.', 'success');
+        setShowPromptModal(false);
+        setEditingPrompt(null);
+        setPromptForm({
+          title: '',
+          category: 'image',
+          description: '',
+          promptText: '',
+          imageUrl: ''
+        });
+        const promptsRes = await fetch('/api/ai-prompts').then(r => r.json());
+        setAiPrompts(promptsRes);
+      } else {
+        showToast(data.message || 'خطا در ذخیره‌سازی پرامپت', 'error');
+      }
+    } catch (err) {
+      showToast('خطا در ارتباط با سرور', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeletePrompt = async (id: string) => {
+    if (!window.confirm('آیا از حذف این پرامپت هوش مصنوعی اطمینان دارید؟')) return;
+
+    setActionLoading(`delete_prompt_${id}`);
+    try {
+      const res = await fetch(`/api/ai-prompts/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+
+      if (data.success) {
+        showToast('پرامپت با موفقیت حذف شد.', 'success');
+        const promptsRes = await fetch('/api/ai-prompts').then(r => r.json());
+        setAiPrompts(promptsRes);
+      } else {
+        showToast(data.message || 'خطا در حذف پرامپت', 'error');
+      }
+    } catch (err) {
+      showToast('خطا در ارتباط با سرور', 'error');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -2359,6 +2483,21 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('prompts')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
+              activeTab === 'prompts'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+            }`}
+          >
+            <Palette className="w-4 h-4 text-pink-400" />
+            <span>پرامپت‌های تصویری</span>
+            <span className="mr-auto bg-pink-500/20 text-pink-300 text-xs px-2 py-0.5 rounded-full">
+              {aiPrompts.length} پرامپت
+            </span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('join')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
               activeTab === 'join'
@@ -2472,6 +2611,7 @@ export default function App() {
               {activeTab === 'proxies' && 'بانک جامع پروکسی‌های استخراج شده'}
               {activeTab === 'vpn_files' && 'بانک فایل‌های پیکربندی (.npvt, .ovpn)'}
               {activeTab === 'tech' && 'دانشنامه و ترفندهای تکنولوژی و گوشی'}
+              {activeTab === 'prompts' && 'پرامپت‌های هوشمند و طلایی هوش مصنوعی'}
               {activeTab === 'join' && 'بررسی عضویت اجباری (Force Join)'}
               {activeTab === 'settings' && 'پیکربندی هوشمند ربات و پلتفرم'}
               {activeTab === 'autopost' && 'زمان‌بندی و ارسال خودکار پست'}
@@ -2484,6 +2624,7 @@ export default function App() {
               {activeTab === 'proxies' && 'بررسی و مدیریت پروکسی‌های تلگرامی Socks5 و MTProto جهت ارائه به کاربران یا پست کانال.'}
               {activeTab === 'vpn_files' && 'مشاهده و مدیریت فایل‌های جمع‌آوری شده از منابع جهت ارسال مستقیم به کانال.'}
               {activeTab === 'tech' && 'جمع‌آوری هوشمند اخبار روز، ترفندهای آموزشی موبایل، کدهای مخفی و اولویت‌بندی بر اساس اهمیت جهت ارسال در کانال.'}
+              {activeTab === 'prompts' && 'مدیریت و تنظیم نمونه پرامپت‌های آماده و ترند برای ساخت آثار گرافیکی بی‌نظیر با هوش مصنوعی و کپی آسان.'}
               {activeTab === 'join' && 'تنظیم کانال‌های حامی جهت ملزم کردن کاربران برای عضویت قبل از استفاده.'}
               {activeTab === 'settings' && 'تنظیم توکن API تلگرام، فواصل زمانی پویش خودکار و متن برندینگ شخصی.'}
               {activeTab === 'autopost' && 'پیکربندی هوشمند ربات برای ارسال اتوماتیک کانفیگ‌ها، پروکسی‌ها و ترفندهای تکنولوژی به کانال شما در فواصل مشخص.'}
@@ -4128,7 +4269,316 @@ export default function App() {
                 </motion.div>
               )}
 
-              {/* --- TAB: AUTOPOST (AUTO POST TO TELEGRAM CHANNEL) --- */}
+              {/* --- TAB: AI PROMPTS MANAGEMENT --- */}
+              {activeTab === 'prompts' && (
+                <motion.div
+                  key="prompts"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  className="space-y-6"
+                >
+                  {/* Action Bar & Stats */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+                    <div className="space-y-1">
+                      <h3 className="text-lg font-bold text-slate-800">بانک پرامپت‌های طلایی و ترند</h3>
+                      <p className="text-xs text-slate-500">
+                        مجموعاً <strong>{aiPrompts.length}</strong> نمونه پرامپت خلاقانه ثبت شده است.
+                      </p>
+                    </div>
+                    {token && (
+                      <button
+                        onClick={() => {
+                          setEditingPrompt(null);
+                          setPromptForm({
+                            title: '',
+                            category: 'image',
+                            description: '',
+                            promptText: '',
+                            imageUrl: ''
+                          });
+                          setShowPromptModal(true);
+                        }}
+                        className="flex items-center justify-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/10 cursor-pointer transition-all duration-150 self-start md:self-auto"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>ثبت پرامپت جدید</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Search and Filters */}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                    <div className="relative flex-1">
+                      <Search className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="جستجو در بین پرامپت‌ها، سبک‌ها یا عناوین..."
+                        value={promptSearch}
+                        onChange={(e) => setPromptSearch(e.target.value)}
+                        className="w-full pl-4 pr-11 py-3 bg-white border border-slate-200 text-slate-800 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all duration-150 shadow-sm"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Filter className="w-4 h-4 text-slate-400" />
+                      <select
+                        value={promptCategoryFilter}
+                        onChange={(e) => setPromptCategoryFilter(e.target.value)}
+                        className="bg-white border border-slate-200 text-slate-700 text-xs rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer shadow-sm"
+                      >
+                        <option value="all">همه دسته‌ها</option>
+                        <option value="image">🎨 ساخت تصویر (Image Gen)</option>
+                        <option value="video">🎥 ساخت ویدیو (Video Gen)</option>
+                        <option value="chat">✍️ متنی و چت‌بات‌ها (Chat/LLM)</option>
+                        <option value="other">⚙️ سایر موارد</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Prompts Grid */}
+                  {useMemo(() => {
+                    const filtered = aiPrompts.filter((p) => {
+                      const matchesSearch =
+                        p.title.toLowerCase().includes(promptSearch.toLowerCase()) ||
+                        p.promptText.toLowerCase().includes(promptSearch.toLowerCase()) ||
+                        p.description.toLowerCase().includes(promptSearch.toLowerCase());
+                      const matchesCategory =
+                        promptCategoryFilter === 'all' || p.category === promptCategoryFilter;
+                      return matchesSearch && matchesCategory;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="bg-white border border-slate-200 rounded-2xl py-20 text-center flex flex-col items-center justify-center text-slate-400 gap-3">
+                          <Palette className="w-12 h-12 text-slate-300 animate-pulse" />
+                          <p className="text-sm font-bold text-slate-600">هیچ پرامپت معتبری یافت نشد.</p>
+                          <p className="text-xs text-slate-400">کلمات کلیدی جستجو را تغییر دهید یا پرامپت جدیدی تعریف کنید.</p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {filtered.map((p) => (
+                          <div
+                            key={p.id}
+                            className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow duration-250 relative"
+                          >
+                            {/* Preview Image */}
+                            <div className="relative aspect-video w-full bg-slate-900 border-b border-slate-100 overflow-hidden">
+                              {p.imageUrl ? (
+                                <img
+                                  src={p.imageUrl}
+                                  alt={p.title}
+                                  referrerPolicy="no-referrer"
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 gap-2">
+                                  <Image className="w-10 h-10 text-slate-600" />
+                                  <span className="text-[10px] text-slate-600">فاقد تصویر پیش‌نمایش</span>
+                                </div>
+                              )}
+                              <span
+                                className={`absolute left-3 top-3 text-[10px] font-bold px-2.5 py-1 rounded-full shadow-sm text-white ${
+                                  p.category === 'image'
+                                    ? 'bg-pink-600'
+                                    : p.category === 'video'
+                                    ? 'bg-purple-600'
+                                    : p.category === 'chat'
+                                    ? 'bg-teal-600'
+                                    : 'bg-slate-600'
+                                }`}
+                              >
+                                {p.category === 'image' && '🎨 ساخت تصویر'}
+                                {p.category === 'video' && '🎥 ساخت ویدیو'}
+                                {p.category === 'chat' && '✍️ چت‌بات'}
+                                {p.category === 'other' && '⚙️ سایر'}
+                              </span>
+                            </div>
+
+                            {/* Card Content */}
+                            <div className="p-5 flex-1 flex flex-col space-y-3">
+                              <h4 className="text-sm font-extrabold text-slate-800 line-clamp-1">
+                                {p.title}
+                              </h4>
+                              <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">
+                                {p.description || 'توضیحاتی برای این پرامپت ثبت نشده است.'}
+                              </p>
+
+                              {/* Copyable Prompt block */}
+                              <div className="relative bg-slate-50 border border-slate-100 rounded-xl p-3.5 mt-2 flex-1 flex flex-col justify-between min-h-[100px]">
+                                <pre
+                                  className="text-[11px] font-mono text-slate-700 whitespace-pre-wrap break-all select-all leading-tight max-h-[120px] overflow-y-auto"
+                                  dir="ltr"
+                                >
+                                  {p.promptText}
+                                </pre>
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(p.promptText);
+                                    showToast('متن انگلیسی پرامپت با موفقیت کپی شد!', 'success');
+                                  }}
+                                  className="absolute left-2.5 bottom-2.5 p-1.5 bg-white border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 rounded-lg shadow-sm transition-colors cursor-pointer"
+                                  title="کپی کردن پرامپت"
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+
+                              {/* Admin Actions */}
+                              {token && (
+                                <div className="flex items-center gap-2 pt-3 border-t border-slate-100 justify-end">
+                                  <button
+                                    onClick={() => {
+                                      setEditingPrompt(p);
+                                      setPromptForm({
+                                        title: p.title,
+                                        category: p.category,
+                                        description: p.description,
+                                        promptText: p.promptText,
+                                        imageUrl: p.imageUrl || ''
+                                      });
+                                      setShowPromptModal(true);
+                                    }}
+                                    className="p-2 bg-slate-50 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                                    title="ویرایش پرامپت"
+                                  >
+                                    <Edit className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeletePrompt(p.id)}
+                                    disabled={actionLoading === `delete_prompt_${p.id}`}
+                                    className="p-2 bg-rose-50 text-rose-600 hover:text-rose-900 hover:bg-rose-100 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                                    title="حذف پرامپت"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }, [aiPrompts, promptSearch, promptCategoryFilter, token])}
+
+                  {/* Add/Edit Modal */}
+                  {showPromptModal && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden flex flex-col border border-slate-100 max-h-[90vh]"
+                      >
+                        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                          <h3 className="font-extrabold text-sm text-slate-800">
+                            {editingPrompt ? '✍️ ویرایش پرامپت انتخابی' : '➕ ثبت پرامپت طلایی جدید'}
+                          </h3>
+                          <button
+                            onClick={() => setShowPromptModal(false)}
+                            className="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                          >
+                            <X className="w-5 h-5" />
+                          </button>
+                        </div>
+
+                        <form onSubmit={handleCreateOrUpdatePrompt} className="p-6 overflow-y-auto space-y-4 flex-1">
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">عنوان نمونه پرامپت (فارسی)</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="مثال: تصویر نئونی پرتره دختر فضانورد در مریخ"
+                              value={promptForm.title}
+                              onChange={(e) => setPromptForm({ ...promptForm, title: e.target.value })}
+                              className="w-full px-4 py-2.5 border border-slate-200 text-slate-800 text-xs rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all duration-150"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-bold text-slate-700">دسته‌بندی</label>
+                              <select
+                                value={promptForm.category}
+                                onChange={(e) => setPromptForm({ ...promptForm, category: e.target.value as AiPromptCategory })}
+                                className="w-full bg-white px-4 py-2.5 border border-slate-200 text-slate-700 text-xs rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none cursor-pointer transition-all duration-150"
+                              >
+                                <option value="image">🎨 ساخت تصویر</option>
+                                <option value="video">🎥 ساخت ویدیو</option>
+                                <option value="chat">✍️ متنی و چت‌بات</option>
+                                <option value="other">⚙️ سایر موارد</option>
+                              </select>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-bold text-slate-700">تصویر نمونه (URL)</label>
+                              <input
+                                type="url"
+                                placeholder="https://example.com/image.png"
+                                value={promptForm.imageUrl}
+                                onChange={(e) => setPromptForm({ ...promptForm, imageUrl: e.target.value })}
+                                className="w-full px-4 py-2.5 border border-slate-200 text-slate-800 text-xs rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all duration-150"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">توضیحات و راهنمای فارسی</label>
+                            <textarea
+                              rows={2}
+                              placeholder="توضیح دهید این پرامپت چه سبکی دارد، برای چه هوش مصنوعی مناسب است یا چطور کار می‌کند..."
+                              value={promptForm.description}
+                              onChange={(e) => setPromptForm({ ...promptForm, description: e.target.value })}
+                              className="w-full px-4 py-2.5 border border-slate-200 text-slate-800 text-xs rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all duration-150"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">متن انگلیسی پرامپت (جهت کپی کردن)</label>
+                            <textarea
+                              rows={4}
+                              required
+                              placeholder="A photorealistic cinematic portrait of a female astronaut sitting on Mars, neon lighting, highly detailed cyberpunk aesthetics, unreal engine 5, 8k render..."
+                              value={promptForm.promptText}
+                              onChange={(e) => setPromptForm({ ...promptForm, promptText: e.target.value })}
+                              className="w-full px-4 py-2.5 border border-slate-200 text-slate-800 text-xs font-mono rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all duration-150"
+                              dir="ltr"
+                            />
+                          </div>
+
+                          <div className="flex items-center gap-3 pt-4 border-t border-slate-100 justify-end">
+                            <button
+                              type="button"
+                              onClick={() => setShowPromptModal(false)}
+                              className="px-4 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                            >
+                              انصراف
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={actionLoading === 'save_prompt'}
+                              className="flex items-center justify-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/10 cursor-pointer disabled:opacity-50 transition-all duration-150"
+                            >
+                              {actionLoading === 'save_prompt' ? (
+                                <>
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                  <span>در حال ثبت...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="w-4 h-4" />
+                                  <span>ذخیره‌سازی پرامپت</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </form>
+                      </motion.div>
+                    </div>
+                  )}
+                </motion.div>
+              )}
               {activeTab === 'autopost' && (
                 <motion.div
                   key="autopost"
@@ -4604,7 +5054,101 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Section 4: ADVANCED PRESENTATION & ARCHIVE SETTINGS */}
+                    {/* Section 4: AI PROMPTS SCHEDULE */}
+                    <div className="bg-white border border-pink-100 rounded-2xl p-6 shadow-sm space-y-5">
+                      <div className="flex items-center justify-between pb-3 border-b border-pink-50">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-pink-50 text-pink-600 flex items-center justify-center">
+                            <Palette className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                              <span>زمان‌بندی ۴: ارسال خودکار پرامپت‌های طلایی هوش مصنوعی</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${autoPostForm.aiPromptsEnabled !== false ? 'bg-pink-100 text-pink-700' : 'bg-slate-100 text-slate-500'}`}>
+                                {autoPostForm.aiPromptsEnabled !== false ? 'روشن' : 'خاموش'}
+                              </span>
+                            </h4>
+                            <p className="text-[10px] text-slate-400">ارسال نمونه پرامپت‌های جذاب، ترند و کاربردی هوش مصنوعی (عکس و فیلم) همراه با تصویر پیش‌نمایش</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAutoPostForm(prev => ({ ...prev, aiPromptsEnabled: prev.aiPromptsEnabled === false }))}
+                          className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                            autoPostForm.aiPromptsEnabled !== false ? 'bg-pink-600 justify-end' : 'bg-slate-200 justify-start'
+                          }`}
+                        >
+                          <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Interval selector */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-pink-900 flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-pink-600" />
+                            <span>فاصله زمانی ارسال پرامپت‌ها</span>
+                          </label>
+                          <select
+                            value={autoPostForm.aiPromptsIntervalMinutes || (autoPostForm.aiPromptsIntervalHours ? autoPostForm.aiPromptsIntervalHours * 60 : 360)}
+                            onChange={(e) => {
+                              const min = Number(e.target.value);
+                              const hrs = Math.max(1, Math.round(min / 60));
+                              setAutoPostForm(prev => ({ ...prev, aiPromptsIntervalMinutes: min, aiPromptsIntervalHours: hrs }));
+                            }}
+                            className="w-full px-4 py-2.5 rounded-xl border border-pink-100 text-xs focus:border-pink-500 focus:outline-none bg-pink-50/30 cursor-pointer font-medium text-slate-800"
+                          >
+                            <option value="15">هر ۱۵ دقیقه یکبار</option>
+                            <option value="30">هر ۳۰ دقیقه یکبار</option>
+                            <option value="45">هر ۴۵ دقیقه یکبار</option>
+                            <option value="60">هر ۱ ساعت (۶۰ دقیقه)</option>
+                            <option value="120">هر ۲ ساعت یکبار</option>
+                            <option value="180">هر ۳ ساعت یکبار</option>
+                            <option value="240">هر ۴ ساعت یکبار</option>
+                            <option value="360">هر ۶ ساعت یکبار (پیش‌فرض)</option>
+                            <option value="480">هر ۸ ساعت یکبار</option>
+                            <option value="720">هر ۱۲ ساعت یکبار</option>
+                            <option value="1440">هر ۲۴ ساعت (یکبار در روز)</option>
+                          </select>
+                        </div>
+
+                        {/* Count selector */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-700">تعداد پرامپت در هر نوبت</label>
+                          <select
+                            value={autoPostForm.aiPromptsCount !== undefined ? autoPostForm.aiPromptsCount : 1}
+                            onChange={(e) => setAutoPostForm(prev => ({ ...prev, aiPromptsCount: Number(e.target.value) }))}
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-pink-500 focus:outline-none bg-white cursor-pointer"
+                          >
+                            <option value="0">بدون ارسال پرامپت (۰ پرامپت)</option>
+                            <option value="1">۱ پرامپت ترند و خلاقانه</option>
+                            <option value="2">۲ پرامپت ترند و خلاقانه</option>
+                            <option value="3">۳ پرامپت ترند و خلاقانه</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-3 border-t border-pink-50">
+                        <div className="text-[11px] text-slate-400">
+                          {autoPostForm.lastAiPromptsPostedAt ? (
+                            <span>آخرین ارسال پرامپت‌ها: <strong>{new Date(autoPostForm.lastAiPromptsPostedAt).toLocaleString('fa-IR')}</strong></span>
+                          ) : (
+                            <span>هنوز ارسالی برای پرامپت‌های هوش مصنوعی ثبت نشده است.</span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleTriggerAiPromptsAutoPost}
+                          disabled={actionLoading === 'trigger_ai_prompts_autopost' || !autoPostForm.targetChannel}
+                          className="px-4 py-2 bg-pink-50 hover:bg-pink-100 text-pink-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          {actionLoading === 'trigger_ai_prompts_autopost' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                          <span>ارسال فوری و تست پرامپت‌ها</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Section 5: ADVANCED PRESENTATION & ARCHIVE SETTINGS */}
                     <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
                       <div className="flex items-center gap-2 text-slate-900 font-bold text-xs pb-2 border-b border-slate-100">
                         <Sparkles className="w-4 h-4 text-indigo-600" />

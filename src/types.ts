@@ -89,6 +89,13 @@ export interface AutoPostSettings {
   techTricksCount?: number; // Number of mobile/tech tricks to post (1, 2, 3, etc.)
   lastTechTricksPostedAt?: string | null;
 
+  // 4. AI Prompts Schedule (Dedicated/Independent)
+  aiPromptsEnabled?: boolean; // Toggle for AI Prompts auto-posting
+  aiPromptsIntervalHours?: number; // Interval in hours (1, 2, 4, 6, 8, 12, 24)
+  aiPromptsIntervalMinutes?: number; // minute precision (e.g. 30, 45, 60, 120, etc.)
+  aiPromptsCount?: number; // Number of AI prompts to post (1, 2, 3, etc.)
+  lastAiPromptsPostedAt?: string | null;
+
   // Legacy/Backwards compatibility
   techPostMode?: 'combined' | 'standalone' | 'both';
 }
@@ -182,6 +189,22 @@ export interface TechItem {
   postedAt?: string | null;
 }
 
+export type AiPromptCategory = 'image' | 'video' | 'chat' | 'other';
+
+export interface AiPrompt {
+  id: string;
+  title: string;
+  category: AiPromptCategory; // 'image' (تصویر), 'video' (ویدیو), 'chat' (متنی / هوش مصنوعی), 'other' (سایر)
+  description: string; // توضیحات فارسی پرامپت و نتیجه حاصله
+  promptText: string; // متن اصلی انگلیسی پرامپت جهت کپی کردن آسان
+  imageUrl?: string; // تصویر نمونه برای پیش‌نمایش بصری (از لئوناردو، میدجرنی، دالی و غیره)
+  tags: string[]; // هشتگ‌ها
+  importance?: 'hot' | 'normal'; // داغ و ترند یا معمولی
+  createdAt: string;
+  postedToChannel?: boolean;
+  postedAt?: string | null;
+}
+
 export interface DashboardStats {
   totalUsers: number;
   totalConfigs: number;
@@ -203,5 +226,10 @@ export interface DashboardStats {
   techTricksCount?: number;
   techSecretsCount?: number;
   techHotCount?: number;
+  // AI Prompts Stats
+  totalAiPrompts?: number;
+  aiPromptsImageCount?: number;
+  aiPromptsVideoCount?: number;
+  aiPromptsChatCount?: number;
 }
 

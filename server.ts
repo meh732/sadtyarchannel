@@ -36,7 +36,9 @@ import {
   ChannelPost,
   TechItem,
   TechItemCategory,
-  TechImportance
+  TechImportance,
+  AiPrompt,
+  AiPromptCategory
 } from './src/types';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -127,6 +129,7 @@ interface DatabaseSchema {
   logs: BotLog[];
   postedMessages?: ChannelPost[];
   techItems?: TechItem[];
+  aiPrompts?: AiPrompt[];
 }
 
 // --- Pre-populated default sources ---
@@ -178,6 +181,61 @@ const DEFAULT_SOURCES: SourceItem[] = [
   }
 ];
 
+const DEFAULT_AI_PROMPTS: AiPrompt[] = [
+  {
+    id: 'prompt-1',
+    title: 'اتاق گیمینگ سه بعدی ایزومتریک (Midjourney)',
+    category: 'image',
+    description: 'یک پرامپت فوق‌العاده برای ساخت تصاویر سه بعدی و کارتونی از اتاق‌های گیمینگ فانتزی با نورپردازی نئونی و درخشان.',
+    promptText: 'Isometric 3D cute glowing gaming room, miniature cozy bedroom, pastel colors, neon lighting, highly detailed, octane render, Ray tracing, 8k --ar 16:9',
+    imageUrl: 'https://images.unsplash.com/photo-1600861195091-690c92f1d2cc?w=800&auto=format&fit=crop&q=60',
+    tags: ['تصویر_سازی', 'سه_بعدی', 'گیمینگ', 'میدجرنی'],
+    importance: 'hot',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-2',
+    title: 'تهران سایبرپانک با خطاطی فارسی (Midjourney/DALL-E)',
+    category: 'image',
+    description: 'ترکیب خارق‌العاده سنت و مدرنیته؛ شهر تهران در سال ۲۰۹۹ با آسمان‌خراش‌های نئونی، برج میلاد آینده‌نگرانه و بیلبوردهای خطاطی نستعلیق در یک شب بارانی.',
+    promptText: 'A futuristic Tehran cyberpunk city, majestic Milad tower in background, rainy night, glowing neon signs with Persian calligraphy and poetry, holographic advertisements, high-tech flying cars, cinematic lighting, photorealistic, 8k --ar 16:9',
+    imageUrl: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=800&auto=format&fit=crop&q=60',
+    tags: ['سایبرپانک', 'تهران', 'فناوری', 'نوستالژی'],
+    importance: 'hot',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-3',
+    title: 'شیر جنگجوی پارسی با زره طلایی (Midjourney)',
+    category: 'image',
+    description: 'پرتره حماسی و شاهکار از یک شیر قدرتمند در قامت فرمانده سپاه هخامنشی با زره حکاکی‌شده از طلا و سنگ‌های قیمتی سبز زمرد.',
+    promptText: 'Cinematic majestic portrait of a Persian warrior lion, wearing ancient golden armor with emerald details, royal crown, dramatic volumetric dark lighting, hyper-realistic fur textures, intricate details, highly detailed, 8k --ar 3:4',
+    imageUrl: 'https://images.unsplash.com/photo-1546182990-dffeafbe841d?w=800&auto=format&fit=crop&q=60',
+    tags: ['حماسی', 'شیر_ایرانی', 'شاهکار', 'رندر_سینمایی'],
+    importance: 'normal',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-4',
+    title: 'افکت جادویی پرواز ذرات نور در هوا (Runway/Sora)',
+    category: 'video',
+    description: 'پرامپت حرکت دوربین (Camera Motion) بسیار جذاب برای هوش مصنوعی‌های تولید ویدیو جهت متحرک‌سازی ذرات نورانی معلق در فضا با جلوه سینمایی.',
+    promptText: 'Slow motion cinematic macro shot, golden magical particles floating in dark air, warm ambient bokeh, light leaks, realistic dust particles drifting with air currents, 4k, hyper-detailed, fluid simulation',
+    imageUrl: 'https://images.unsplash.com/photo-1518531933037-91b2f5f229cc?w=800&auto=format&fit=crop&q=60',
+    tags: ['ویدیو_ساز', 'متحرک_سازی', 'جلوه_ویژه', 'هوش_مصنوعی'],
+    importance: 'hot',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedAt: null
+  }
+];
+
 const DEFAULT_KNOWN_APP_URL = 'https://ais-dev-3wfduwtghl6fqrseyhtp5l-217900666396.europe-west2.run.app';
 
 const DEFAULT_AUTO_POST: AutoPostSettings = {
@@ -215,6 +273,13 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   techTricksIntervalMinutes: 360,
   techTricksCount: 2,
   lastTechTricksPostedAt: null,
+
+  // 4. AI Prompts Schedule
+  aiPromptsEnabled: true,
+  aiPromptsIntervalHours: 6,
+  aiPromptsIntervalMinutes: 360,
+  aiPromptsCount: 1,
+  lastAiPromptsPostedAt: null,
 
   techPostMode: 'combined'
 };
@@ -321,6 +386,9 @@ function loadDatabase() {
     const finalLogs = Array.isArray(loadedDataStore?.logs) ? loadedDataStore.logs : [];
     const finalPosted = Array.isArray(loadedDataStore?.postedMessages) ? loadedDataStore.postedMessages : [];
     const finalTechItems = Array.isArray(loadedDataStore?.techItems) ? loadedDataStore.techItems : [];
+    const finalAiPrompts = Array.isArray(loadedDataStore?.aiPrompts) && loadedDataStore.aiPrompts.length > 0
+      ? loadedDataStore.aiPrompts
+      : DEFAULT_AI_PROMPTS;
 
     db = {
       settings: finalSettings,
@@ -332,7 +400,8 @@ function loadDatabase() {
       users: finalUsers,
       logs: finalLogs,
       postedMessages: finalPosted,
-      techItems: finalTechItems
+      techItems: finalTechItems,
+      aiPrompts: finalAiPrompts
     };
 
     // Reset any stuck 'checking' items on database load
@@ -3940,8 +4009,167 @@ async function executeTechTricksAutoPost(customTargetChannel?: string): Promise<
   }
 }
 
+// ----------------------------------------------------
+// 4. DEDICATED EXECUTOR: AI PROMPTS HUB AUTO-POST
+// ----------------------------------------------------
+function formatAiPromptForTelegram(prompt: AiPrompt): string {
+  let badgeEmoji = '🔮';
+  let badgeTitle = 'پرامپت هوش مصنوعی';
+  if (prompt.category === 'image') {
+    badgeEmoji = '🖼';
+    badgeTitle = 'پرامپت ترند ساخت عکس';
+  } else if (prompt.category === 'video') {
+    badgeEmoji = '🎬';
+    badgeTitle = 'پرامپت خلاقانه ساخت ویدیو';
+  } else if (prompt.category === 'chat') {
+    badgeEmoji = '💬';
+    badgeTitle = 'پرامپت کاربردی متنی و دستیار';
+  }
+
+  let text = '';
+  text += `${badgeEmoji} <b>« ${badgeTitle} »</b>\n`;
+  text += `📌 <b>${escapeHtml(prompt.title)}</b>\n\n`;
+
+  if (prompt.description) {
+    text += `🔹 <b>توضیحات و نتیجه:</b>\n<i>${escapeHtml(prompt.description)}</i>\n\n`;
+  }
+
+  text += `📋 <b>متن پرامپت (جهت کپی آسان لمس کنید):</b>\n`;
+  text += `<blockquote expandable><code>${escapeHtml(prompt.promptText)}</code></blockquote>\n\n`;
+
+  if (prompt.tags && prompt.tags.length > 0) {
+    const formattedTags = prompt.tags
+      .slice(0, 5)
+      .map(t => `#${t.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '')}`)
+      .join(' ');
+    text += `🏷 <i>${formattedTags}</i>\n`;
+  }
+
+  return text;
+}
+
+async function executeAiPromptsAutoPost(customTargetChannel?: string): Promise<boolean> {
+  const settings = db.settings.autoPost;
+  const targetChannel = customTargetChannel || settings?.targetChannel;
+  if (!targetChannel) {
+    addLog('warn', 'ارسال پرامپت‌های هوش مصنوعی انجام نشد: کانال مقصد تنظیم نشده است.');
+    return false;
+  }
+  if (!db.settings.botToken) {
+    addLog('warn', 'ارسال پرامپت‌های هوش مصنوعی انجام نشد: توکن ربات فعال نیست.');
+    return false;
+  }
+
+  try {
+    addLog('info', `در حال آماده‌سازی و ارسال پست پرامپت‌های ترند هوش مصنوعی به کانال ${targetChannel}...`);
+
+    if (!db.aiPrompts || db.aiPrompts.length === 0) {
+      db.aiPrompts = [...DEFAULT_AI_PROMPTS];
+      saveDatabase();
+    }
+
+    const count = settings.aiPromptsCount && settings.aiPromptsCount > 0 ? settings.aiPromptsCount : 1;
+    const allPrompts = db.aiPrompts || [];
+
+    if (allPrompts.length === 0) {
+      addLog('warn', 'هیچ پرامپت هوش مصنوعی در دیتابیس یافت نشد.');
+      return false;
+    }
+
+    // Sort: unposted first, then hot first, then newest
+    const copyPrompts = [...allPrompts];
+    copyPrompts.sort((a, b) => {
+      if (a.postedToChannel !== b.postedToChannel) {
+        return a.postedToChannel ? 1 : -1;
+      }
+      if (a.importance !== b.importance) {
+        return a.importance === 'hot' ? -1 : 1;
+      }
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    const selectedPrompts = copyPrompts.slice(0, count);
+
+    let text = `🔮 <b>پک اختصاصی پرامپت‌های ترند و برتر هوش مصنوعی:</b>\n\n`;
+
+    for (let i = 0; i < selectedPrompts.length; i++) {
+      const it = selectedPrompts[i];
+      text += formatAiPromptForTelegram(it);
+      if (i < selectedPrompts.length - 1) text += `\n───────────────\n\n`;
+    }
+
+    text += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
+
+    const inlineButtons: any[] = [];
+    const sponsorBtn = getSponsorChannelInlineButton();
+    if (sponsorBtn) {
+      inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url }]);
+    }
+    const botUser = db.settings.botUsername;
+    if (botUser) {
+      inlineButtons.push([{
+        text: '🤖 دریافت پرامپت‌های طلایی بیشتر',
+        url: `https://t.me/${botUser.replace('@', '')}`
+      }]);
+    }
+
+    const safeText = safeTelegramHtmlLength(text, 3900);
+    const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
+    
+    // Check if any selected prompt item has an image to attach
+    const itemWithImage = selectedPrompts.find(n => !!n.imageUrl);
+    let sendSuccess = false;
+
+    if (itemWithImage && itemWithImage.imageUrl) {
+      try {
+        const photoCaption = safeTelegramHtmlLength(text, 1024);
+        await callTelegramApi('sendPhoto', {
+          chat_id: channelHandle,
+          photo: itemWithImage.imageUrl,
+          caption: photoCaption,
+          parse_mode: 'HTML',
+          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+          disable_notification: !!settings.silentMode
+        });
+        sendSuccess = true;
+      } catch (photoErr: any) {
+        addLog('warn', `ارسال عکس برای پست پرامپت‌ها با خطا مواجه شد، ارسال متنی جایگزین می‌شود: ${photoErr?.message || photoErr}`);
+      }
+    }
+
+    if (!sendSuccess) {
+      await callTelegramApi('sendMessage', {
+        chat_id: channelHandle,
+        text: safeText,
+        parse_mode: 'HTML',
+        reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+        disable_notification: !!settings.silentMode
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    for (const it of selectedPrompts) {
+      // update original references in database
+      const dbRef = db.aiPrompts.find(p => p.id === it.id);
+      if (dbRef) {
+        dbRef.postedToChannel = true;
+        dbRef.postedAt = nowIso;
+      }
+    }
+    settings.lastAiPromptsPostedAt = nowIso;
+    settings.lastAnyPostAt = nowIso;
+    saveDatabase();
+
+    addLog('success', `پست پرامپت‌های طلایی هوش مصنوعی (${selectedPrompts.length} پرامپت) با موفقیت به کانال ${targetChannel} ارسال گردید.`);
+    return true;
+  } catch (err: any) {
+    addLog('error', `خطا در ارسال پرامپت‌های هوش مصنوعی به کانال: ${err.message || err}`);
+    return false;
+  }
+}
+
 // Master Auto-Post Dispatcher
-async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' = 'all'): Promise<boolean> {
+async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'prompts' = 'all'): Promise<boolean> {
   const settings = db.settings.autoPost;
   if (!settings || !settings.enabled || !settings.targetChannel) {
     addLog('warn', 'ارسال خودکار انجام نشد: غیرفعال است یا کانال هدف تنظیم نشده است.');
@@ -3961,6 +4189,9 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' = 'al
   if (mode === 'tricks') {
     return await executeTechTricksAutoPost();
   }
+  if (mode === 'prompts') {
+    return await executeAiPromptsAutoPost();
+  }
 
   // mode === 'all'
   let anySuccess = false;
@@ -3976,8 +4207,12 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' = 'al
     const res = await executeTechTricksAutoPost();
     if (res) anySuccess = true;
   }
+  if (settings.aiPromptsEnabled !== false && (settings.aiPromptsCount || 0) > 0) {
+    const res = await executeAiPromptsAutoPost();
+    if (res) anySuccess = true;
+  }
 
-  // Fallback: if all three counts were 0, try sending configs
+  // Fallback: if all counts were 0, try sending configs
   if (!anySuccess) {
     anySuccess = await executeConfigsAutoPost();
   }
@@ -4053,6 +4288,19 @@ async function checkAndTriggerAutoPost() {
     const timeSinceLastTricks = lastTricksTime ? (now - new Date(lastTricksTime).getTime()) : Infinity;
     if (timeSinceLastTricks >= tricksIntervalMs) {
       await executeTechTricksAutoPost();
+      return; // Return immediately to let anti-flood protect next schedule
+    }
+  }
+
+  // 4. AI Prompts Schedule Check
+  const promptsActive = ap.aiPromptsEnabled !== false && (ap.aiPromptsCount || 0) > 0;
+  if (promptsActive) {
+    const promptsMinutes = ap.aiPromptsIntervalMinutes || (ap.aiPromptsIntervalHours ? ap.aiPromptsIntervalHours * 60 : 360);
+    const promptsIntervalMs = promptsMinutes * 60 * 1000;
+    const lastPromptsTime = ap.lastAiPromptsPostedAt;
+    const timeSinceLastPrompts = lastPromptsTime ? (now - new Date(lastPromptsTime).getTime()) : Infinity;
+    if (timeSinceLastPrompts >= promptsIntervalMs) {
+      await executeAiPromptsAutoPost();
       return; // Return immediately to let anti-flood protect next schedule
     }
   }
@@ -5657,10 +5905,10 @@ async function handleBotUpdate(update: any) {
         }
 
         if (state.action === 'await_custom_cron_time') {
-          const type = state.data?.type || 'configs'; // 'configs' | 'news' | 'tricks'
+          const type = state.data?.type || 'configs'; // 'configs' | 'news' | 'tricks' | 'prompts'
           if (!messageText || messageText.trim() === '' || messageText.trim() === 'لغو' || messageText.trim() === 'انصراف') {
             delete adminStates[chatId];
-            const backMenu = type === 'news' ? 'admin_ap_menu_news' : type === 'tricks' ? 'admin_ap_menu_tricks' : 'admin_ap_menu_configs';
+            const backMenu = type === 'news' ? 'admin_ap_menu_news' : type === 'tricks' ? 'admin_ap_menu_tricks' : type === 'prompts' ? 'admin_ap_menu_prompts' : 'admin_ap_menu_configs';
             await callTelegramApi('sendMessage', {
               chat_id: chatId,
               text: '❌ عملیات لغو شد.',
@@ -5693,6 +5941,11 @@ async function handleBotUpdate(update: any) {
             returnCallback = 'admin_ap_menu_tricks';
             db.settings.autoPost.techTricksIntervalMinutes = parsedMinutes;
             db.settings.autoPost.techTricksIntervalHours = Math.max(1, Math.round(parsedMinutes / 60));
+          } else if (type === 'prompts') {
+            typeTitle = 'پرامپت‌های هوش مصنوعی';
+            returnCallback = 'admin_ap_menu_prompts';
+            db.settings.autoPost.aiPromptsIntervalMinutes = parsedMinutes;
+            db.settings.autoPost.aiPromptsIntervalHours = Math.max(1, Math.round(parsedMinutes / 60));
           } else {
             typeTitle = 'کانفیگ و پروکسی';
             returnCallback = 'admin_ap_menu_configs';
@@ -6349,6 +6602,7 @@ async function handleBotUpdate(update: any) {
         const configMin = ap.configIntervalMinutes || (ap.configIntervalHours ? ap.configIntervalHours * 60 : (ap.postIntervalHours ? ap.postIntervalHours * 60 : 240));
         const newsMin = ap.techNewsIntervalMinutes || (ap.techNewsIntervalHours ? ap.techNewsIntervalHours * 60 : 240);
         const tricksMin = ap.techTricksIntervalMinutes || (ap.techTricksIntervalHours ? ap.techTricksIntervalHours * 60 : 360);
+        const promptsMin = ap.aiPromptsIntervalMinutes || (ap.aiPromptsIntervalHours ? ap.aiPromptsIntervalHours * 60 : 360);
         const afMin = ap.antiFloodDelayMinutes || 3;
 
         let msg = `⏰ **سیستم پیشرفته کرون جاب و ارسال خودکار (Auto-Post & Cron)**\n\n`;
@@ -6374,7 +6628,13 @@ async function handleBotUpdate(update: any) {
         msg += `• وضعیت: ${ap.techTricksEnabled !== false ? '🟢 روشن' : '🔴 خاموش'}\n`;
         msg += `• زمان‌بندی: **هر ${formatIntervalText(tricksMin)}**\n`;
         msg += `• محتوا: **${ap.techTricksCount || 0} ترفند آموزشی**\n`;
-        msg += `• آخرین ارسال: ${ap.lastTechTricksPostedAt ? new Date(ap.lastTechTricksPostedAt).toLocaleString('fa-IR') : 'ثبت نشده'}\n`;
+        msg += `• آخرین ارسال: ${ap.lastTechTricksPostedAt ? new Date(ap.lastTechTricksPostedAt).toLocaleString('fa-IR') : 'ثبت نشده'}\n\n`;
+
+        msg += `🎨 **کرون پرامپت‌های طلایی هوش مصنوعی:**\n`;
+        msg += `• وضعیت: ${ap.aiPromptsEnabled !== false ? '🟢 روشن' : '🔴 خاموش'}\n`;
+        msg += `• زمان‌بندی: **هر ${formatIntervalText(promptsMin)}**\n`;
+        msg += `• محتوا: **${ap.aiPromptsCount || 1} پرامپت ترند (تصویری)**\n`;
+        msg += `• آخرین ارسال: ${ap.lastAiPromptsPostedAt ? new Date(ap.lastAiPromptsPostedAt).toLocaleString('fa-IR') : 'ثبت نشده'}\n`;
         msg += `➖➖➖➖➖➖➖➖➖➖\n\n`;
         msg += `جهت تنظیم زمان‌بندی یا خاموش/روشن کردن هر بخش، روی دکمه‌های زیر کلیک فرمایید:`;
 
@@ -6384,25 +6644,31 @@ async function handleBotUpdate(update: any) {
             { text: `${ap.silentMode ? '🔔 نوتیفیکیشن‌دار' : '🔇 ارسال بدون صدا'}`, callback_data: 'admin_ap_silent' }
           ],
           [
-            { text: `⚡️ تنظیمات کرون کانفیگ (${ap.configsEnabled !== false ? '🟢' : '🔴'})`, callback_data: 'admin_ap_menu_configs' },
-            { text: `📰 تنظیمات کرون اخبار (${ap.techNewsEnabled !== false ? '🟢' : '🔴'})`, callback_data: 'admin_ap_menu_news' }
+            { text: `⚡️ کرون کانفیگ (${ap.configsEnabled !== false ? '🟢' : '🔴'})`, callback_data: 'admin_ap_menu_configs' },
+            { text: `📰 کرون اخبار (${ap.techNewsEnabled !== false ? '🟢' : '🔴'})`, callback_data: 'admin_ap_menu_news' }
           ],
           [
-            { text: `💡 تنظیمات کرون ترفندها (${ap.techTricksEnabled !== false ? '🟢' : '🔴'})`, callback_data: 'admin_ap_menu_tricks' },
-            { text: `🛡 فاصله ضد رگباری (${afMin} دقیقه)`, callback_data: 'admin_ap_antiflood_menu' }
+            { text: `💡 کرون ترفندها (${ap.techTricksEnabled !== false ? '🟢' : '🔴'})`, callback_data: 'admin_ap_menu_tricks' },
+            { text: `🎨 کرون پرامپت‌ها (${ap.aiPromptsEnabled !== false ? '🟢' : '🔴'})`, callback_data: 'admin_ap_menu_prompts' }
           ],
           [
-            { text: `📢 کانال: ${ap.targetChannel || 'تنظیم نشده'}`, callback_data: 'admin_ap_channel' },
-            { text: `✍️ ویرایش متن سربرگ`, callback_data: 'admin_ap_edit_text' }
+            { text: `🛡 فاصله ضد رگباری (${afMin} دقیقه)`, callback_data: 'admin_ap_antiflood_menu' },
+            { text: `📢 کانال: ${ap.targetChannel || 'تنظیم نشده'}`, callback_data: 'admin_ap_channel' }
           ],
           [
-            { text: `📢 ویرایش تبلیغات اسپانسر`, callback_data: 'admin_ap_edit_ad' },
+            { text: `✍️ ویرایش متن سربرگ`, callback_data: 'admin_ap_edit_text' },
+            { text: `📢 ویرایش تبلیغات اسپانسر`, callback_data: 'admin_ap_edit_ad' }
+          ],
+          [
             { text: `🔄 دریافت اخبار و ترفندهای تازه`, callback_data: 'admin_ap_refresh_tech' }
           ],
           [
             { text: `🚀 تست ارسال کانفیگ`, callback_data: 'admin_ap_trigger_c' },
-            { text: `🚀 تست ارسال اخبار`, callback_data: 'admin_ap_trigger_n' },
-            { text: `🚀 تست ارسال ترفند`, callback_data: 'admin_ap_trigger_t' }
+            { text: `🚀 تست ارسال اخبار`, callback_data: 'admin_ap_trigger_n' }
+          ],
+          [
+            { text: `🚀 تست ارسال ترفند`, callback_data: 'admin_ap_trigger_t' },
+            { text: `🚀 تست ارسال پرامپت`, callback_data: 'admin_ap_trigger_p' }
           ],
           [{ text: '🔙 بازگشت به منوی مدیریت', callback_data: 'admin_menu' }]
         ];
@@ -6584,6 +6850,87 @@ async function handleBotUpdate(update: any) {
         return;
       }
 
+      // --- Submenu: AI Prompts Cron ---
+      if (callbackData === 'admin_ap_menu_prompts') {
+        await answerCallback('کرون پرامپت‌ها');
+        const ap = db.settings.autoPost;
+        const promptsMin = ap.aiPromptsIntervalMinutes || (ap.aiPromptsIntervalHours ? ap.aiPromptsIntervalHours * 60 : 360);
+        let msg = `🎨 **تنظیمات کرون جاب پرامپت‌های طلایی هوش مصنوعی (AI Prompts Cron)**\n\n`;
+        msg += `• وضعیت: ${ap.aiPromptsEnabled !== false ? '🟢 روشن و فعال' : '🔴 خاموش'}\n`;
+        msg += `• زمان‌بندی ارسال: **هر ${formatIntervalText(promptsMin)}**\n`;
+        msg += `• تعداد پرامپت در هر پست: **${ap.aiPromptsCount || 1} عدد**\n`;
+        msg += `• کل پرامپت‌ها در دیتابیس: **${(db.aiPrompts || []).length} عدد**\n`;
+        msg += `• آخرین ارسال موفق: ${ap.lastAiPromptsPostedAt ? new Date(ap.lastAiPromptsPostedAt).toLocaleString('fa-IR') : 'هنوز ارسالی ثبت نشده'}\n\n`;
+        msg += `گزینه مورد نظر را جهت تغییر انتخاب فرمایید:`;
+
+        const keyboard = [
+          [
+            { text: `${ap.aiPromptsEnabled !== false ? '🔴 خاموش کردن این کرون' : '🟢 روشن کردن این کرون'}`, callback_data: 'admin_ap_toggle_prompts' }
+          ],
+          [
+            { text: `⏱ تنظیم زمان‌بندی (${formatIntervalText(promptsMin)})`, callback_data: 'admin_ap_setint_menu_p' }
+          ],
+          [
+            { text: `🎨 تعداد پرامپت‌ها: ${ap.aiPromptsCount || 1} عدد`, callback_data: 'admin_ap_prompts_count' }
+          ],
+          [
+            { text: `🚀 ارسال فوری تست به کانال`, callback_data: 'admin_ap_trigger_p' }
+          ],
+          [
+            { text: '🔙 بازگشت به منوی کرون جاب', callback_data: 'admin_autopost_menu' }
+          ]
+        ];
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: msg,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        return;
+      }
+
+      if (callbackData === 'admin_ap_toggle_prompts') {
+        db.settings.autoPost.aiPromptsEnabled = db.settings.autoPost.aiPromptsEnabled === false ? true : false;
+        saveDatabase();
+        setupAutoPostInterval();
+        await answerCallback(`کرون پرامپت‌ها: ${db.settings.autoPost.aiPromptsEnabled ? 'روشن' : 'خاموش'}`);
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_menu_prompts' } });
+        return;
+      }
+
+      if (callbackData === 'admin_ap_prompts_count') {
+        const keyboard = [
+          [
+            { text: '0 (غیرفعال)', callback_data: 'admin_ap_set_prompts_0' },
+            { text: '1 عدد', callback_data: 'admin_ap_set_prompts_1' },
+            { text: '2 عدد', callback_data: 'admin_ap_set_prompts_2' }
+          ],
+          [
+            { text: '3 عدد', callback_data: 'admin_ap_set_prompts_3' },
+            { text: '5 عدد', callback_data: 'admin_ap_set_prompts_5' }
+          ],
+          [{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_prompts' }]
+        ];
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: '🎨 **انتخاب تعداد پرامپت‌های طلایی جهت ارسال در هر پست خودکار:**',
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        await answerCallback();
+        return;
+      }
+
+      if (callbackData.startsWith('admin_ap_set_prompts_')) {
+        const count = parseInt(callbackData.replace('admin_ap_set_prompts_', '')) || 0;
+        db.settings.autoPost.aiPromptsCount = count;
+        saveDatabase();
+        await answerCallback(`تعداد پرامپت‌ها به ${count} عدد تنظیم شد.`);
+        await handleBotUpdate({ callback_query: { id: callbackQueryId, message: { chat: { id: chatId } }, from: { id: userId }, data: 'admin_ap_menu_prompts' } });
+        return;
+      }
+
       // --- Anti-Flood Protection Menu ---
       if (callbackData === 'admin_ap_antiflood_menu') {
         await answerCallback('ضد رگباری');
@@ -6643,8 +6990,8 @@ async function handleBotUpdate(update: any) {
         return;
       }
 
-      // --- Granular Interval Selection Menus (Configs, News, Tricks) ---
-      if (callbackData === 'admin_ap_setint_menu_c' || callbackData === 'admin_ap_setint_menu_n' || callbackData === 'admin_ap_setint_menu_t') {
+      // --- Granular Interval Selection Menus (Configs, News, Tricks, Prompts) ---
+      if (callbackData === 'admin_ap_setint_menu_c' || callbackData === 'admin_ap_setint_menu_n' || callbackData === 'admin_ap_setint_menu_t' || callbackData === 'admin_ap_setint_menu_p') {
         await answerCallback('انتخاب بازه...');
         let prefix = 'c';
         let currentMinutes = db.settings.autoPost.configIntervalMinutes || 240;
@@ -6661,6 +7008,11 @@ async function handleBotUpdate(update: any) {
           currentMinutes = db.settings.autoPost.techTricksIntervalMinutes || 360;
           title = 'ترفندها و رازها';
           backMenu = 'admin_ap_menu_tricks';
+        } else if (callbackData === 'admin_ap_setint_menu_p') {
+          prefix = 'p';
+          currentMinutes = db.settings.autoPost.aiPromptsIntervalMinutes || 360;
+          title = 'پرامپت‌های هوش مصنوعی';
+          backMenu = 'admin_ap_menu_prompts';
         }
 
         const keyboard = [
@@ -6700,9 +7052,9 @@ async function handleBotUpdate(update: any) {
 
       if (callbackData?.startsWith('admin_ap_int_custom_')) {
         const prefix = callbackData.replace('admin_ap_int_custom_', '');
-        const type = prefix === 'n' ? 'news' : prefix === 't' ? 'tricks' : 'configs';
-        const typeTitle = prefix === 'n' ? 'اخبار تکنولوژی' : prefix === 't' ? 'ترفندها و رازها' : 'کانفیگ و پروکسی';
-        const backMenu = prefix === 'n' ? 'admin_ap_menu_news' : prefix === 't' ? 'admin_ap_menu_tricks' : 'admin_ap_menu_configs';
+        const type = prefix === 'n' ? 'news' : prefix === 't' ? 'tricks' : prefix === 'p' ? 'prompts' : 'configs';
+        const typeTitle = prefix === 'n' ? 'اخبار تکنولوژی' : prefix === 't' ? 'ترفندها و رازها' : prefix === 'p' ? 'پرامپت‌های هوش مصنوعی' : 'کانفیگ و پروکسی';
+        const backMenu = prefix === 'n' ? 'admin_ap_menu_news' : prefix === 't' ? 'admin_ap_menu_tricks' : prefix === 'p' ? 'admin_ap_menu_prompts' : 'admin_ap_menu_configs';
 
         adminStates[chatId] = { action: 'await_custom_cron_time', data: { type } };
         await answerCallback('تایپ زمان دلخواه...');
@@ -6741,6 +7093,11 @@ async function handleBotUpdate(update: any) {
           db.settings.autoPost.techTricksIntervalHours = Math.max(1, Math.round(minutes / 60));
           title = 'ترفندها و رازها';
           backMenu = 'admin_ap_menu_tricks';
+        } else if (prefix === 'p') {
+          db.settings.autoPost.aiPromptsIntervalMinutes = minutes;
+          db.settings.autoPost.aiPromptsIntervalHours = Math.max(1, Math.round(minutes / 60));
+          title = 'پرامپت‌های هوش مصنوعی';
+          backMenu = 'admin_ap_menu_prompts';
         }
         
         saveDatabase();
@@ -7010,6 +7367,27 @@ async function handleBotUpdate(update: any) {
             text: `❌ **ارسال ترفندها با خطا مواجه شد.**\n\nمطمئن شوید که ربات ادمین کانال است و ترفندی در دیتابیس وجود دارد.`,
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_tricks' }]] }
+          });
+        }
+        return;
+      }
+
+      if (callbackData === 'admin_ap_trigger_p') {
+        await answerCallback('⏳ در حال تلاش برای ارسال پرامپت‌های طلایی هوش مصنوعی به کانال...', true);
+        const ok = await executeAiPromptsAutoPost();
+        if (ok) {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `✅ **پست پرامپت‌های طلایی هوش مصنوعی با موفقیت به کانال ارسال گردید!**\n\nلطفاً کانال خود (\`${db.settings.autoPost.targetChannel}\`) را بررسی نمایید.`,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_prompts' }]] }
+          });
+        } else {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `❌ **ارسال پرامپت‌های هوش مصنوعی با خطا مواجه شد یا پرامپت جدیدی یافت نشد.**\n\nمطمئن شوید که ربات ادمین کانال است و پرامپت معتبری در دیتابیس وجود دارد.`,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_ap_menu_prompts' }]] }
           });
         }
         return;
@@ -8766,12 +9144,17 @@ async function startExpressServer() {
         techNewsIntervalMinutes,
         techTricksEnabled,
         techTricksIntervalHours,
-        techTricksIntervalMinutes
+        techTricksIntervalMinutes,
+        aiPromptsEnabled,
+        aiPromptsIntervalHours,
+        aiPromptsIntervalMinutes,
+        aiPromptsCount
       } = req.body;
       
       const parsedConfigMinutes = Number(configIntervalMinutes) || (Number(configIntervalHours) ? Number(configIntervalHours) * 60 : (Number(postIntervalHours) ? Number(postIntervalHours) * 60 : (db.settings.autoPost?.configIntervalMinutes || 240)));
       const parsedNewsMinutes = Number(techNewsIntervalMinutes) || (Number(techNewsIntervalHours) ? Number(techNewsIntervalHours) * 60 : (db.settings.autoPost?.techNewsIntervalMinutes || 240));
       const parsedTricksMinutes = Number(techTricksIntervalMinutes) || (Number(techTricksIntervalHours) ? Number(techTricksIntervalHours) * 60 : (db.settings.autoPost?.techTricksIntervalMinutes || 360));
+      const parsedPromptsMinutes = Number(aiPromptsIntervalMinutes) || (Number(aiPromptsIntervalHours) ? Number(aiPromptsIntervalHours) * 60 : (db.settings.autoPost?.aiPromptsIntervalMinutes || 360));
 
       db.settings.autoPost = {
         ...DEFAULT_AUTO_POST,
@@ -8787,6 +9170,7 @@ async function startExpressServer() {
         silentMode: !!silentMode,
         techNewsCount: typeof techNewsCount !== 'undefined' && !isNaN(Number(techNewsCount)) ? Math.max(0, Number(techNewsCount)) : 2,
         techTricksCount: typeof techTricksCount !== 'undefined' && !isNaN(Number(techTricksCount)) ? Math.max(0, Number(techTricksCount)) : 2,
+        aiPromptsCount: typeof aiPromptsCount !== 'undefined' && !isNaN(Number(aiPromptsCount)) ? Math.max(0, Number(aiPromptsCount)) : 1,
         techPostMode: techPostMode || 'combined',
         autoPurgeOldTechDays: Number(autoPurgeOldTechDays) || 7,
         includeTechImportanceBadge: includeTechImportanceBadge !== false,
@@ -8808,7 +9192,12 @@ async function startExpressServer() {
         techTricksEnabled: typeof techTricksEnabled !== 'undefined' ? !!techTricksEnabled : db.settings.autoPost?.techTricksEnabled ?? true,
         techTricksIntervalMinutes: parsedTricksMinutes,
         techTricksIntervalHours: Math.max(1, Math.round(parsedTricksMinutes / 60)),
-        lastTechTricksPostedAt: db.settings.autoPost?.lastTechTricksPostedAt || null
+        lastTechTricksPostedAt: db.settings.autoPost?.lastTechTricksPostedAt || null,
+
+        aiPromptsEnabled: typeof aiPromptsEnabled !== 'undefined' ? !!aiPromptsEnabled : db.settings.autoPost?.aiPromptsEnabled ?? true,
+        aiPromptsIntervalMinutes: parsedPromptsMinutes,
+        aiPromptsIntervalHours: Math.max(1, Math.round(parsedPromptsMinutes / 60)),
+        lastAiPromptsPostedAt: db.settings.autoPost?.lastAiPromptsPostedAt || null
       };
 
       saveDatabase();
@@ -8886,6 +9275,117 @@ async function startExpressServer() {
       saveDatabase();
       res.json({ success: true });
     } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Get AI Prompts
+  app.get('/api/ai-prompts', (req, res) => {
+    if (!db.aiPrompts || db.aiPrompts.length === 0) {
+      db.aiPrompts = [...DEFAULT_AI_PROMPTS];
+      saveDatabase();
+    }
+    res.json(db.aiPrompts || []);
+  });
+
+  // API: Add AI Prompt
+  app.post('/api/ai-prompts', (req, res) => {
+    try {
+      const { title, category, description, promptText, imageUrl, tags, importance } = req.body;
+      if (!title || !description || !promptText) {
+        return res.status(400).json({ success: false, message: 'پرکردن عنوان، توضیحات و متن پرامپت الزامی است.' });
+      }
+
+      const parsedTags = Array.isArray(tags) 
+        ? tags.map((t: string) => t.trim().replace(/^#/, '')) 
+        : typeof tags === 'string' 
+          ? tags.split(',').map((t: string) => t.trim().replace(/^#/, '')) 
+          : [];
+
+      const newItem: AiPrompt = {
+        id: generateId(),
+        title: title.trim(),
+        category: category || 'image',
+        description: description.trim(),
+        promptText: promptText.trim(),
+        imageUrl: imageUrl ? imageUrl.trim() : undefined,
+        tags: parsedTags.filter(Boolean),
+        importance: importance === 'hot' ? 'hot' : 'normal',
+        createdAt: new Date().toISOString(),
+        postedToChannel: false,
+        postedAt: null
+      };
+
+      if (!db.aiPrompts) db.aiPrompts = [];
+      db.aiPrompts.unshift(newItem);
+      saveDatabase();
+      addLog('success', `پرامپت جدید هوش مصنوعی افزوده شد: ${newItem.title}`);
+      res.json({ success: true, item: newItem });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Edit AI Prompt
+  app.put('/api/ai-prompts/:id', (req, res) => {
+    try {
+      const { id } = req.params;
+      const { title, category, description, promptText, imageUrl, tags, importance } = req.body;
+      
+      const item = (db.aiPrompts || []).find(p => p.id === id);
+      if (!item) {
+        return res.status(404).json({ success: false, message: 'پرامپت یافت نشد.' });
+      }
+
+      if (title) item.title = title.trim();
+      if (category) item.category = category;
+      if (description) item.description = description.trim();
+      if (promptText) item.promptText = promptText.trim();
+      if (typeof imageUrl !== 'undefined') item.imageUrl = imageUrl ? imageUrl.trim() : undefined;
+      if (importance) item.importance = importance === 'hot' ? 'hot' : 'normal';
+      
+      if (typeof tags !== 'undefined') {
+        const parsedTags = Array.isArray(tags) 
+          ? tags.map((t: string) => t.trim().replace(/^#/, '')) 
+          : typeof tags === 'string' 
+            ? tags.split(',').map((t: string) => t.trim().replace(/^#/, '')) 
+            : [];
+        item.tags = parsedTags.filter(Boolean);
+      }
+
+      saveDatabase();
+      res.json({ success: true, item });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Delete AI Prompt
+  app.delete('/api/ai-prompts/:id', (req, res) => {
+    try {
+      const { id } = req.params;
+      const idx = (db.aiPrompts || []).findIndex(p => p.id === id);
+      if (idx === -1) {
+        return res.status(404).json({ success: false, message: 'پرامپت یافت نشد.' });
+      }
+      db.aiPrompts.splice(idx, 1);
+      saveDatabase();
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Trigger AI Prompts Auto-Post manually
+  app.post('/api/bot/auto-post/trigger-ai-prompts', async (req, res) => {
+    try {
+      const success = await executeAiPromptsAutoPost();
+      if (success) {
+        res.json({ success: true, message: 'پست پرامپت‌های طلایی هوش مصنوعی با موفقیت به کانال ارسال گردید.' });
+      } else {
+        res.status(400).json({ success: false, message: 'ارسال پرامپت‌ها با خطا مواجه شد یا پرامپتی یافت نشد.' });
+      }
+    } catch(err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
   });
