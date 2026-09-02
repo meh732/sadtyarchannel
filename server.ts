@@ -5,6 +5,7 @@ import net from 'net';
 import dns from 'dns';
 import tls from 'tls';
 import os from 'os';
+import { GoogleGenAI, Type } from '@google/genai';
 
 // --- Local IP Helper ---
 function getMachineIp(): string {
@@ -188,7 +189,7 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     category: 'image',
     description: 'یک پرامپت فوق‌العاده برای ساخت تصاویر سه بعدی و کارتونی از اتاق‌های گیمینگ فانتزی با نورپردازی نئونی و درخشان.',
     promptText: 'Isometric 3D cute glowing gaming room, miniature cozy bedroom, pastel colors, neon lighting, highly detailed, octane render, Ray tracing, 8k --ar 16:9',
-    imageUrl: 'https://images.unsplash.com/photo-1600861195091-690c92f1d2cc?w=800&auto=format&fit=crop&q=60',
+    imageUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&auto=format&fit=crop&q=60',
     tags: ['تصویر_سازی', 'سه_بعدی', 'گیمینگ', 'میدجرنی'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
@@ -201,7 +202,7 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     category: 'image',
     description: 'ترکیب خارق‌العاده سنت و مدرنیته؛ شهر تهران در سال ۲۰۹۹ با آسمان‌خراش‌های نئونی، برج میلاد آینده‌نگرانه و بیلبوردهای خطاطی نستعلیق در یک شب بارانی.',
     promptText: 'A futuristic Tehran cyberpunk city, majestic Milad tower in background, rainy night, glowing neon signs with Persian calligraphy and poetry, holographic advertisements, high-tech flying cars, cinematic lighting, photorealistic, 8k --ar 16:9',
-    imageUrl: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=800&auto=format&fit=crop&q=60',
+    imageUrl: 'https://images.unsplash.com/photo-1578894381163-e72c17f2d45f?w=800&auto=format&fit=crop&q=60',
     tags: ['سایبرپانک', 'تهران', 'فناوری', 'نوستالژی'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
@@ -227,7 +228,7 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     category: 'video',
     description: 'پرامپت حرکت دوربین (Camera Motion) بسیار جذاب برای هوش مصنوعی‌های تولید ویدیو جهت متحرک‌سازی ذرات نورانی معلق در فضا با جلوه سینمایی.',
     promptText: 'Slow motion cinematic macro shot, golden magical particles floating in dark air, warm ambient bokeh, light leaks, realistic dust particles drifting with air currents, 4k, hyper-detailed, fluid simulation',
-    imageUrl: 'https://images.unsplash.com/photo-1518531933037-91b2f5f229cc?w=800&auto=format&fit=crop&q=60',
+    imageUrl: 'https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?w=800&auto=format&fit=crop&q=60',
     tags: ['ویدیو_ساز', 'متحرک_سازی', 'جلوه_ویژه', 'هوش_مصنوعی'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
@@ -404,6 +405,26 @@ function loadDatabase() {
       aiPrompts: finalAiPrompts
     };
 
+    // Correct stale/mismatched default prompt image URLs
+    let needsSave = false;
+    for (const p of db.aiPrompts) {
+      if (p.id === 'prompt-2' && (p.imageUrl?.includes('photo-1509198397868') || p.title?.includes('تهران سایبرپانک'))) {
+        p.imageUrl = 'https://images.unsplash.com/photo-1578894381163-e72c17f2d45f?w=800&auto=format&fit=crop&q=60';
+        needsSave = true;
+      }
+      if (p.id === 'prompt-1' && p.imageUrl?.includes('photo-1600861195091')) {
+        p.imageUrl = 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&auto=format&fit=crop&q=60';
+        needsSave = true;
+      }
+      if (p.id === 'prompt-4' && p.imageUrl?.includes('photo-1518531933037')) {
+        p.imageUrl = 'https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?w=800&auto=format&fit=crop&q=60';
+        needsSave = true;
+      }
+    }
+    if (needsSave) {
+      setTimeout(() => saveDatabase(true), 1000);
+    }
+
     // Reset any stuck 'checking' items on database load
     for (const c of db.configs) {
       if (c.status === 'checking') c.status = 'untested';
@@ -446,7 +467,8 @@ function saveDatabase(immediate = false) {
         npvFiles: db.npvFiles,
         techItems: db.techItems || [],
         logs: db.logs,
-        postedMessages: db.postedMessages
+        postedMessages: db.postedMessages,
+        aiPrompts: db.aiPrompts || []
       };
       writeJsonAtomic(DB_FILE, storeData);
     } catch (err) {
@@ -489,12 +511,197 @@ function addLog(level: 'info' | 'warn' | 'error' | 'success', message: string) {
   console.log(`[${level.toUpperCase()}] ${message}`);
 }
 
+// --- Global VPS Auto-Detected IP/Host Cache ---
+let detectedPublicIp: string | null = null;
+let detectedPublicHost: string | null = null;
+
+function detectPublicIp() {
+  try {
+    exec('curl -s https://api.ipify.org || curl -s https://ifconfig.me || curl -s https://icanhazip.com', (err, stdout) => {
+      if (!err && stdout) {
+        const ip = stdout.trim();
+        const ipv4Regex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+        if (ipv4Regex.test(ip)) {
+          detectedPublicIp = ip;
+          console.log(`[IP Auto-Detect] Real VPS Public IP auto-detected: ${ip}`);
+        }
+      }
+    });
+  } catch (e) {}
+}
+detectPublicIp();
+
+// --- Gemini Client Lazy Initializer ---
+let geminiClient: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI | null {
+  if (!geminiClient && process.env.GEMINI_API_KEY) {
+    try {
+      geminiClient = new GoogleGenAI({
+        apiKey: process.env.GEMINI_API_KEY,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+      console.log('[Gemini Client] Initialized successfully server-side.');
+    } catch (e) {
+      console.error('Error initializing Gemini client:', e);
+    }
+  }
+  return geminiClient;
+}
+
+// --- Live Real-Time AI Prompt Extractor ---
+async function fetchLiveTrendingAiPromptFromInternet(): Promise<{
+  title: string;
+  category: 'image' | 'video' | 'chat' | 'other';
+  description: string;
+  promptText: string;
+  imageUrl?: string;
+  tags: string[];
+}> {
+  const ai = getGeminiClient();
+  if (ai) {
+    try {
+      const categories = ['image', 'video', 'chat'];
+      const chosenCategory = categories[Math.floor(Math.random() * categories.length)];
+      
+      let searchQuery = '';
+      if (chosenCategory === 'image') {
+        const topics = [
+          'trending midjourney prompts prompthero',
+          'best dall-e 3 prompts playgroundai',
+          'popular stable diffusion prompts lexica art',
+          'top midjourney v6 prompts reddit'
+        ];
+        searchQuery = topics[Math.floor(Math.random() * topics.length)];
+      } else if (chosenCategory === 'video') {
+        const topics = [
+          'viral runway gen-3 video prompts',
+          'best sora luma ai video generation prompts',
+          'cinematic ai video prompts runway reddit'
+        ];
+        searchQuery = topics[Math.floor(Math.random() * topics.length)];
+      } else {
+        const topics = [
+          'extremely useful chatgpt system prompts reddit',
+          'best claude 3.5 sonnet developer prompts github',
+          'top chatgpt jailbreak or advanced prompts'
+        ];
+        searchQuery = topics[Math.floor(Math.random() * topics.length)];
+      }
+
+      const systemPrompt = `You are a real-time internet scraper, social media feed analyzer, and AI Prompt researcher.
+I want you to use Google Search to find REAL, ACTUAL, and HIGHLY POPULAR trending prompts from real-world prompt sharing platforms (such as PromptHero, Lexica.art, Reddit, Github, PromptBase, Civitai, or similar platforms).
+
+Your search query has been selected as: "${searchQuery}" in the category "${chosenCategory}".
+
+INSTRUCTIONS:
+1. Use the googleSearch tool results to identify a real, high-quality, popular prompt that has been posted or shared on the web. Do NOT make up a prompt out of thin air if you can find a real one.
+2. Extract the EXACT, original English prompt text.
+3. Translate the description, use-cases, and settings to beautiful, natural Persian.
+4. Create an elegant, descriptive Persian title (2-6 words).
+5. Extract or note the source/website name where you found this prompt (e.g. "PromptHero", "Reddit /r/midjourney", "Civitai", etc.) and include it inside the Persian description.
+6. Choose 3-4 Persian tags/hashtags without the '#' symbol.
+7. Provide highly accurate English keywords or query for Unsplash representing the visual concept of the prompt (to use as a background photo).
+
+You must return the response in JSON format. Ensure all strings are fully valid JSON.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.7-flash",
+        contents: systemPrompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING, description: "Descriptive Persian title for the prompt" },
+              promptText: { type: Type.STRING, description: "The actual exact English prompt text found from the source" },
+              description: { type: Type.STRING, description: "A detailed Persian explanation of the prompt, how to use it, and mentioning the source/platform it was fetched from" },
+              tags: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: "3 to 4 Persian tags/hashtags without '#' symbol"
+              },
+              unsplashSearchTerm: { type: Type.STRING, description: "Specific english keywords or query for Unsplash representing the visual scene" }
+            },
+            required: ["title", "promptText", "description", "tags", "unsplashSearchTerm"]
+          }
+        }
+      });
+
+      if (response && response.text) {
+        const parsed = JSON.parse(response.text);
+        const imageUrl = `https://images.unsplash.com/featured/800x600/?${encodeURIComponent(parsed.unsplashSearchTerm || parsed.title)}`;
+
+        return {
+          title: parsed.title,
+          category: chosenCategory as any,
+          description: parsed.description,
+          promptText: parsed.promptText,
+          imageUrl,
+          tags: parsed.tags || []
+        };
+      }
+    } catch (e) {
+      console.error('Gemini live prompt generation error:', e);
+    }
+  }
+
+  // Fallback to offline / local database prompts
+  const allLocal = db.aiPrompts || [];
+  if (allLocal.length > 0) {
+    const p = allLocal[Math.floor(Math.random() * allLocal.length)];
+    return {
+      title: p.title,
+      category: p.category as any,
+      description: p.description,
+      promptText: p.promptText,
+      imageUrl: p.imageUrl,
+      tags: p.tags
+    };
+  }
+
+  return {
+    title: 'تصویرسازی فانتزی و مینیاتوری از جزیره معلق',
+    category: 'image',
+    description: 'یک پرامپت استثنایی برای ساخت تصاویر رویایی و مینیاتوری از جزایر سرسبز معلق در هوا با آبشارهای درخشان و کشتی‌های معلق.',
+    promptText: 'A dreamlike miniature floating island in the sky, lush greenery, sparkling waterfalls cascading into the clouds, cozy tiny village, fantasy architecture, cinematic lighting, 8k --ar 16:9',
+    imageUrl: 'https://images.unsplash.com/photo-1518156677180-95a2893f3e9f?w=800&auto=format&fit=crop&q=60',
+    tags: ['رویایی', 'میدجرنی', 'تصویر_سازی', 'فانتزی']
+  };
+}
+
 // --- Public Web Panel URL Helper ---
 function getPublicAppUrl(req?: express.Request): string {
   // Check if we are running in AI Studio sandbox
   const isAIStudio = !!process.env.DEV_APP_URL;
 
-  // 1. Prioritize manually saved settings if it's not a sandbox URL (when outside sandbox)
+  // 1. If we have active request context, use it immediately and update cached host
+  if (req) {
+    const host = req.get('x-forwarded-host') || req.get('host');
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+    if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+      if (!isAIStudio && !host.includes('europe-west2.run.app')) {
+        detectedPublicHost = host;
+      }
+      return `${proto}://${host}`;
+    }
+  }
+
+  // 2. If we are NOT in AI Studio, prioritize on-the-fly detected real VPS server host/IP
+  if (!isAIStudio) {
+    if (detectedPublicHost) {
+      return detectedPublicHost.startsWith('http') ? detectedPublicHost : `http://${detectedPublicHost}`;
+    }
+    if (detectedPublicIp) {
+      return `http://${detectedPublicIp}:${PORT}`;
+    }
+  }
+
+  // 3. Prioritize manually saved settings if it's not a sandbox URL (when outside sandbox)
   if (db.settings.publicUrl && db.settings.publicUrl.trim()) {
     const raw = db.settings.publicUrl.trim();
     const isSandboxUrl = raw.includes('ais-dev-') || raw.includes('ais-pre-') || raw.includes('europe-west2.run.app');
@@ -505,7 +712,7 @@ function getPublicAppUrl(req?: express.Request): string {
     }
   }
 
-  // 2. Fallback to active HTTP request context
+  // 4. Fallback to active HTTP request context (redundant check)
   if (req) {
     const host = req.get('x-forwarded-host') || req.get('host');
     const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
@@ -514,10 +721,10 @@ function getPublicAppUrl(req?: express.Request): string {
     }
   }
 
-  // 3. Environment variables (if explicitly set)
+  // 5. Environment variables (if explicitly set)
   if (process.env.APP_URL) return process.env.APP_URL;
 
-  // 4. Auto-detect Linux server IP if we are NOT in the AI Studio environment
+  // 6. Auto-detect Linux server IP if we are NOT in the AI Studio environment
   if (!isAIStudio) {
     const ip = getMachineIp();
     if (ip && ip !== '127.0.0.1' && ip !== 'localhost') {
@@ -528,7 +735,7 @@ function getPublicAppUrl(req?: express.Request): string {
     return `http://localhost:${process.env.PORT || 3000}`;
   }
 
-  // 5. Default Sandbox URL (only as last resort for AI Studio)
+  // 7. Default Sandbox URL (only as last resort for AI Studio)
   if (process.env.DEV_APP_URL) return process.env.DEV_APP_URL;
   return DEFAULT_KNOWN_APP_URL;
 }
@@ -4923,6 +5130,9 @@ function getReplyKeyboard(userId: string | number, username?: string | null) {
       { text: '📰 اخبار روز تکنولوژی 🌐', style: 'primary' }
     ],
     [
+      { text: '🎨 پرامپت‌های طلایی هوش مصنوعی ✨', style: 'primary' }
+    ],
+    [
       { text: 'ℹ️ راهنمای اتصال گام به گام 📚', style: 'primary' }
     ]
   ];
@@ -7635,6 +7845,7 @@ async function handleBotUpdate(update: any) {
       else if (messageText.includes('راهنمای اتصال')) callbackData = 'get_help';
       else if (messageText.includes('ترفند')) callbackData = 'get_tech_tricks';
       else if (messageText.includes('اخبار')) callbackData = 'get_tech_news';
+      else if (messageText.includes('پرامپت') || messageText.includes('هوش مصنوعی')) callbackData = 'get_ai_prompts';
     }
 
     if (messageText === '/start' || callbackData === 'back_to_main' || callbackData === 'start_refresh' || callbackData === 'start') {
@@ -7672,6 +7883,9 @@ async function handleBotUpdate(update: any) {
         [
           { text: '💡 ترفندها 📱', callback_data: 'get_tech_tricks', style: 'primary' },
           { text: '📰 اخبار روز تکنولوژی 🌐', callback_data: 'get_tech_news', style: 'primary' }
+        ],
+        [
+          { text: '🎨 پرامپت‌های طلایی هوش مصنوعی ✨', callback_data: 'get_ai_prompts', style: 'primary' }
         ],
         [
           { text: 'ℹ️ راهنمای اتصال آسان 📚', callback_data: 'get_help' },
@@ -7769,6 +7983,88 @@ async function handleBotUpdate(update: any) {
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]] }
       });
+      return;
+    }
+
+    if (callbackData === 'get_ai_prompts') {
+      await answerCallback('🔄 در حال استخراج زنده برترین پرامپت‌های ترند شبکه‌های اجتماعی...');
+      
+      try {
+        const livePrompt = await fetchLiveTrendingAiPromptFromInternet();
+        
+        let badgeEmoji = '🎨';
+        let badgeTitle = 'پرامپت هوش مصنوعی';
+        if (livePrompt.category === 'image') {
+          badgeEmoji = '🖼';
+          badgeTitle = 'پرامپت ترند ساخت عکس';
+        } else if (livePrompt.category === 'video') {
+          badgeEmoji = '🎬';
+          badgeTitle = 'پرامپت خلاقانه ساخت ویدیو';
+        } else if (livePrompt.category === 'chat') {
+          badgeEmoji = '💬';
+          badgeTitle = 'پرامپت کاربردی متنی و دستیار';
+        }
+
+        let captionText = `${badgeEmoji} <b>« ${badgeTitle} »</b>\n`;
+        captionText += `📌 <b>${escapeHtml(livePrompt.title)}</b>\n\n`;
+        
+        if (livePrompt.description) {
+          captionText += `🔹 <b>توضیحات و راهنمای کاربری:</b>\n<i>${escapeHtml(livePrompt.description)}</i>\n\n`;
+        }
+
+        captionText += `📋 <b>متن پرامپت (جهت کپی آسان لمس کنید):</b>\n`;
+        captionText += `<blockquote expandable><code>${escapeHtml(livePrompt.promptText)}</code></blockquote>\n\n`;
+
+        if (livePrompt.tags && livePrompt.tags.length > 0) {
+          const formattedTags = livePrompt.tags
+            .slice(0, 5)
+            .map(t => `#${t.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '')}`)
+            .join(' ');
+          captionText += `🏷 <i>${formattedTags}</i>\n`;
+        }
+
+        // Add support button or dynamic refresh button
+        const inlineKeyboard = [
+          [
+            { text: '🔄 استخراج یک پرامپت ترند دیگر ⚡', callback_data: 'get_ai_prompts' }
+          ],
+          [
+            { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }
+          ]
+        ];
+
+        if (livePrompt.imageUrl) {
+          try {
+            await callTelegramApi('sendPhoto', {
+              chat_id: chatId,
+              photo: livePrompt.imageUrl,
+              caption: captionText,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: inlineKeyboard }
+            });
+            return;
+          } catch (photoErr: any) {
+            console.error('Error sending prompt photo:', photoErr);
+          }
+        }
+
+        // Fallback to sending as text
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: captionText,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: inlineKeyboard }
+        });
+
+      } catch (err: any) {
+        console.error('Error in get_ai_prompts callback:', err);
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `❌ **خطا در دریافت پرامپت زنده:**\n\n${escapeHtml(err.message || err)}`,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]] }
+        });
+      }
       return;
     }
 
@@ -8390,16 +8686,20 @@ async function startExpressServer() {
 
   // --- Auto-Detect VPS Host Middleware ---
   app.use((req, res, next) => {
-    // If we are not in the AI Studio environment, try to auto-save the host
+    // If we are not in the AI Studio environment, try to auto-save/update the host
     if (!process.env.DEV_APP_URL) {
       const host = req.get('x-forwarded-host') || req.get('host');
-      if (host && !host.includes('localhost') && !host.includes('127.0.0.1') && !host.includes('ais-dev')) {
-        if (!db.settings.publicUrl || db.settings.publicUrl.trim() === '' || db.settings.publicUrl === DEFAULT_KNOWN_APP_URL) {
-          const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
-          const newUrl = `${proto}://${host}`;
+      if (host && !host.includes('localhost') && !host.includes('127.0.0.1') && !host.includes('ais-dev') && !host.includes('europe-west2.run.app')) {
+        const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+        const newUrl = `${proto}://${host}`;
+        detectedPublicHost = host;
+        
+        // If publicUrl is empty, is the default known URL, OR is DIFFERENT from the active URL (e.g. old server IP), update it!
+        if (!db.settings.publicUrl || db.settings.publicUrl.trim() === '' || db.settings.publicUrl === DEFAULT_KNOWN_APP_URL || db.settings.publicUrl !== newUrl) {
           db.settings.publicUrl = newUrl;
           saveDatabase();
-          addLog('info', `آدرس پنل مدیریت شما به صورت خودکار شناسایی و ذخیره شد: ${newUrl}`);
+          addLog('info', `آدرس پنل مدیریت شما به صورت هوشمند و پویا به‌روزرسانی شد: ${newUrl}`);
+          console.log(`[IP Dynamic Override] Overwrote stale publicUrl with active live URL: ${newUrl}`);
         }
       }
     }
