@@ -552,61 +552,112 @@ function getGeminiClient(): GoogleGenAI | null {
   return geminiClient;
 }
 
-// --- Live Real-Time AI Prompt Extractor ---
-async function fetchLiveTrendingAiPromptFromInternet(): Promise<{
+// --- Live Real-Time AI Prompt Extractor (Photo-styling & Face Combination) ---
+async function fetchLiveTrendingAiPromptFromInternet(categoryKey?: string): Promise<{
   title: string;
   category: 'image' | 'video' | 'chat' | 'other';
+  styleCategory?: string;
   description: string;
   promptText: string;
   imageUrl?: string;
   tags: string[];
+  tipsForPersonalPhoto?: string;
 }> {
   const ai = getGeminiClient();
   if (ai) {
     try {
-      const categories = ['image', 'video', 'chat'];
-      const chosenCategory = categories[Math.floor(Math.random() * categories.length)];
-      
-      let searchQuery = '';
-      if (chosenCategory === 'image') {
-        const topics = [
-          'trending midjourney prompts prompthero',
-          'best dall-e 3 prompts playgroundai',
-          'popular stable diffusion prompts lexica art',
-          'top midjourney v6 prompts reddit'
-        ];
-        searchQuery = topics[Math.floor(Math.random() * topics.length)];
-      } else if (chosenCategory === 'video') {
-        const topics = [
-          'viral runway gen-3 video prompts',
-          'best sora luma ai video generation prompts',
-          'cinematic ai video prompts runway reddit'
-        ];
-        searchQuery = topics[Math.floor(Math.random() * topics.length)];
-      } else {
-        const topics = [
-          'extremely useful chatgpt system prompts reddit',
-          'best claude 3.5 sonnet developer prompts github',
-          'top chatgpt jailbreak or advanced prompts'
-        ];
-        searchQuery = topics[Math.floor(Math.random() * topics.length)];
-      }
+      const categoryThemes: Record<string, { name: string; queries: string[]; guide: string }> = {
+        pixar: {
+          name: 'انیمیشن و کارتون ۳ بعدی دیزنی/پیکسار (تبدیل عکس شخصی)',
+          queries: [
+            'disney pixar 3d character portrait prompt midjourney prompthero',
+            '3d cartoon cute avatar personal photo prompt lexica art',
+            'pixar style cute child adult 3d render midjourney reddit'
+          ],
+          guide: 'تبدیل عکس پرتره چهره یا فرزند به کاراکتر انیمیشنی سه بعدی کمپانی پیکسار و دیزنی با نورپردازی لطیف و بامزه'
+        },
+        family: {
+          name: 'پرتره خانوادگی، کودک و والدین (ترکیب عکس‌های عزیزانتان)',
+          queries: [
+            'cozy family portrait photography warm golden hour prompt midjourney',
+            'cute baby toddler angelic portrait prompt playgroundai',
+            'elderly grandparents vintage emotional portrait prompt midjourney prompthero'
+          ],
+          guide: 'خلق عکس‌های شگفت‌انگیز و احساسی از اعضای خانواده، فرزندان و پدر و مادر با تم‌های گرم، رویایی و آتلیه‌ای'
+        },
+        couple: {
+          name: 'دونفره، عاشقانه، عروسی و فرمالیته (عکس با همسر)',
+          queries: [
+            'romantic couple wedding photo shoot sunset cinematic prompt midjourney',
+            'couple holding hands rainy paris streets moody photography prompt reddit',
+            'luxury aesthetic formal couple portrait prompt prompthero'
+          ],
+          guide: 'ترکیب عکس دونفره با همسر در لوکیشن‌های رمانتیک، کافه‌های پاریس، غروب دریا، یا آتلیه عروس'
+        },
+        cyberpunk: {
+          name: 'سایبرپانک، نئونی، فیوچریستیک و سینمایی',
+          queries: [
+            'cyberpunk neon portrait glowing lights rainy city prompt midjourney',
+            'futuristic sci-fi cinematic character portrait prompt lexica art',
+            'cybernetic glow street portrait prompt prompthero'
+          ],
+          guide: 'تبدیل چهره شما به قهرمان فیلم‌های علمی‌تخیلی و سایبرپانک با نورهای نئونی و لباس‌های آینده‌نگرانه'
+        },
+        royal: {
+          name: 'سلطنتی، اشرافی، درباری و کلاسیک رنسانس',
+          queries: [
+            'royal king queen renaissance oil painting portrait prompt midjourney',
+            'victorian royalty ornate crown gold embroidery portrait prompt reddit',
+            'persian ancient royal aesthetic portrait prompt prompthero'
+          ],
+          guide: 'ترکیب عکس چهره با شاهزادگان، درباریان، تاج‌های مجلل طلاکاری و نقاشی‌های کلاسیک رنسانس'
+        },
+        artistic: {
+          name: 'نقاشی روغنی، آبرنگ، طراحی دستی و انیمه جیبلی',
+          queries: [
+            'studio ghibli aesthetic anime portrait prompt midjourney',
+            'textured oil painting expressive portrait prompt lexica art',
+            'watercolor splash portrait character prompt prompthero'
+          ],
+          guide: 'تبدیل عکس شخصی به تابلوی نقاشی گران‌قیمت رنگ روغن، نقاشی آبرنگ یا سبک انیمه‌های نوستالژیک استودیو جیبلی'
+        },
+        fashion: {
+          name: 'مدلینگ، ووگ، عکاسی استودیویی و فشن اینستاگرامی',
+          queries: [
+            'vogue magazine cover editorial fashion portrait prompt midjourney',
+            'studio glamour portrait dramatic rim lighting prompt prompthero',
+            'aesthetic minimal luxury fashion portrait prompt reddit'
+          ],
+          guide: 'تبدیل ژست و عکس شما به کاور مجلات بین‌المللی مد و فشن (Vogue, GQ) با نورپردازی استودیویی فوق‌حرفه‌ای'
+        },
+        random: {
+          name: 'ترندهای داغ و ویرال شبکه‌های اجتماعی (TikTok / Instagram)',
+          queries: [
+            'viral trending portrait midjourney prompts reddit',
+            'most popular character portrait prompt prompthero lexica',
+            'trending aesthetic portrait prompts civitai'
+          ],
+          guide: 'جدیدترین و داغ‌ترین ترندهای وایرال شبکه‌های اجتماعی در ترکیب عکس‌های شخصی'
+        }
+      };
 
-      const systemPrompt = `You are a real-time internet scraper, social media feed analyzer, and AI Prompt researcher.
-I want you to use Google Search to find REAL, ACTUAL, and HIGHLY POPULAR trending prompts from real-world prompt sharing platforms (such as PromptHero, Lexica.art, Reddit, Github, PromptBase, Civitai, or similar platforms).
+      const selectedKey = (categoryKey && categoryThemes[categoryKey]) ? categoryKey : 'random';
+      const catConfig = categoryThemes[selectedKey];
+      const randomQuery = catConfig.queries[Math.floor(Math.random() * catConfig.queries.length)];
 
-Your search query has been selected as: "${searchQuery}" in the category "${chosenCategory}".
+      const systemPrompt = `You are an elite AI Prompt Engineer and internet researcher specializing in REAL-WORLD VIRAL PROMPTS for PERSONAL PHOTO TRANSFORMATIONS (turning selfies, family photos, couples, children, parents into stunning styles).
 
-INSTRUCTIONS:
-1. Use the googleSearch tool results to identify a real, high-quality, popular prompt that has been posted or shared on the web. Do NOT make up a prompt out of thin air if you can find a real one.
-2. Extract the EXACT, original English prompt text.
-3. Translate the description, use-cases, and settings to beautiful, natural Persian.
-4. Create an elegant, descriptive Persian title (2-6 words).
-5. Extract or note the source/website name where you found this prompt (e.g. "PromptHero", "Reddit /r/midjourney", "Civitai", etc.) and include it inside the Persian description.
-6. Choose 3-4 Persian tags/hashtags without the '#' symbol.
-7. Provide highly accurate English keywords or query for Unsplash representing the visual concept of the prompt (to use as a background photo).
+TASK: Search the web via googleSearch for REAL, POPULAR, AND VIRAL prompts used on Midjourney, Stable Diffusion, DALL-E, or PromptHero for category: "${catConfig.name}".
+Search Query: "${randomQuery}".
 
-You must return the response in JSON format. Ensure all strings are fully valid JSON.`;
+RULES & STRUCTURE:
+1. Extract an authentic, highly-praised English prompt from real community shares (Reddit, PromptHero, Lexica, etc.).
+2. The prompt should be formatted so users can combine it with their own uploaded photo (e.g. using Midjourney's [photo_link] + prompt + parameters like --cw 20 --cref [photo_link] or FaceSwap tools).
+3. Title: A catchy and beautiful Persian title (3-6 words).
+4. Description: A complete Persian explanation explaining the aesthetic style, what makes it special, and naming the source platform (e.g. PromptHero, Reddit r/midjourney).
+5. TipsForPersonalPhoto: Practical step-by-step Persian advice on what kind of personal photo (lighting, angle, selfie/full-body) works best for this style and how to plug it into Midjourney or FaceSwap tools.
+6. Tags: 3 to 4 Persian tags without '#'.
+7. UnsplashSearchTerm: Specific English keywords to fetch a matching preview photo.`;
 
       const response = await ai.models.generateContent({
         model: "gemini-3.7-flash",
@@ -619,15 +670,16 @@ You must return the response in JSON format. Ensure all strings are fully valid 
             properties: {
               title: { type: Type.STRING, description: "Descriptive Persian title for the prompt" },
               promptText: { type: Type.STRING, description: "The actual exact English prompt text found from the source" },
-              description: { type: Type.STRING, description: "A detailed Persian explanation of the prompt, how to use it, and mentioning the source/platform it was fetched from" },
+              description: { type: Type.STRING, description: "Detailed Persian explanation of the aesthetic and source platform" },
+              tipsForPersonalPhoto: { type: Type.STRING, description: "Persian practical tips on choosing the right personal photo and combining it" },
               tags: {
                 type: Type.ARRAY,
                 items: { type: Type.STRING },
-                description: "3 to 4 Persian tags/hashtags without '#' symbol"
+                description: "3 to 4 Persian tags without '#' symbol"
               },
-              unsplashSearchTerm: { type: Type.STRING, description: "Specific english keywords or query for Unsplash representing the visual scene" }
+              unsplashSearchTerm: { type: Type.STRING, description: "Specific english keywords for Unsplash background" }
             },
-            required: ["title", "promptText", "description", "tags", "unsplashSearchTerm"]
+            required: ["title", "promptText", "description", "tipsForPersonalPhoto", "tags", "unsplashSearchTerm"]
           }
         }
       });
@@ -638,9 +690,11 @@ You must return the response in JSON format. Ensure all strings are fully valid 
 
         return {
           title: parsed.title,
-          category: chosenCategory as any,
+          category: 'image',
+          styleCategory: selectedKey,
           description: parsed.description,
           promptText: parsed.promptText,
+          tipsForPersonalPhoto: parsed.tipsForPersonalPhoto,
           imageUrl,
           tags: parsed.tags || []
         };
@@ -660,17 +714,20 @@ You must return the response in JSON format. Ensure all strings are fully valid 
       description: p.description,
       promptText: p.promptText,
       imageUrl: p.imageUrl,
-      tags: p.tags
+      tags: p.tags,
+      tipsForPersonalPhoto: 'برای این پرامپت، یک عکس سلفی واضح و با نور مناسب از چهره خود را به عنوان مرجع به همراه پرامپت آپلود کنید.'
     };
   }
 
   return {
-    title: 'تصویرسازی فانتزی و مینیاتوری از جزیره معلق',
+    title: 'تبدیل عکس چهره به کاراکتر انیمیشنی ۳ بعدی پیکسار',
     category: 'image',
-    description: 'یک پرامپت استثنایی برای ساخت تصاویر رویایی و مینیاتوری از جزایر سرسبز معلق در هوا با آبشارهای درخشان و کشتی‌های معلق.',
-    promptText: 'A dreamlike miniature floating island in the sky, lush greenery, sparkling waterfalls cascading into the clouds, cozy tiny village, fantasy architecture, cinematic lighting, 8k --ar 16:9',
-    imageUrl: 'https://images.unsplash.com/photo-1518156677180-95a2893f3e9f?w=800&auto=format&fit=crop&q=60',
-    tags: ['رویایی', 'میدجرنی', 'تصویر_سازی', 'فانتزی']
+    styleCategory: 'pixar',
+    description: 'یکی از پرطرفدارترین ترندهای وایرال در PromptHero و ردیت برای تبدیل چهره واقعی به کاراکتر بانمک پیکسار.',
+    promptText: '3D Pixar Disney style animated character of [upload your photo], cute expressive eyes, soft studio lighting, vibrant warm colors, smooth clay render, octane render, 8k --ar 9:16 --cw 20',
+    tipsForPersonalPhoto: 'از یک عکس پرتره یا سلفی تکی با نور طبیعی و نگاه مستقیم به دوربین استفاده کنید.',
+    imageUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=800&auto=format&fit=crop&q=60',
+    tags: ['پیکسار', 'تبدیل_عکس_شخصی', 'دیزنی', 'انیمیشن_۳بعدی']
   };
 }
 
@@ -7986,33 +8043,131 @@ async function handleBotUpdate(update: any) {
       return;
     }
 
-    if (callbackData === 'get_ai_prompts') {
-      await answerCallback('🔄 در حال استخراج زنده برترین پرامپت‌های ترند شبکه‌های اجتماعی...');
+    if (callbackData === 'get_ai_prompts' || callbackData === 'prompt_menu') {
+      await answerCallback('🎨 منوی دسته‌بندی پرامپت‌های هوش مصنوعی');
+      
+      const menuText = `🎨 <b>سامانه استخراج زنده پرامپت‌های ترکیب عکس و چهره</b> ✨\n\n` +
+        `با پرامپت‌های این بخش می‌توانید عکس‌های شخصی خود، همسر، فرزندان یا والدینتان را با جدیدترین ترندهای وایرال شبکه‌های اجتماعی ترکیب کرده و آثار هنری و انیمیشنی فوق‌العاده بسازید.\n\n` +
+        `👇 <b>لطفاً سبک و دسته‌بندی مورد علاقه خود را انتخاب کنید:</b>`;
+
+      const promptMenuKeyboard = [
+        [
+          { text: '🧚 کارتون و پیکسار دیزنی', callback_data: 'prompt_cat_pixar' },
+          { text: '👨‍👩‍👧‍👦 خانوادگی، کودک و والدین', callback_data: 'prompt_cat_family' }
+        ],
+        [
+          { text: '💑 دونفره، عاشقانه و همسر', callback_data: 'prompt_cat_couple' },
+          { text: '🕶 سایبرپانک و سینمایی', callback_data: 'prompt_cat_cyberpunk' }
+        ],
+        [
+          { text: '👑 سلطنتی و پرتره تاریخی', callback_data: 'prompt_cat_royal' },
+          { text: '🎨 نقاشی روغنی و انیمه جیبلی', callback_data: 'prompt_cat_artistic' }
+        ],
+        [
+          { text: '📸 مدلینگ و فشن استودیویی', callback_data: 'prompt_cat_fashion' },
+          { text: '🎲 ترندهای داغ جهانی (سورپرایز)', callback_data: 'prompt_cat_random' }
+        ],
+        [
+          { text: '📚 راهنمای ترکیب عکس شخصی با پرامپت 💡', callback_data: 'prompt_guide' }
+        ],
+        [
+          { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }
+        ]
+      ];
+
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: menuText,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: promptMenuKeyboard }
+      });
+      return;
+    }
+
+    if (callbackData === 'prompt_guide') {
+      await answerCallback('راهنمای استفاده از پرامپت');
+      
+      const guideText = `📚 <b>راهنمای جامع ترکیب عکس‌های شخصی با پرامپت هوش مصنوعی</b>\n\n` +
+        `چگونه عکس خود، همسر، فرزند یا والدینتان را با پرامپت‌ها ترکیب کنید؟\n\n` +
+        `1️⃣ <b>روش اول: سایت‌های رایگان FaceSwap (ساده‌ترین روش)</b>\n` +
+        `• وارد سایت‌های معروفی مثل <b>Remaker.ai</b> یا <b>SeaArt.ai</b> یا <b>Pica AI</b> شوید.\n` +
+        `• ابتدا متن پرامپت انگلیسی را کپی و در کادر Generate وارد کنید تا عکس ساخته شود.\n` +
+        `• سپس روی گزینه <b>Face Swap</b> کلیک کرده و عکس چهره خود یا عزیزانتان را روی تصویر خروجی جایگزین کنید.\n\n` +
+        `2️⃣ <b>روش دوم: در میدجرنی (Midjourney) با حفظ دقیق چهره</b>\n` +
+        `• عکس چهره را در چت تلگرام یا دیسکورد بفرستید و لینک عکس را کپی کنید.\n` +
+        `• دستور را به این شکل بنویسید:\n` +
+        `<code>/imagine prompt: [متن پرامپت انگلیسی] --cref [لینک عکس شما] --cw 20</code>\n` +
+        `💡 پارامتر <code>--cref</code> چهره شما را بدون تغییر به استایل پرامپت منتقل می‌کند.\n\n` +
+        `3️⃣ <b>روش سوم: در بینگ و چت‌جی‌پی‌تی (Bing / DALL-E 3)</b>\n` +
+        `• وارد Bing Image Creator یا چت هوش مصنوعی شوید، عکس خود را ضمیمه (Attach) کرده و بنویسید:\n` +
+        `<i>«این تصویر را با سبک زیر بازآفرینی کن: [متن پرامپت]»</i>\n\n` +
+        `✨ <b>نکته طلایی:</b> همیشه از عکس‌های واضح و با نور کافی از روبرو استفاده کنید تا خروجی بسیار طبیعی و خیره‌کننده باشد.`;
+
+      const guideKeyboard = [
+        [
+          { text: '🎨 ورود به دسته‌بندی پرامپت‌ها ✨', callback_data: 'prompt_menu' }
+        ],
+        [
+          { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }
+        ]
+      ];
+
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: guideText,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: guideKeyboard }
+      });
+      return;
+    }
+
+    if (callbackData.startsWith('prompt_cat_')) {
+      const subCat = callbackData.replace('prompt_cat_', '');
+      await answerCallback('🔄 در حال جستجو و استخراج پرامپت ترند از وب...');
       
       try {
-        const livePrompt = await fetchLiveTrendingAiPromptFromInternet();
+        const livePrompt = await fetchLiveTrendingAiPromptFromInternet(subCat);
         
         let badgeEmoji = '🎨';
         let badgeTitle = 'پرامپت هوش مصنوعی';
-        if (livePrompt.category === 'image') {
-          badgeEmoji = '🖼';
-          badgeTitle = 'پرامپت ترند ساخت عکس';
-        } else if (livePrompt.category === 'video') {
-          badgeEmoji = '🎬';
-          badgeTitle = 'پرامپت خلاقانه ساخت ویدیو';
-        } else if (livePrompt.category === 'chat') {
-          badgeEmoji = '💬';
-          badgeTitle = 'پرامپت کاربردی متنی و دستیار';
+        if (subCat === 'pixar') {
+          badgeEmoji = '🧚';
+          badgeTitle = 'پرامپت تبدیل عکس به کارتون پیکسار';
+        } else if (subCat === 'family') {
+          badgeEmoji = '👨‍👩‍👧‍👦';
+          badgeTitle = 'پرامپت پرتره خانوادگی و فرزندان';
+        } else if (subCat === 'couple') {
+          badgeEmoji = '💑';
+          badgeTitle = 'پرامپت دونفره و عاشقانه با همسر';
+        } else if (subCat === 'cyberpunk') {
+          badgeEmoji = '🕶';
+          badgeTitle = 'پرامپت سایبرپانک و سینمایی چهره';
+        } else if (subCat === 'royal') {
+          badgeEmoji = '👑';
+          badgeTitle = 'پرامپت سلطنتی و پرتره کلاسیک';
+        } else if (subCat === 'artistic') {
+          badgeEmoji = '🎨';
+          badgeTitle = 'پرامپت نقاشی روغنی و انیمه جیبلی';
+        } else if (subCat === 'fashion') {
+          badgeEmoji = '📸';
+          badgeTitle = 'پرامپت مدلینگ و فشن استودیویی';
+        } else {
+          badgeEmoji = '🌟';
+          badgeTitle = 'پرامپت ترند و داغ شبکه‌های اجتماعی';
         }
 
         let captionText = `${badgeEmoji} <b>« ${badgeTitle} »</b>\n`;
         captionText += `📌 <b>${escapeHtml(livePrompt.title)}</b>\n\n`;
         
         if (livePrompt.description) {
-          captionText += `🔹 <b>توضیحات و راهنمای کاربری:</b>\n<i>${escapeHtml(livePrompt.description)}</i>\n\n`;
+          captionText += `🔹 <b>توضیحات سبک و منبع:</b>\n<i>${escapeHtml(livePrompt.description)}</i>\n\n`;
         }
 
-        captionText += `📋 <b>متن پرامپت (جهت کپی آسان لمس کنید):</b>\n`;
+        if (livePrompt.tipsForPersonalPhoto) {
+          captionText += `💡 <b>نحوه ترکیب با عکس شخصی شما:</b>\n<i>${escapeHtml(livePrompt.tipsForPersonalPhoto)}</i>\n\n`;
+        }
+
+        captionText += `📋 <b>متن پرامپت انگلیسی (برای کپی لمس کنید):</b>\n`;
         captionText += `<blockquote expandable><code>${escapeHtml(livePrompt.promptText)}</code></blockquote>\n\n`;
 
         if (livePrompt.tags && livePrompt.tags.length > 0) {
@@ -8023,10 +8178,13 @@ async function handleBotUpdate(update: any) {
           captionText += `🏷 <i>${formattedTags}</i>\n`;
         }
 
-        // Add support button or dynamic refresh button
         const inlineKeyboard = [
           [
-            { text: '🔄 استخراج یک پرامپت ترند دیگر ⚡', callback_data: 'get_ai_prompts' }
+            { text: `🔄 یک پرامپت دیگر در همین سبک ⚡`, callback_data: `prompt_cat_${subCat}` }
+          ],
+          [
+            { text: '🗂 تغییر دسته‌بندی پرامپت‌ها', callback_data: 'prompt_menu' },
+            { text: '📚 راهنمای استفاده', callback_data: 'prompt_guide' }
           ],
           [
             { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }
@@ -8057,12 +8215,12 @@ async function handleBotUpdate(update: any) {
         });
 
       } catch (err: any) {
-        console.error('Error in get_ai_prompts callback:', err);
+        console.error('Error in prompt_cat callback:', err);
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
           text: `❌ **خطا در دریافت پرامپت زنده:**\n\n${escapeHtml(err.message || err)}`,
           parse_mode: 'HTML',
-          reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]] }
+          reply_markup: { inline_keyboard: [[{ text: '🗂 بازگشت به دسته‌بندی‌ها', callback_data: 'prompt_menu' }]] }
         });
       }
       return;
