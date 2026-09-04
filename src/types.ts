@@ -103,6 +103,11 @@ export interface AutoPostSettings {
   funNewsCount?: number; // Number of fun/news items to post (1, 2, 3, etc.)
   lastFunNewsPostedAt?: string | null;
 
+  // Channel 1 Glass / Inline Button Configuration
+  inlineButtonEnabled?: boolean; // Toggle for inline glass button at bottom of post
+  inlineButtonText?: string; // Custom button label (e.g. "کانال رسمی ما 📢")
+  inlineButtonUrl?: string; // Custom button link/invite URL
+
   // Legacy/Backwards compatibility
   techPostMode?: 'combined' | 'standalone' | 'both';
 
@@ -118,6 +123,11 @@ export interface SecondaryChannelSettings {
   antiFloodDelayMinutes?: number; // Anti-flood delay between posts in minutes
   lastAnyPostAt?: string | null;
   lastPostedAt?: string | null;
+
+  // Channel 2 Dedicated Glass / Inline Button Configuration
+  inlineButtonEnabled?: boolean; // Toggle for inline glass button on Channel 2
+  inlineButtonText?: string; // Custom button label for Channel 2 (e.g. "عضویت در کانال سرگرمی 🐸")
+  inlineButtonUrl?: string; // Custom button link for Channel 2 (e.g. https://t.me/ghourbagheBshort)
 
   // 1. Configs & Proxies Schedule for Channel 2
   configsEnabled?: boolean;

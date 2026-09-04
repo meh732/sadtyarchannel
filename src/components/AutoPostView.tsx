@@ -51,6 +51,9 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
     adText: '',
     silentMode: false,
     antiFloodDelayMinutes: 3,
+    inlineButtonEnabled: true,
+    inlineButtonText: '',
+    inlineButtonUrl: '',
     funNewsEnabled: true,
     funNewsIntervalHours: 2,
     funNewsIntervalMinutes: 120,
@@ -228,6 +231,68 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                   </button>
                 </div>
               </div>
+            </div>
+
+            {/* Glass / Inline Button for Channel 1 */}
+            <div className="bg-white border border-indigo-100 rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-indigo-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <span>دکمه شیشه‌ای زیر پست‌های کانال اول (Inline Glass Button)</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${autoPostForm.inlineButtonEnabled !== false ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-500'}`}>
+                        {autoPostForm.inlineButtonEnabled !== false ? 'فعال' : 'غیرفعال'}
+                      </span>
+                    </h4>
+                    <p className="text-[10px] text-slate-500">تنظیم دکمه شیشه‌ای تلگرام در انتهای پست‌های ارسالی به کانال اول</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAutoPostForm(prev => ({ ...prev, inlineButtonEnabled: prev.inlineButtonEnabled === false ? true : false }))}
+                  className={`w-12 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                    autoPostForm.inlineButtonEnabled !== false ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                  }`}
+                >
+                  <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                </button>
+              </div>
+
+              {autoPostForm.inlineButtonEnabled !== false && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                      <span>متن روی دکمه شیشه‌ای کانال اول</span>
+                      <span className="text-[10px] text-slate-400">پیش‌فرض: 📢 عضویت در کانال</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="مثلاً: 📢 عضویت در کانال ما"
+                      value={autoPostForm.inlineButtonText || ''}
+                      onChange={(e) => setAutoPostForm(prev => ({ ...prev, inlineButtonText: e.target.value }))}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                      <span>لینک مقصد دکمه شیشه‌ای</span>
+                      <span className="text-[10px] text-slate-400">لینک تلگرام کانال یا ربات</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="https://t.me/MyChannel یا خالی برای لینک خودکار کانال"
+                      value={autoPostForm.inlineButtonUrl || ''}
+                      onChange={(e) => setAutoPostForm(prev => ({ ...prev, inlineButtonUrl: e.target.value }))}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none"
+                      dir="ltr"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Anti-Flood Delay */}
@@ -806,6 +871,69 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                   </select>
                 </div>
               </div>
+            </div>
+
+            {/* Glass / Inline Button for Channel 2 */}
+            <div className="bg-white border border-purple-200 rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-purple-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <span>دکمه شیشه‌ای زیر پست‌های کانال دوم (Inline Glass Button)</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${c2.inlineButtonEnabled !== false ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-500'}`}>
+                        {c2.inlineButtonEnabled !== false ? 'فعال' : 'غیرفعال'}
+                      </span>
+                    </h4>
+                    <p className="text-[10px] text-slate-500">تنظیم دکمه شیشه‌ای و لینک اختصاصی در زیر تمام پست‌های کانال دوم (کاملاً مجزا از کانال اول)</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => updateChannel2({ inlineButtonEnabled: c2.inlineButtonEnabled === false ? true : false })}
+                  className={`w-12 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                    c2.inlineButtonEnabled !== false ? 'bg-purple-600 justify-end' : 'bg-slate-200 justify-start'
+                  }`}
+                >
+                  <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                </button>
+              </div>
+
+              {c2.inlineButtonEnabled !== false && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                      <span>متن روی دکمه شیشه‌ای کانال دوم</span>
+                      <span className="text-[10px] text-slate-400">پیش‌فرض: 📢 عضویت در کانال</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="مثلاً: 🐸 عضویت در کانال سرگرمی"
+                      value={c2.inlineButtonText || ''}
+                      onChange={(e) => updateChannel2({ inlineButtonText: e.target.value })}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-purple-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                      <span>لینک مقصد دکمه شیشه‌ای کانال دوم</span>
+                      <span className="text-[10px] text-slate-400">لینک تلگرام کانال دوم</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="https://t.me/ghourbagheBshort یا خالی برای لینک خودکار کانال ۲"
+                      value={c2.inlineButtonUrl || ''}
+                      onChange={(e) => updateChannel2({ inlineButtonUrl: e.target.value })}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-purple-500 focus:outline-none"
+                      dir="ltr"
+                    />
+                    <p className="text-[10px] text-purple-600/80">در صورت خالی بودن، لینک خودکار همین کانال دوم (t.me/targetChannel) درج می‌شود و لینک کانال اول وارد نخواهد شد.</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Special Highlight Category: Fun & General News for Channel 2 */}
