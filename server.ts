@@ -9682,7 +9682,8 @@ async function startExpressServer() {
       '/api/tech-items',
       '/api/vpn-files',
       '/api/fun-sources',
-      '/api/fun-news'
+      '/api/fun-news',
+      '/api/ai-prompts'
     ];
     if (req.method === 'GET' && publicGetPaths.includes(req.path)) {
       return next();

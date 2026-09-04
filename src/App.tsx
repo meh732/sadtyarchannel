@@ -76,6 +76,7 @@ import {
 } from './types';
 import { AutoPostView } from './components/AutoPostView';
 import { FunNewsView } from './components/FunNewsView';
+import { PromptsView } from './components/PromptsView';
 
 // Define custom window type extensions for Telegram WebApp
 declare global {
@@ -235,19 +236,6 @@ export default function App() {
     category: 'trick' as TechItemCategory,
     importance: 'high' as TechImportance
   });
-
-  // AI Prompts Search, Filter & Form States
-  const [showPromptModal, setShowPromptModal] = useState(false);
-  const [editingPrompt, setEditingPrompt] = useState<AiPrompt | null>(null);
-  const [promptForm, setPromptForm] = useState({
-    title: '',
-    category: 'image' as AiPromptCategory,
-    description: '',
-    promptText: '',
-    imageUrl: ''
-  });
-  const [promptSearch, setPromptSearch] = useState('');
-  const [promptCategoryFilter, setPromptCategoryFilter] = useState<string>('all');
 
   // Form Input States
   const [newSource, setNewSource] = useState({
@@ -495,7 +483,7 @@ export default function App() {
           setProxies(proxiesRes || []);
           setVpnFiles(vpnRes || []);
           setTechItems(techRes || []);
-          setAiPrompts(promptsRes || []);
+          setAiPrompts(Array.isArray(promptsRes) ? promptsRes : []);
           setFunNewsItems(funNewsRes || []);
           setFunSources(funSourcesRes || []);
           setUsers(usersRes);
@@ -550,7 +538,7 @@ export default function App() {
           setProxies(proxiesRes || []);
           setVpnFiles(vpnRes || []);
           setTechItems(techRes || []);
-          setAiPrompts(promptsRes || []);
+          setAiPrompts(Array.isArray(promptsRes) ? promptsRes : []);
         }
       } else {
         if (token) {
@@ -593,7 +581,7 @@ export default function App() {
           if (fetchVpnNeeded) { setVpnFiles(results[idx] || []); idx++; }
           if (fetchJoinNeeded) { setForceJoinChannels(results[idx]); idx++; }
           if (fetchUsersNeeded) { setUsers(results[idx]); idx++; }
-          if (fetchPromptsNeeded) { setAiPrompts(results[idx] || []); idx++; }
+          if (fetchPromptsNeeded) { setAiPrompts(Array.isArray(results[idx]) ? results[idx] : []); idx++; }
           if (fetchFunNewsNeeded) {
             setFunNewsItems(results[idx] || []); idx++;
             setFunSources(results[idx] || []); idx++;
@@ -620,7 +608,7 @@ export default function App() {
             if (fetchProxiesNeeded) { setProxies(results[idx] || []); idx++; }
             if (fetchVpnNeeded) { setVpnFiles(results[idx] || []); idx++; }
             if (fetchTechNeeded) { setTechItems(results[idx] || []); idx++; }
-            if (fetchPromptsNeeded) { setAiPrompts(results[idx] || []); idx++; }
+            if (fetchPromptsNeeded) { setAiPrompts(Array.isArray(results[idx]) ? results[idx] : []); idx++; }
           }
         }
       }
@@ -1584,44 +1572,41 @@ export default function App() {
     }
   };
 
-  const handleCreateOrUpdatePrompt = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!promptForm.title || !promptForm.promptText) {
-      showToast('لطفا عنوان و متن انگلیسی پرامپت را وارد نمایید.', 'error');
-      return;
-    }
-
+  const handleSavePrompt = async (promptData: {
+    id?: string;
+    title: string;
+    category: AiPromptCategory;
+    description: string;
+    promptText: string;
+    imageUrl?: string;
+    tags?: string[];
+  }): Promise<boolean> => {
     setActionLoading('save_prompt');
     try {
-      const isEdit = !!editingPrompt;
-      const url = isEdit ? `/api/ai-prompts/${editingPrompt.id}` : '/api/ai-prompts';
+      const isEdit = !!promptData.id;
+      const url = isEdit ? `/api/ai-prompts/${promptData.id}` : '/api/ai-prompts';
       const method = isEdit ? 'PUT' : 'POST';
 
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(promptForm)
+        body: JSON.stringify(promptData)
       });
       const data = await res.json();
 
       if (data.success) {
         showToast(isEdit ? 'پرامپت با موفقیت بروزرسانی شد.' : 'پرامپت جدید با موفقیت ثبت گردید.', 'success');
-        setShowPromptModal(false);
-        setEditingPrompt(null);
-        setPromptForm({
-          title: '',
-          category: 'image',
-          description: '',
-          promptText: '',
-          imageUrl: ''
-        });
         const promptsRes = await fetch('/api/ai-prompts').then(r => r.json());
-        setAiPrompts(promptsRes);
+        setAiPrompts(Array.isArray(promptsRes) ? promptsRes : []);
+        fetchData(true);
+        return true;
       } else {
         showToast(data.message || 'خطا در ذخیره‌سازی پرامپت', 'error');
+        return false;
       }
     } catch (err) {
       showToast('خطا در ارتباط با سرور', 'error');
+      return false;
     } finally {
       setActionLoading(null);
     }
@@ -1638,7 +1623,7 @@ export default function App() {
       if (data.success) {
         showToast('پرامپت با موفقیت حذف شد.', 'success');
         const promptsRes = await fetch('/api/ai-prompts').then(r => r.json());
-        setAiPrompts(promptsRes);
+        setAiPrompts(Array.isArray(promptsRes) ? promptsRes : []);
       } else {
         showToast(data.message || 'خطا در حذف پرامپت', 'error');
       }
@@ -1678,7 +1663,7 @@ export default function App() {
       if (data.success) {
         showToast(`پویش و استخراج آنلاین پرامپت‌ها انجام شد: ${data.addedCount} پرامپت طلایی و عکس واقعی از وب استخراج شد.`, 'success');
         const itemsRes = await fetch('/api/ai-prompts').then(r => r.json());
-        setAiPrompts(itemsRes || []);
+        setAiPrompts(Array.isArray(itemsRes) ? itemsRes : []);
       } else {
         showToast(data.message || 'خطا در دریافت پرامپت‌ها', 'error');
       }
@@ -1888,113 +1873,11 @@ export default function App() {
     );
   }
 
-  if (!token) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden text-slate-100 font-sans" dir="rtl">
-        {/* Decorative background grid/gradients */}
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#0f172a_1px,transparent_1px),linear-gradient(to_bottom,#0f172a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-30" />
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl" />
-
-        <div className="w-full max-w-md bg-slate-900/90 backdrop-blur-xl border border-slate-800 rounded-2xl p-8 shadow-2xl relative z-10">
-          <div className="flex flex-col items-center text-center mb-8">
-            <div className="w-16 h-16 rounded-2xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center shadow-lg mb-4">
-              <Bot className="w-8 h-8 text-indigo-400" />
-            </div>
-            <h1 className="text-xl font-black text-white tracking-tight">ورود به پنل مدیریت ربات ⚙️</h1>
-            <p className="text-xs text-slate-400 mt-2">دسترسی به این پنل منحصراً در اختیار مدیریت ربات می‌باشد.</p>
-          </div>
-
-          {authError && (
-            <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs text-rose-300 flex items-start gap-3 animate-pulse">
-              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-              <div className="leading-relaxed">{authError}</div>
-            </div>
-          )}
-
-          {isTgWebApp ? (
-            <div className="text-center py-6">
-              <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin mx-auto mb-4" />
-              <p className="text-sm font-semibold text-white">در حال تایید خودکار هویت شما در تلگرام...</p>
-              <p className="text-xs text-slate-400 mt-2">ربات در حال بررسی شناسه تلگرامی شما است.</p>
-            </div>
-          ) : (
-            <form onSubmit={handlePasswordLogin} className="space-y-5">
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-2">نام کاربری:</label>
-                <input
-                  type="text"
-                  value={loginUsername}
-                  onChange={(e) => setLoginUsername(e.target.value)}
-                  placeholder="نام کاربری (مثال: admin)"
-                  className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-center tracking-widest text-white placeholder:tracking-normal transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-2">رمز عبور پنل مدیریت:</label>
-                <input
-                  type="password"
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  placeholder="رمز عبور خود را وارد کنید..."
-                  className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-center tracking-widest text-white placeholder:tracking-normal transition-all"
-                  required
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={actionLoading === 'login'}
-                className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-600/20 cursor-pointer"
-              >
-                {actionLoading === 'login' ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>در حال ورود...</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-4 h-4" />
-                    <span>ورود امن به پنل 🔐</span>
-                  </>
-                )}
-              </button>
-            </form>
-          )}
-
-          <div className="mt-8 pt-6 border-t border-slate-800 text-center text-[11px] text-slate-500">
-            طراحی شده با ❤️ برای مدیریت هوشمند پروکسی و محتوا
-          </div>
-        </div>
-
-        {/* Public Toast Container */}
-        <AnimatePresence>
-          {toast && (
-            <motion.div
-              initial={{ opacity: 0, y: 50, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 20, scale: 0.95 }}
-              className={`fixed bottom-6 left-6 z-50 flex items-center gap-3 px-5 py-4 rounded-xl shadow-xl max-w-sm border ${
-                toast.type === 'success' 
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
-                  : toast.type === 'error' 
-                  ? 'bg-rose-50 border-rose-200 text-rose-800' 
-                  : 'bg-blue-50 border-blue-200 text-blue-800'
-              }`}
-            >
-              {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />}
-              {toast.type === 'error' && <XCircle className="w-5 h-5 text-rose-600 shrink-0" />}
-              {toast.type === 'info' && <Info className="w-5 h-5 text-blue-600 shrink-0" />}
-              <span className="text-sm font-medium leading-relaxed">{toast.message}</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-      </div>
-    );
+  if (!token || activeTab === 'public_panel') {
+    return renderPublicWebPanel();
   }
 
-  const renderPublicWebPanel = () => {
+  function renderPublicWebPanel() {
     const resolvedTab = publicSubTab;
 
     return (
@@ -2022,16 +1905,39 @@ export default function App() {
             </div>
 
             {/* Live stats counter */}
-            <div className="flex items-center gap-3.5 bg-slate-800/40 backdrop-blur border border-slate-700/50 rounded-2xl p-3 px-4 text-xs">
-              <div className="flex items-center gap-1.5 border-l border-slate-700/80 pl-3">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                <span className="text-slate-400">کانفیگ‌های فعال:</span>
-                <strong className="text-emerald-400 font-black">{configs.filter(c => c.status === 'working').length}</strong>
+            {/* Live stats counter & Admin Button */}
+            <div className="flex items-center gap-3">
+              <div className="hidden sm:flex items-center gap-3.5 bg-slate-800/40 backdrop-blur border border-slate-700/50 rounded-2xl p-3 px-4 text-xs">
+                <div className="flex items-center gap-1.5 border-l border-slate-700/80 pl-3">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  <span className="text-slate-400">کانفیگ‌های فعال:</span>
+                  <strong className="text-emerald-400 font-black">{configs.filter(c => c.status === 'working').length}</strong>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-400">پروکسی فعال:</span>
+                  <strong className="text-indigo-400 font-black">{proxies.filter(p => p.status === 'working').length}</strong>
+                </div>
               </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-slate-400">پروکسی فعال:</span>
-                <strong className="text-indigo-400 font-black">{proxies.filter(p => p.status === 'working').length}</strong>
-              </div>
+
+              {token ? (
+                <button
+                  onClick={() => setActiveTab('dashboard')}
+                  className="flex items-center gap-1.5 px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-indigo-600/20 cursor-pointer"
+                  title="بازگشت به پنل مدیریت"
+                >
+                  <Bot className="w-4 h-4" />
+                  <span>داشبورد مدیریت</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => setShowLoginModal(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700/60 transition-all cursor-pointer"
+                  title="ورود مدیریت سیستم"
+                >
+                  <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                  <span>ورود مدیر</span>
+                </button>
+              )}
             </div>
           </div>
         </header>
@@ -2041,7 +1947,7 @@ export default function App() {
           <div className="max-w-6xl mx-auto px-5">
             <div className="flex items-center gap-1.5 overflow-x-auto py-3 scrollbar-none">
               <button
-                onClick={() => setActiveTab('configs')}
+                onClick={() => setPublicSubTab('configs')}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                   resolvedTab === 'configs'
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-black'
@@ -2053,7 +1959,7 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => setActiveTab('proxies')}
+                onClick={() => setPublicSubTab('proxies')}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                   resolvedTab === 'proxies'
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-black'
@@ -2065,7 +1971,7 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => setActiveTab('vpn_files')}
+                onClick={() => setPublicSubTab('vpn_files')}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                   resolvedTab === 'vpn_files'
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-black'
@@ -2077,7 +1983,7 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => setActiveTab('tech')}
+                onClick={() => setPublicSubTab('tech')}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                   resolvedTab === 'tech'
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-black'
@@ -2086,6 +1992,18 @@ export default function App() {
               >
                 <BookOpen className="w-4 h-4 shrink-0" />
                 <span>اخبار و ترفندها ({techItems.length})</span>
+              </button>
+
+              <button
+                onClick={() => setPublicSubTab('prompts')}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                  resolvedTab === 'prompts'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/15 font-black'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <Palette className="w-4 h-4 shrink-0 text-pink-500" />
+                <span>بانک پرامپت‌ها ({aiPrompts.length})</span>
               </button>
             </div>
           </div>
@@ -2530,6 +2448,29 @@ export default function App() {
                 </motion.div>
               )}
 
+              {/* --- TAB: AI PROMPTS --- */}
+              {resolvedTab === 'prompts' && (
+                <motion.div
+                  key="prompts"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                >
+                  <PromptsView
+                    aiPrompts={aiPrompts}
+                    token={token}
+                    actionLoading={actionLoading}
+                    targetChannel1={settings?.autoPost?.targetChannel}
+                    targetChannel2={settings?.autoPost?.channel2?.targetChannel}
+                    showToast={showToast}
+                    onRefreshPrompts={handleRefreshPrompts}
+                    onSavePrompt={handleSavePrompt}
+                    onDeletePrompt={handleDeletePrompt}
+                    onTriggerSendPrompt={handleTriggerAiPromptsAutoPost}
+                  />
+                </motion.div>
+              )}
+
             </AnimatePresence>
           )}
         </main>
@@ -2718,6 +2659,21 @@ export default function App() {
 
         {/* Navigation Menu */}
         <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
+          <button
+            onClick={() => setActiveTab('public_panel')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
+              activeTab === 'public_panel'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                : 'text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20'
+            }`}
+          >
+            <Globe className="w-4 h-4 text-emerald-400" />
+            <span>مشاهده پنل وب عمومی</span>
+            <span className="mr-auto text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-bold">
+              کاربر
+            </span>
+          </button>
+
           <button
             onClick={() => setActiveTab('dashboard')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
@@ -4611,324 +4567,18 @@ export default function App() {
 
               {/* --- TAB: AI PROMPTS MANAGEMENT --- */}
               {activeTab === 'prompts' && (
-                <motion.div
-                  key="prompts"
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -15 }}
-                  className="space-y-6"
-                >
-                  {/* Action Bar & Stats */}
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-                    <div className="space-y-1">
-                      <h3 className="text-lg font-bold text-slate-800">بانک پرامپت‌های طلایی و ترند</h3>
-                      <p className="text-xs text-slate-500">
-                        مجموعاً <strong>{aiPrompts.length}</strong> نمونه پرامپت خلاقانه ثبت شده است.
-                      </p>
-                    </div>
-                    {token && (
-                      <div className="flex items-center gap-2.5 self-start md:self-auto w-full md:w-auto">
-                        <button
-                          onClick={handleRefreshPrompts}
-                          disabled={actionLoading === 'refresh_prompts'}
-                          className="flex-1 md:flex-none px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
-                        >
-                          <RefreshCw className={`w-3.5 h-3.5 ${actionLoading === 'refresh_prompts' ? 'animate-spin' : ''}`} />
-                          <span>{actionLoading === 'refresh_prompts' ? 'در حال استخراج...' : 'بروزرسانی آنلاین'}</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setEditingPrompt(null);
-                            setPromptForm({
-                              title: '',
-                              category: 'image',
-                              description: '',
-                              promptText: '',
-                              imageUrl: ''
-                            });
-                            setShowPromptModal(true);
-                          }}
-                          className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/10 cursor-pointer transition-all duration-150"
-                        >
-                          <Plus className="w-4 h-4" />
-                          <span>ثبت پرامپت جدید</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Search and Filters */}
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                    <div className="relative flex-1">
-                      <Search className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="جستجو در بین پرامپت‌ها، سبک‌ها یا عناوین..."
-                        value={promptSearch}
-                        onChange={(e) => setPromptSearch(e.target.value)}
-                        className="w-full pl-4 pr-11 py-3 bg-white border border-slate-200 text-slate-800 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all duration-150 shadow-sm"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Filter className="w-4 h-4 text-slate-400" />
-                      <select
-                        value={promptCategoryFilter}
-                        onChange={(e) => setPromptCategoryFilter(e.target.value)}
-                        className="bg-white border border-slate-200 text-slate-700 text-xs rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer shadow-sm"
-                      >
-                        <option value="all">همه دسته‌ها</option>
-                        <option value="image">🎨 ساخت تصویر (Image Gen)</option>
-                        <option value="video">🎥 ساخت ویدیو (Video Gen)</option>
-                        <option value="chat">✍️ متنی و چت‌بات‌ها (Chat/LLM)</option>
-                        <option value="other">⚙️ سایر موارد</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Prompts Grid */}
-                  {useMemo(() => {
-                    const filtered = aiPrompts.filter((p) => {
-                      const matchesSearch =
-                        p.title.toLowerCase().includes(promptSearch.toLowerCase()) ||
-                        p.promptText.toLowerCase().includes(promptSearch.toLowerCase()) ||
-                        p.description.toLowerCase().includes(promptSearch.toLowerCase());
-                      const matchesCategory =
-                        promptCategoryFilter === 'all' || p.category === promptCategoryFilter;
-                      return matchesSearch && matchesCategory;
-                    });
-
-                    if (filtered.length === 0) {
-                      return (
-                        <div className="bg-white border border-slate-200 rounded-2xl py-20 text-center flex flex-col items-center justify-center text-slate-400 gap-3">
-                          <Palette className="w-12 h-12 text-slate-300 animate-pulse" />
-                          <p className="text-sm font-bold text-slate-600">هیچ پرامپت معتبری یافت نشد.</p>
-                          <p className="text-xs text-slate-400">کلمات کلیدی جستجو را تغییر دهید یا پرامپت جدیدی تعریف کنید.</p>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {filtered.map((p) => (
-                          <div
-                            key={p.id}
-                            className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow duration-250 relative"
-                          >
-                            {/* Preview Image */}
-                            <div className="relative aspect-video w-full bg-slate-900 border-b border-slate-100 overflow-hidden">
-                              {p.imageUrl ? (
-                                <img
-                                  src={p.imageUrl}
-                                  alt={p.title}
-                                  referrerPolicy="no-referrer"
-                                  className="w-full h-full object-cover"
-                                />
-                              ) : (
-                                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 gap-2">
-                                  <Image className="w-10 h-10 text-slate-600" />
-                                  <span className="text-[10px] text-slate-600">فاقد تصویر پیش‌نمایش</span>
-                                </div>
-                              )}
-                              <span
-                                className={`absolute left-3 top-3 text-[10px] font-bold px-2.5 py-1 rounded-full shadow-sm text-white ${
-                                  p.category === 'image'
-                                    ? 'bg-pink-600'
-                                    : p.category === 'video'
-                                    ? 'bg-purple-600'
-                                    : p.category === 'chat'
-                                    ? 'bg-teal-600'
-                                    : 'bg-slate-600'
-                                }`}
-                              >
-                                {p.category === 'image' && '🎨 ساخت تصویر'}
-                                {p.category === 'video' && '🎥 ساخت ویدیو'}
-                                {p.category === 'chat' && '✍️ چت‌بات'}
-                                {p.category === 'other' && '⚙️ سایر'}
-                              </span>
-                            </div>
-
-                            {/* Card Content */}
-                            <div className="p-5 flex-1 flex flex-col space-y-3">
-                              <h4 className="text-sm font-extrabold text-slate-800 line-clamp-1">
-                                {p.title}
-                              </h4>
-                              <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">
-                                {p.description || 'توضیحاتی برای این پرامپت ثبت نشده است.'}
-                              </p>
-
-                              {/* Copyable Prompt block */}
-                              <div className="relative bg-slate-50 border border-slate-100 rounded-xl p-3.5 mt-2 flex-1 flex flex-col justify-between min-h-[100px]">
-                                <pre
-                                  className="text-[11px] font-mono text-slate-700 whitespace-pre-wrap break-all select-all leading-tight max-h-[120px] overflow-y-auto"
-                                  dir="ltr"
-                                >
-                                  {p.promptText}
-                                </pre>
-                                <button
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(p.promptText);
-                                    showToast('متن انگلیسی پرامپت با موفقیت کپی شد!', 'success');
-                                  }}
-                                  className="absolute left-2.5 bottom-2.5 p-1.5 bg-white border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 rounded-lg shadow-sm transition-colors cursor-pointer"
-                                  title="کپی کردن پرامپت"
-                                >
-                                  <Copy className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-
-                              {/* Admin Actions */}
-                              {token && (
-                                <div className="flex items-center gap-2 pt-3 border-t border-slate-100 justify-end">
-                                  <button
-                                    onClick={() => {
-                                      setEditingPrompt(p);
-                                      setPromptForm({
-                                        title: p.title,
-                                        category: p.category,
-                                        description: p.description,
-                                        promptText: p.promptText,
-                                        imageUrl: p.imageUrl || ''
-                                      });
-                                      setShowPromptModal(true);
-                                    }}
-                                    className="p-2 bg-slate-50 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                                    title="ویرایش پرامپت"
-                                  >
-                                    <Edit className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeletePrompt(p.id)}
-                                    disabled={actionLoading === `delete_prompt_${p.id}`}
-                                    className="p-2 bg-rose-50 text-rose-600 hover:text-rose-900 hover:bg-rose-100 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                                    title="حذف پرامپت"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  }, [aiPrompts, promptSearch, promptCategoryFilter, token])}
-
-                  {/* Add/Edit Modal */}
-                  {showPromptModal && (
-                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden flex flex-col border border-slate-100 max-h-[90vh]"
-                      >
-                        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-                          <h3 className="font-extrabold text-sm text-slate-800">
-                            {editingPrompt ? '✍️ ویرایش پرامپت انتخابی' : '➕ ثبت پرامپت طلایی جدید'}
-                          </h3>
-                          <button
-                            onClick={() => setShowPromptModal(false)}
-                            className="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
-                          >
-                            <X className="w-5 h-5" />
-                          </button>
-                        </div>
-
-                        <form onSubmit={handleCreateOrUpdatePrompt} className="p-6 overflow-y-auto space-y-4 flex-1">
-                          <div className="space-y-1.5">
-                            <label className="text-xs font-bold text-slate-700">عنوان نمونه پرامپت (فارسی)</label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="مثال: تصویر نئونی پرتره دختر فضانورد در مریخ"
-                              value={promptForm.title}
-                              onChange={(e) => setPromptForm({ ...promptForm, title: e.target.value })}
-                              className="w-full px-4 py-2.5 border border-slate-200 text-slate-800 text-xs rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all duration-150"
-                            />
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-1.5">
-                              <label className="text-xs font-bold text-slate-700">دسته‌بندی</label>
-                              <select
-                                value={promptForm.category}
-                                onChange={(e) => setPromptForm({ ...promptForm, category: e.target.value as AiPromptCategory })}
-                                className="w-full bg-white px-4 py-2.5 border border-slate-200 text-slate-700 text-xs rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none cursor-pointer transition-all duration-150"
-                              >
-                                <option value="image">🎨 ساخت تصویر</option>
-                                <option value="video">🎥 ساخت ویدیو</option>
-                                <option value="chat">✍️ متنی و چت‌بات</option>
-                                <option value="other">⚙️ سایر موارد</option>
-                              </select>
-                            </div>
-
-                            <div className="space-y-1.5">
-                              <label className="text-xs font-bold text-slate-700">تصویر نمونه (URL)</label>
-                              <input
-                                type="url"
-                                placeholder="https://example.com/image.png"
-                                value={promptForm.imageUrl}
-                                onChange={(e) => setPromptForm({ ...promptForm, imageUrl: e.target.value })}
-                                className="w-full px-4 py-2.5 border border-slate-200 text-slate-800 text-xs rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all duration-150"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="space-y-1.5">
-                            <label className="text-xs font-bold text-slate-700">توضیحات و راهنمای فارسی</label>
-                            <textarea
-                              rows={2}
-                              placeholder="توضیح دهید این پرامپت چه سبکی دارد، برای چه هوش مصنوعی مناسب است یا چطور کار می‌کند..."
-                              value={promptForm.description}
-                              onChange={(e) => setPromptForm({ ...promptForm, description: e.target.value })}
-                              className="w-full px-4 py-2.5 border border-slate-200 text-slate-800 text-xs rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all duration-150"
-                            />
-                          </div>
-
-                          <div className="space-y-1.5">
-                            <label className="text-xs font-bold text-slate-700">متن انگلیسی پرامپت (جهت کپی کردن)</label>
-                            <textarea
-                              rows={4}
-                              required
-                              placeholder="A photorealistic cinematic portrait of a female astronaut sitting on Mars, neon lighting, highly detailed cyberpunk aesthetics, unreal engine 5, 8k render..."
-                              value={promptForm.promptText}
-                              onChange={(e) => setPromptForm({ ...promptForm, promptText: e.target.value })}
-                              className="w-full px-4 py-2.5 border border-slate-200 text-slate-800 text-xs font-mono rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all duration-150"
-                              dir="ltr"
-                            />
-                          </div>
-
-                          <div className="flex items-center gap-3 pt-4 border-t border-slate-100 justify-end">
-                            <button
-                              type="button"
-                              onClick={() => setShowPromptModal(false)}
-                              className="px-4 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-bold transition-colors cursor-pointer"
-                            >
-                              انصراف
-                            </button>
-                            <button
-                              type="submit"
-                              disabled={actionLoading === 'save_prompt'}
-                              className="flex items-center justify-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/10 cursor-pointer disabled:opacity-50 transition-all duration-150"
-                            >
-                              {actionLoading === 'save_prompt' ? (
-                                <>
-                                  <RefreshCw className="w-4 h-4 animate-spin" />
-                                  <span>در حال ثبت...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Check className="w-4 h-4" />
-                                  <span>ذخیره‌سازی پرامپت</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </form>
-                      </motion.div>
-                    </div>
-                  )}
-                </motion.div>
+                <PromptsView
+                  aiPrompts={aiPrompts}
+                  token={token}
+                  actionLoading={actionLoading}
+                  targetChannel1={settings?.autoPost?.targetChannel}
+                  targetChannel2={settings?.autoPost?.channel2?.targetChannel}
+                  showToast={showToast}
+                  onRefreshPrompts={handleRefreshPrompts}
+                  onSavePrompt={handleSavePrompt}
+                  onDeletePrompt={handleDeletePrompt}
+                  onTriggerSendPrompt={handleTriggerAiPromptsAutoPost}
+                />
               )}
               {activeTab === 'autopost' && (
                 <motion.div
