@@ -160,6 +160,7 @@ export interface BotUser {
   joinedAt: string;
   lastActive: string;
   configsFetched: number;
+  seenPrompts?: string[];
 }
 
 export interface BotLog {

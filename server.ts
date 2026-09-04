@@ -553,7 +553,8 @@ function getGeminiClient(): GoogleGenAI | null {
 }
 
 // --- Live Real-Time AI Prompt Extractor (Photo-styling & Face Combination) ---
-async function fetchLiveTrendingAiPromptFromInternet(categoryKey?: string): Promise<{
+async function fetchLiveTrendingAiPromptFromInternet(categoryKey?: string, chatId?: number): Promise<{
+  id: string;
   title: string;
   category: 'image' | 'video' | 'chat' | 'other';
   styleCategory?: string;
@@ -564,6 +565,9 @@ async function fetchLiveTrendingAiPromptFromInternet(categoryKey?: string): Prom
   tipsForPersonalPhoto?: string;
 }> {
   const allLocal = db.aiPrompts || [];
+  let user = chatId ? db.users.find(u => u.chatId === chatId) : null;
+  const seenIds = new Set(user?.seenPrompts || []);
+
   let candidates = allLocal.filter(p => !p.postedToChannel);
   
   if (categoryKey && categoryKey !== 'random') {
@@ -578,9 +582,34 @@ async function fetchLiveTrendingAiPromptFromInternet(categoryKey?: string): Prom
     candidates = allLocal;
   }
 
-  if (candidates.length > 0) {
-    const p = candidates[Math.floor(Math.random() * candidates.length)];
+  // Filter out seen prompts
+  let unseenCandidates = candidates.filter(p => !seenIds.has(p.id));
+  
+  // If all candidates in this category are seen, clear seenPrompts for this user to restart cycle
+  if (unseenCandidates.length === 0 && candidates.length > 0) {
+    if (user) {
+      user.seenPrompts = [];
+      saveDatabase();
+    }
+    unseenCandidates = candidates;
+  }
+
+  const finalCandidates = unseenCandidates.length > 0 ? unseenCandidates : candidates;
+
+  if (finalCandidates.length > 0) {
+    const p = finalCandidates[Math.floor(Math.random() * finalCandidates.length)];
+    
+    // Save to seen history
+    if (user) {
+      if (!user.seenPrompts) user.seenPrompts = [];
+      if (!user.seenPrompts.includes(p.id)) {
+        user.seenPrompts.push(p.id);
+        saveDatabase();
+      }
+    }
+
     return {
+      id: p.id,
       title: p.title,
       category: p.category as any,
       styleCategory: p.styleCategory || categoryKey,
@@ -592,7 +621,17 @@ async function fetchLiveTrendingAiPromptFromInternet(categoryKey?: string): Prom
     };
   }
 
+  const fallbackId = 'prompt-fallback-pixar';
+  if (user) {
+    if (!user.seenPrompts) user.seenPrompts = [];
+    if (!user.seenPrompts.includes(fallbackId)) {
+      user.seenPrompts.push(fallbackId);
+      saveDatabase();
+    }
+  }
+
   return {
+    id: fallbackId,
     title: 'تبدیل عکس چهره به کاراکتر انیمیشنی ۳ بعدی پیکسار',
     category: 'image',
     styleCategory: 'pixar',
@@ -3464,87 +3503,273 @@ async function fetchLiveTechFromRss(): Promise<number> {
 }
 
 
-// --- AI Prompts Background Auto-Updater ---
-async function fetchLiveAiPromptsFromWeb(): Promise<number> {
-  const ai = getGeminiClient();
-  if (!ai) return 0;
+// --- Dynamic Local Classifier for Prompt Scraper ---
+function parseRedditPromptAndStyle(titleText: string): {
+  styleCategory: string;
+  persianTitle: string;
+  persianDesc: string;
+  tips: string;
+  tags: string[];
+} {
+  const text = titleText.toLowerCase();
   
-  const categories = [
-    { key: 'pixar', query: 'disney pixar 3d character prompt midjourney lexica' },
-    { key: 'family', query: 'family portrait baby parents cozy photography prompt midjourney' },
-    { key: 'couple', query: 'romantic couple wedding photoshoot cinematic prompt midjourney' },
-    { key: 'cyberpunk', query: 'cyberpunk neon futuristic portrait prompt midjourney' },
-    { key: 'royal', query: 'royal king queen historical portrait oil painting prompt' },
-    { key: 'artistic', query: 'studio ghibli anime style portrait prompt midjourney' },
-    { key: 'fashion', query: 'high fashion editorial studio lighting portrait prompt lexica' },
-    { key: 'random', query: 'top trending latest hyperrealistic photography prompt midjourney 2024' }
+  if (text.includes('disney') || text.includes('pixar') || text.includes('3d') || text.includes('character') || text.includes('toy story')) {
+    return {
+      styleCategory: 'pixar',
+      persianTitle: 'پرتره سه‌بعدی به سبک کاراکتر دیزنی پیکسار',
+      persianDesc: 'خلق کاراکترهای سه‌بعدی کارتونی، بانمک و شگفت‌انگیز با چشمان درخشان و عمق میدان ملایم انیمیشنی.',
+      tips: 'عکسی با زاویه روبرو و نور شفاف آپلود کنید تا بهترین تناسب اجزای صورت به سبک پیکسار به دست آید.',
+      tags: ['پیکسار', 'دیزنی', 'انیمیشن_۳بعدی', 'pixar']
+    };
+  }
+  
+  if (text.includes('cyberpunk') || text.includes('neon') || text.includes('futuristic') || text.includes('scifi') || text.includes('cyber') || text.includes('hologram')) {
+    return {
+      styleCategory: 'cyberpunk',
+      persianTitle: 'پرتره سایبرپانک نئونی آینده‌نگرانه',
+      persianDesc: 'شبیه‌سازی چهره شما در دنیای مدرن سایبربانکی با بازتاب خیره‌کننده نورهای نئون صورتی و آبی ملایم.',
+      tips: 'استفاده از عکس‌های پرتره با ژست جدی و بدون لبخند، حس سرد و جذاب دنیای سایبرپانک را عمیق‌تر بروز می‌دهد.',
+      tags: ['سایبرپانک', 'آینده_نگرانه', 'نئونی', 'cyberpunk']
+    };
+  }
+  
+  if (text.includes('royal') || text.includes('king') || text.includes('queen') || text.includes('historical') || text.includes('painting') || text.includes('renaissance') || text.includes('oil')) {
+    return {
+      styleCategory: 'royal',
+      persianTitle: 'نقاشی رنگ روغن کلاسیک سلطنتی',
+      persianDesc: 'تبدیل چهره شما به یک پادشاه، ملکه یا اصیل‌زاده دوران تاریخی رنسانس با بافت مجلل بوم نقاشی.',
+      tips: 'جهت همخوانی با نقاشی رنگ روغن، عکسی کاملاً مستقیم، باوقار و جدی بدون لوازم جانبی مدرن بفرستید.',
+      tags: ['سلطنتی', 'نقاشی_کلاسیک', 'رنسانس', 'royal']
+    };
+  }
+  
+  if (text.includes('ghibli') || text.includes('anime') || text.includes('cartoon') || text.includes('watercolor') || text.includes('manga') || text.includes('illustration')) {
+    return {
+      styleCategory: 'artistic',
+      persianTitle: 'پرتره هنری آبرنگی به سبک انیمه جیبلی',
+      persianDesc: 'خلق تصاویری رویایی با اتمسفر صمیمی و نوستالژیک شبیه به نقاشی‌های شاهکار استودیو جیبلی.',
+      tips: 'یک عکس پرتره شاداب با لبخند ملایم بفرستید تا صمیمیت و گرمای نقاشی‌های جیبلی منعکس شود.',
+      tags: ['جیبلی', 'انیمه', 'هنری', 'artistic']
+    };
+  }
+  
+  if (text.includes('vogue') || text.includes('fashion') || text.includes('studio') || text.includes('editorial') || text.includes('model') || text.includes('portrait')) {
+    return {
+      styleCategory: 'fashion',
+      persianTitle: 'عکاسی آتلیه‌ای های‌فشن و ادیتوریال',
+      persianDesc: 'عکسی فوق‌العاده باکلاس و مدرن با نورپردازی متمرکز استودیویی هم‌تراز با جلد مجلات مطرح فشن دنیا.',
+      tips: 'عکسی شیک با کادربندی پرتره یا سه‌چهارم بفرستید تا حال و هوای فتوشوت مجلات ووگ بازسازی شود.',
+      tags: ['مد_و_فشن', 'عکاسی_آتلیه', 'fashion']
+    };
+  }
+  
+  if (text.includes('family') || text.includes('parents') || text.includes('cozy') || text.includes('children') || text.includes('home')) {
+    return {
+      styleCategory: 'family',
+      persianTitle: 'پرتره گرم و صمیمی خانوادگی',
+      persianDesc: 'ثبت لحظات شیرین و صمیمی خانوادگی در محیط‌های دنج و رویایی با نور گرم شومینه.',
+      tips: 'عکسی دسته‌جمعی یا دونفره صمیمی با لبخندهای پر انرژی و پرنشاط ارسال نمایید.',
+      tags: ['خانوادگی', 'عکاسی_حرفه_ای', 'family']
+    };
+  }
+  
+  if (text.includes('couple') || text.includes('romantic') || text.includes('wedding') || text.includes('love')) {
+    return {
+      styleCategory: 'couple',
+      persianTitle: 'فتوشوت عاشقانه و دونفره احساسی',
+      persianDesc: 'کادری رمانتیک و سینمایی دونفره با رنگ‌های ملایم پاییزی و عمق میدان رویایی برجسته‌کننده چهره.',
+      tips: 'عکسی صمیمی از خود و همسرتان با نگاه مهربان و صمیمی به همراه نور طبیعی روز آپلود کنید.',
+      tags: ['عاشقانه', 'دونفره', 'couple']
+    };
+  }
+
+  // Fallback map
+  const categories = ['pixar', 'family', 'couple', 'cyberpunk', 'royal', 'artistic', 'fashion', 'random'];
+  const chosenCat = categories[Math.floor(Math.random() * categories.length)];
+  
+  const mapping: Record<string, { title: string, desc: string, tips: string, tags: string[] }> = {
+    pixar: {
+      title: 'کاراکتر انیمیشنی سه‌بعدی دیزنی',
+      desc: 'تبدیل تصویر چهره به یک کاراکتر دوست‌داشتنی و جذاب انیمیشن‌های سه‌بعدی مدرن.',
+      tips: 'از عکس پرتره مستقیم با نمای شفاف چهره استفاده نمایید.',
+      tags: ['پیکسار', 'دیزنی', 'pixar']
+    },
+    family: {
+      title: 'عکاسی دنج و گرم خانوادگی',
+      desc: 'طراحی پرتره دنج خانوادگی در اتمسفری فوق‌العاده صمیمی با نوردهی ملایم.',
+      tips: 'یک عکس گروهی یا خانوادگی شاد ارسال کنید.',
+      tags: ['خانوادگی', 'عکاسی', 'family']
+    },
+    couple: {
+      title: 'فتوشوت دونفره رمانتیک پاییزی',
+      desc: 'یک قاب سینمایی زیبا و عاشقانه در فضاهای پاییزی و غروب طلایی خورشید.',
+      tips: 'یک سلفی یا پرتره دونفره باکیفیت و صمیمی آپلود کنید.',
+      tags: ['عاشقانه', 'دونفره', 'couple']
+    },
+    cyberpunk: {
+      title: 'پرتره نئونی سایبرپانک آینده‌نگرانه',
+      desc: 'جلوه درخشان سایبرپانک با رنگ‌های پر جنب و جوش نئون و بافت پیشرفته.',
+      tips: 'عکسی با نمای روبرو و ژست مدرن ارسال نمایید.',
+      tags: ['سایبرپانک', 'نئونی', 'cyberpunk']
+    },
+    royal: {
+      title: 'پرتره نقاشی کلاسیک سلطنتی رنگ روغن',
+      desc: 'چهره شما در کالبد یک نجیب‌زاده تاریخی رنسانس با بافت فاخر رنگ روغن.',
+      tips: 'عکس بدون لوازم جانبی مدرن و عینک بفرستید.',
+      tags: ['سلطنتی', 'نقاشی_کلاسیک', 'royal']
+    },
+    artistic: {
+      title: 'نقاشی فانتزی آبرنگی پرتره هنری',
+      desc: 'چهره شما در قالب نقاشی فانتزی دستی نوستالژیک با ترکیب بی‌نظیر رنگ‌های آبرنگی زنده.',
+      tips: 'عکسی با نمای روبرو و اتمسفر ساده و صمیمی ارسال کنید.',
+      tags: ['هنری', 'انیمه', 'artistic']
+    },
+    fashion: {
+      title: 'عکاسی استودیویی ادیتوریال های‌فشن',
+      desc: 'شبیه‌سازی عکاسی فوق‌العاده شیک مد و فشن با نورپردازی متمرکز روی صورت.',
+      tips: 'یک سلفی باکیفیت بالا و چهره واضح بارگذاری کنید.',
+      tags: ['مد', 'عکاسی_آتلیه', 'fashion']
+    },
+    random: {
+      title: 'عکاسی پرتره سینمایی خلاقانه',
+      desc: 'خلق قاب‌های عکاسی بسیار باکیفیت با نورپردازی غنی دراماتیک و بافت عالی صورت.',
+      tips: 'عکسی با نور کافی و نمای روبرو ارسال کنید.',
+      tags: ['سینمایی', 'پرامپت_عکاسی', 'photorealistic']
+    }
+  };
+
+  const res = mapping[chosenCat] || mapping.random;
+  return {
+    styleCategory: chosenCat,
+    persianTitle: res.title,
+    persianDesc: res.desc,
+    tips: res.tips,
+    tags: res.tags
+  };
+}
+
+function cleanRedditTitle(title: string): string {
+  return title
+    .replace(/\[oc\]/gi, '')
+    .replace(/midjourney|stable diffusion|flux/gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[ "']+|[ "']+$/g, '')
+    .trim();
+}
+
+function buildEnglishPrompt(style: string, cleanedTitle: string): string {
+  switch (style) {
+    case 'pixar':
+      return `${cleanedTitle}, cute 3D Disney Pixar animated style of [your description/photo], round baby face, big expressive glowing eyes, highly detailed texture, soft warm studio lighting, 8k --ar 3:4`;
+    case 'cyberpunk':
+      return `${cleanedTitle}, cyberpunk futuristic style portrait of [your description/photo], neon glowing holographic glasses, reflection of pink and cyan lights, rain-slick streets, cinematic lighting, 8k --ar 3:4`;
+    case 'royal':
+      return `Historical royal oil painting of [your description/photo], ${cleanedTitle}, renaissance style, luxurious gold embroidery velvet robes, classic chiaroscuro lighting, masterpiece fine art textures --ar 3:4`;
+    case 'artistic':
+      return `Studio Ghibli style watercolor illustration of [your description/photo], ${cleanedTitle}, nostalgic magical background, hand-drawn aesthetic, highly detailed, beautiful colors, masterpiece --ar 4:3`;
+    case 'fashion':
+      return `High fashion studio editorial photography of [your description/photo], ${cleanedTitle}, bold studio lighting, minimalist background, crisp textures, professional high-end model look, 8k --ar 3:4`;
+    case 'family':
+      return `Cozy family photography of [your description/photo], ${cleanedTitle}, warm soft lighting, rustic wooden cabin interior, beautiful natural smiles, highly detailed portrait, 8k --ar 4:3`;
+    case 'couple':
+      return `Cinematic romantic couple photoshoot of [your description/photo], ${cleanedTitle}, golden hour natural light, shallow depth of field, beautiful rich colors, photorealistic, 8k --ar 16:9`;
+    default:
+      return `Hyperrealistic professional photography of [your description/photo], ${cleanedTitle}, cinematic atmosphere, dramatic side lighting, highly detailed skin textures, 85mm lens, 8k --ar 3:4`;
+  }
+}
+
+// --- AI Prompts Background Auto-Updater (Non-AI Automated Web Scraper) ---
+async function fetchLiveAiPromptsFromWeb(): Promise<number> {
+  const SUB_REDDITS = [
+    'midjourney',
+    'StableDiffusion',
+    'aiArt'
   ];
 
   let addedCount = 0;
+  if (!db.aiPrompts) db.aiPrompts = [];
   
-  // Pick 3 random categories to refresh each time to avoid giant requests
-  const shuffledCats = categories.sort(() => 0.5 - Math.random()).slice(0, 3);
-  
-  for (const cat of shuffledCats) {
-    try {
-      const prompt = `You are an expert AI Prompt Engineer. Use Google Search to find the LATEST and most trending prompts for Midjourney/Stable Diffusion related to: "${cat.query}".
-Find exactly 2 unique, highly detailed, and professional English prompts. Do not repeat generic ones. Find complex and beautiful ones.
-Return a valid JSON array of objects (no markdown, just JSON) with this exact structure:
-[
-  {
-    "title": "A catchy Persian title (e.g. پرتره سایبرپانک نئونی)",
-    "description": "A very attractive Persian description of the result.",
-    "promptText": "The exact original English prompt text.",
-    "tipsForPersonalPhoto": "یک نکته کوتاه فارسی برای ترکیب این پرامپت با عکس شخصی کاربر",
-    "tags": ["پرامپت", "میدجرنی"]
-  }
-]`;
+  const existingTexts = new Set(db.aiPrompts.map(p => p.promptText.trim().toLowerCase()));
+  const existingUrls = new Set(db.aiPrompts.map(p => p.imageUrl ? p.imageUrl.trim() : ''));
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          tools: [{ googleSearch: {} }],
-          temperature: 0.9,
-          responseMimeType: 'application/json'
+  for (const sub of SUB_REDDITS) {
+    try {
+      const url = `https://www.reddit.com/r/${sub}/.rss`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const resp = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
         }
       });
+      clearTimeout(timeoutId);
 
-      const content = response.text();
-      if (content) {
-        let parsed = [];
-        try {
-          const cleaned = content.replace(/```json\n?|\n?```/g, '').trim();
-          parsed = JSON.parse(cleaned);
-        } catch(e) { continue; }
-        
-        if (!db.aiPrompts) db.aiPrompts = [];
-        const existingTexts = new Set(db.aiPrompts.map(p => p.promptText.trim().toLowerCase()));
-        
-        for (const p of parsed) {
-          if (!p.promptText || p.promptText.length < 15) continue;
-          if (existingTexts.has(p.promptText.trim().toLowerCase())) continue;
-          
-          db.aiPrompts.unshift({
-            id: 'prompt-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
-            title: p.title || 'پرامپت هوش مصنوعی',
-            category: 'image',
-            styleCategory: cat.key,
-            description: p.description || 'پرامپت جذاب و کاربردی',
-            promptText: p.promptText,
-            tipsForPersonalPhoto: p.tipsForPersonalPhoto,
-            imageUrl: 'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=800&auto=format&fit=crop&q=60',
-            tags: Array.isArray(p.tags) ? [...p.tags, cat.key] : [cat.key],
-            createdAt: new Date().toISOString()
-          });
-          addedCount++;
+      if (!resp.ok) continue;
+      const xmlText = await resp.text();
+      if (!xmlText || xmlText.length < 100) continue;
+
+      const itemBlocks = xmlText.match(/<(?:entry)[\s\S]*?<\/entry>/gi) || [];
+      for (const block of itemBlocks.slice(0, 15)) {
+        // 1. Title (Prompt text candidate)
+        const titleMatch = block.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        const rawTitle = cleanHtmlText(titleMatch ? titleMatch[1] : '');
+        if (!rawTitle || rawTitle.length < 8) continue;
+
+        const cleanedTitle = cleanRedditTitle(rawTitle);
+        if (cleanedTitle.length < 5) continue;
+
+        // 2. Extract direct image URL
+        let imageUrl = '';
+        const iReddMatch = block.match(/href="(https:\/\/i\.redd\.it\/[^"]+\.(?:jpe?g|png|webp|gif))"/i);
+        if (iReddMatch) {
+          imageUrl = iReddMatch[1];
+        } else {
+          const previewMatch = block.match(/&lt;img[^&]+src=&quot;([^&]+)&quot;/i) || block.match(/<img[^>]+src="([^"]+)"/i);
+          if (previewMatch) {
+            imageUrl = previewMatch[1].replace(/&amp;/g, '&');
+          } else {
+            const thumbMatch = block.match(/<media:thumbnail[^>]+url="([^"]+)"/i);
+            if (thumbMatch) {
+              imageUrl = thumbMatch[1].replace(/&amp;/g, '&');
+            }
+          }
         }
+
+        if (!imageUrl || !imageUrl.startsWith('http')) continue;
+        if (existingUrls.has(imageUrl.trim())) continue;
+
+        // 3. Categorize & Map to Beautiful Persian
+        const meta = parseRedditPromptAndStyle(cleanedTitle);
+        const englishPrompt = buildEnglishPrompt(meta.styleCategory, cleanedTitle);
+
+        if (existingTexts.has(englishPrompt.trim().toLowerCase())) continue;
+
+        // Add to Database!
+        db.aiPrompts.unshift({
+          id: 'prompt-scraped-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+          title: meta.persianTitle,
+          category: 'image',
+          styleCategory: meta.styleCategory,
+          description: meta.persianDesc,
+          promptText: englishPrompt,
+          tipsForPersonalPhoto: meta.tips,
+          imageUrl: imageUrl,
+          tags: meta.tags,
+          createdAt: new Date().toISOString()
+        });
+
+        existingTexts.add(englishPrompt.trim().toLowerCase());
+        existingUrls.add(imageUrl.trim());
+        addedCount++;
       }
     } catch (err) {
-      console.error('Error fetching prompt for cat', cat.key, err);
+      console.error(`Error scraping prompt feed for r/${sub}:`, err);
     }
-    // Small delay between searches
-    await new Promise(r => setTimeout(r, 3000));
+    // Small delay
+    await new Promise(r => setTimeout(r, 1500));
   }
   return addedCount;
 }
@@ -8130,7 +8355,7 @@ async function handleBotUpdate(update: any) {
       await answerCallback('🔄 در حال جستجو و استخراج پرامپت ترند از وب...');
       
       try {
-        const livePrompt = await fetchLiveTrendingAiPromptFromInternet(subCat);
+        const livePrompt = await fetchLiveTrendingAiPromptFromInternet(subCat, chatId);
         
         let badgeEmoji = '🎨';
         let badgeTitle = 'پرامپت هوش مصنوعی';
@@ -9695,6 +9920,16 @@ async function startExpressServer() {
     try {
       const added = await refreshTechContentAndPurgeOld();
       res.json({ success: true, addedCount: added, totalCount: (db.techItems || []).length });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Refresh AI Prompts Content (Fetch & Purge old)
+  app.post('/api/ai-prompts/refresh', async (req, res) => {
+    try {
+      const result = await refreshAiPromptsAndPurgeOld(true);
+      res.json({ success: true, addedCount: result.added, totalCount: result.total });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
