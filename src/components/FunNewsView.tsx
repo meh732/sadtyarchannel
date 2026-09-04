@@ -23,7 +23,7 @@ interface FunNewsViewProps {
   targetChannel2: string;
   showToast: (msg: string, type: 'success' | 'error' | 'info') => void;
   onRefreshSources: () => Promise<void>;
-  onAddSource: (source: { name: string; urlOrHandle: string; category?: 'fun' | 'news' }) => Promise<void>;
+  onAddSource: (source: { name: string; urlOrHandle: string; category?: 'fun' | 'news' }) => Promise<boolean | void>;
   onToggleSource: (id: string, enabled: boolean) => Promise<void>;
   onDeleteSource: (id: string) => Promise<void>;
   onSendItem: (id: string, channelNum: number) => Promise<void>;
@@ -50,21 +50,33 @@ export const FunNewsView: React.FC<FunNewsViewProps> = ({
   const [newSourceName, setNewSourceName] = useState('');
   const [newSourceHandle, setNewSourceHandle] = useState('');
   const [newSourceCategory, setNewSourceCategory] = useState<'fun' | 'news'>('fun');
+  const [submittingSource, setSubmittingSource] = useState(false);
 
   const handleCreateSourceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSourceHandle.trim()) {
+    const handle = newSourceHandle.trim();
+    if (!handle) {
       showToast('لطفاً آیدی یا لینک کانال تلگرامی را وارد کنید', 'error');
       return;
     }
-    await onAddSource({
-      name: newSourceName.trim() || newSourceHandle.trim(),
-      urlOrHandle: newSourceHandle.trim(),
-      category: newSourceCategory
-    });
-    setNewSourceName('');
-    setNewSourceHandle('');
-    setShowAddModal(false);
+    setSubmittingSource(true);
+    try {
+      const result = await onAddSource({
+        name: newSourceName.trim() || handle,
+        urlOrHandle: handle,
+        category: newSourceCategory
+      });
+      // If onAddSource returns false, do not close modal or clear input
+      if (result !== false) {
+        setNewSourceName('');
+        setNewSourceHandle('');
+        setShowAddModal(false);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSubmittingSource(false);
+    }
   };
 
   const filteredItems = useMemo(() => {
@@ -438,11 +450,15 @@ export const FunNewsView: React.FC<FunNewsViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={actionLoading === 'add_fun_source'}
-                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  disabled={submittingSource || actionLoading === 'add_fun_source'}
+                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-sm"
                 >
-                  {actionLoading === 'add_fun_source' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                  <span>ثبت و شروع پایش</span>
+                  {(submittingSource || actionLoading === 'add_fun_source') ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Check className="w-4 h-4" />
+                  )}
+                  <span>{submittingSource ? 'در حال ثبت...' : 'ثبت و شروع پایش'}</span>
                 </button>
               </div>
             </form>

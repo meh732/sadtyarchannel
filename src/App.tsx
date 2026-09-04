@@ -1470,30 +1470,48 @@ export default function App() {
     }
   };
 
-  const handleAddFunSource = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newFunSourceForm.urlOrHandle) {
+  const handleAddFunSource = async (
+    sourceData?: { name: string; urlOrHandle: string; category?: 'fun' | 'news' } | React.FormEvent
+  ): Promise<boolean> => {
+    if (sourceData && 'preventDefault' in (sourceData as any) && typeof (sourceData as any).preventDefault === 'function') {
+      (sourceData as any).preventDefault();
+    }
+    const payload = (sourceData && 'urlOrHandle' in (sourceData as any))
+      ? (sourceData as { name: string; urlOrHandle: string; category?: 'fun' | 'news' })
+      : newFunSourceForm;
+
+    if (!payload.urlOrHandle || !payload.urlOrHandle.trim()) {
       showToast('لطفا شناسه یا آدرس کانال تلگرام را وارد کنید.', 'error');
-      return;
+      return false;
     }
     setActionLoading('add_fun_source');
     try {
       const res = await fetch('/api/fun-sources', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newFunSourceForm)
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (data.success) {
         showToast('کانال تلگرام منبع با موفقیت افزوده شد.', 'success');
         setShowAddFunSourceModal(false);
         setNewFunSourceForm({ name: '', urlOrHandle: '', category: 'fun' });
+        if (data.source) {
+          setFunSources(prev => {
+            const exists = prev.some(s => s.id === data.source.id);
+            if (exists) return prev;
+            return [...prev, data.source];
+          });
+        }
         fetchData(true);
+        return true;
       } else {
         showToast(data.message || 'خطا در ثبت کانال منبع', 'error');
+        return false;
       }
-    } catch (err) {
-      showToast('خطا در افزودن کانال منبع', 'error');
+    } catch (err: any) {
+      showToast(err?.message || 'خطا در افزودن کانال منبع', 'error');
+      return false;
     } finally {
       setActionLoading(null);
     }

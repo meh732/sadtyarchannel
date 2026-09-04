@@ -9675,12 +9675,14 @@ async function startExpressServer() {
       return next();
     }
     
-    // Allow regular users to read configs, proxies, tech items, and vpn files list
+    // Allow regular users to read configs, proxies, tech items, fun sources, and vpn files list
     const publicGetPaths = [
       '/api/configs',
       '/api/proxies',
       '/api/tech-items',
-      '/api/vpn-files'
+      '/api/vpn-files',
+      '/api/fun-sources',
+      '/api/fun-news'
     ];
     if (req.method === 'GET' && publicGetPaths.includes(req.path)) {
       return next();
@@ -10917,20 +10919,36 @@ async function startExpressServer() {
         return res.status(400).json({ success: false, message: 'شناسه یا آدرس کانال تلگرام الزامی است.' });
       }
 
-      const cleanHandle = urlOrHandle.replace(/^https?:\/\/t\.me\/(s\/)?/, '').trim();
-      const formattedHandle = cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`;
+      let clean = String(urlOrHandle || '').trim();
+      // Remove URLs like https://t.me/, http://t.me/, https://telegram.me/, t.me/, etc.
+      clean = clean.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '');
+      // Remove trailing slashes or path query params
+      clean = clean.replace(/[/?#].*$/, '').trim();
+      // Remove leading @ if any
+      clean = clean.replace(/^@+/, '').trim();
+
+      if (!clean) {
+        return res.status(400).json({ success: false, message: 'شناسه یا لینک کانال تلگرام نامعتبر است.' });
+      }
+      const formattedHandle = `@${clean}`;
+
+      if (!db.funSources) db.funSources = [];
+      const existing = db.funSources.find(s => s.urlOrHandle.toLowerCase() === formattedHandle.toLowerCase());
+      if (existing) {
+        return res.status(400).json({ success: false, message: `این کانال (${formattedHandle}) قبلاً در لیست منابع ثبت شده است.` });
+      }
 
       const newSource: FunNewsSource = {
         id: generateId(),
-        name: (name || cleanHandle).trim(),
+        name: (name || clean).trim(),
         urlOrHandle: formattedHandle,
         enabled: true,
         category: category === 'news' ? 'news' : 'fun',
         extractedCount: 0,
+        lastExtracted: null,
         createdAt: new Date().toISOString()
       };
 
-      if (!db.funSources) db.funSources = [];
       db.funSources.push(newSource);
       saveDatabase();
       addLog('success', `کانال منبع فان و اخبار افزوده شد: ${newSource.name} (${newSource.urlOrHandle})`);
