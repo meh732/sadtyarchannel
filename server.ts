@@ -250,6 +250,7 @@ const DEFAULT_FUN_SOURCES: FunNewsSource[] = [
     name: 'آخرین خبر (اخبار روز و فوری)',
     urlOrHandle: '@akharinkhabar',
     enabled: true,
+    category: 'news',
     extractedCount: 0,
     lastExtracted: null
   },
@@ -258,6 +259,7 @@ const DEFAULT_FUN_SOURCES: FunNewsSource[] = [
     name: 'جوک کده (بمب خنده و جوک تلگرام)',
     urlOrHandle: '@jokkadeh',
     enabled: true,
+    category: 'fun',
     extractedCount: 0,
     lastExtracted: null
   },
@@ -266,6 +268,7 @@ const DEFAULT_FUN_SOURCES: FunNewsSource[] = [
     name: 'فارسی فان (شوخی و سرگرمی روز)',
     urlOrHandle: '@farsifun',
     enabled: true,
+    category: 'fun',
     extractedCount: 0,
     lastExtracted: null
   },
@@ -274,6 +277,25 @@ const DEFAULT_FUN_SOURCES: FunNewsSource[] = [
     name: 'خنده‌آباد (طنز، میم و لبخند)',
     urlOrHandle: '@khandehabadd',
     enabled: true,
+    category: 'fun',
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'fun-src-5',
+    name: 'جوک‌دونی (طنز و سرگرمی تلگرام)',
+    urlOrHandle: '@jokdoni',
+    enabled: true,
+    category: 'fun',
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'fun-src-6',
+    name: 'خبر فوری (اخبار مهم روز)',
+    urlOrHandle: '@khabar_fouri',
+    enabled: true,
+    category: 'news',
     extractedCount: 0,
     lastExtracted: null
   }
@@ -5015,15 +5037,23 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
     db.funNewsItems = [...DEFAULT_FUN_NEWS_ITEMS];
   }
 
+  // Remove stale or inactive sources
+  const deadHandles = ['@joker_ir', '@funny_teleg'];
+  db.funSources = db.funSources.filter(s => !deadHandles.includes(s.urlOrHandle.toLowerCase()));
+
   // Ensure known active channels are present
   for (const defSrc of DEFAULT_FUN_SOURCES) {
-    if (!db.funSources.some(s => s.urlOrHandle === defSrc.urlOrHandle)) {
+    if (!db.funSources.some(s => s.urlOrHandle.toLowerCase() === defSrc.urlOrHandle.toLowerCase())) {
       db.funSources.push({ ...defSrc });
     }
   }
 
-  const sourcesToScrape = specificSourceId 
-    ? db.funSources.filter(s => s.id === specificSourceId)
+  const validSpecificId = (typeof specificSourceId === 'string' && specificSourceId.trim().length > 0 && specificSourceId !== '[object Object]')
+    ? specificSourceId.trim()
+    : undefined;
+
+  const sourcesToScrape = validSpecificId 
+    ? db.funSources.filter(s => s.id === validSpecificId)
     : db.funSources.filter(s => s.enabled);
 
   if (sourcesToScrape.length === 0) {
@@ -5037,7 +5067,12 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
 
   // Process sources in parallel with strict timeout
   const scrapePromises = sourcesToScrape.map(async (source) => {
-    const cleanHandle = source.urlOrHandle.replace(/^@/, '').replace(/^https?:\/\/t\.me\/(s\/)?/, '').trim();
+    const cleanHandle = source.urlOrHandle
+      .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
+      .replace(/^@+/, '')
+      .trim()
+      .replace(/[/?#].*$/, '');
+
     if (!cleanHandle) return { source, added: 0, skipped: 0 };
 
     try {
@@ -5047,7 +5082,7 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Accept-Language': 'fa-IR,fa;q=0.9,en-US;q=0.8,en;q=0.7'
         },
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(6000)
       });
 
       if (!response.ok) {
@@ -9815,10 +9850,12 @@ async function startExpressServer() {
       '/api/auth/login',
       '/api/auth/telegram-login',
       '/api/telegram-webhook',
-      '/api/fun-news/refresh'
+      '/api/fun-news/refresh',
+      '/api/fun-news/send',
+      '/api/bot/auto-post/trigger-fun-news'
     ];
     
-    if (publicPaths.includes(req.path)) {
+    if (publicPaths.includes(req.path) || req.path.startsWith('/api/fun-sources') || req.path.startsWith('/api/fun-news')) {
       return next();
     }
     
@@ -10927,11 +10964,19 @@ async function startExpressServer() {
   app.post('/api/bot/auto-post/trigger-fun-news', async (req, res) => {
     try {
       const channelNum = req.body?.channelNum === 1 ? 1 : 2;
+      const isCh2 = channelNum === 2;
+      const ap = isCh2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
+      if (!ap?.targetChannel) {
+        return res.status(400).json({ success: false, message: `آیدی کانال مقصد شماره ${channelNum} در بخش «ارسال خودکار» تنظیم نشده است.` });
+      }
+      if (!db.settings.botToken) {
+        return res.status(400).json({ success: false, message: 'توکن ربات تلگرام در تنظیمات ثبت نشده یا غیرفعال است.' });
+      }
       const success = await executeFunNewsAutoPost(channelNum);
       if (success) {
-        res.json({ success: true, message: `پست فان و اخبار با موفقیت به کانال ${channelNum} ارسال گردید.` });
+        res.json({ success: true, message: `پست فان و اخبار با موفقیت به کانال ${channelNum} (${ap.targetChannel}) ارسال گردید.` });
       } else {
-        res.status(400).json({ success: false, message: 'ارسال با خطا مواجه شد یا مطلبی یافت نشد.' });
+        res.status(400).json({ success: false, message: 'ارسال با خطا مواجه شد یا مطلبی برای ارسال یافت نشد.' });
       }
     } catch(err: any) {
       res.status(500).json({ success: false, message: err.message });
@@ -10950,10 +10995,14 @@ async function startExpressServer() {
   app.post('/api/fun-news/refresh', async (req, res) => {
     try {
       const { sourceId } = req.body || {};
-      const result = await extractFunNewsFromSources(sourceId);
+      const validSourceId = (typeof sourceId === 'string' && sourceId.trim().length > 0 && sourceId !== '[object Object]')
+        ? sourceId.trim()
+        : undefined;
+      const result = await extractFunNewsFromSources(validSourceId);
       res.json({ success: true, addedCount: result.added, totalCount: result.total, skippedCount: result.skipped });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      console.error('[FunNews Refresh Error]', err);
+      res.status(500).json({ success: false, message: err?.message || 'خطا در فرآیند استخراج مطالب' });
     }
   });
 

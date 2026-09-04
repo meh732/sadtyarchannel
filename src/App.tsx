@@ -1436,23 +1436,37 @@ export default function App() {
     }
   };
 
-  const handleRefreshFunNews = async (sourceId?: string) => {
-    setActionLoading('refresh_fun_news');
+  const handleRefreshFunNews = async (sourceId?: string | any) => {
+    // Sanitize sourceId so it's strictly a valid string ID or undefined (prevent React synthetic event from being serialized)
+    const cleanSourceId = (typeof sourceId === 'string' && sourceId.trim().length > 0 && sourceId !== '[object Object]') 
+      ? sourceId.trim() 
+      : undefined;
+
+    setActionLoading(cleanSourceId ? `refresh_fun_source_${cleanSourceId}` : 'refresh_fun_news');
     try {
       const res = await fetch('/api/fun-news/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceId })
+        body: JSON.stringify({ sourceId: cleanSourceId })
       });
+      if (!res.ok) {
+        let msg = `خطای سرور (${res.status})`;
+        try {
+          const errData = await res.json();
+          if (errData?.message) msg = errData.message;
+        } catch {}
+        showToast(msg, 'error');
+        return;
+      }
       const data = await res.json();
       if (data.success) {
-        showToast(`استخراج به پایان رسید: ${data.addedCount} مطلب جدید افزوده شد (${data.totalCount} کل).`, 'success');
+        showToast(`استخراج با موفقیت انجام شد: ${data.addedCount} مطلب تازه افزوده شد (${data.totalCount} کل).`, 'success');
         fetchData(true);
       } else {
         showToast(data.message || 'خطا در استخراج از کانال‌ها', 'error');
       }
-    } catch (err) {
-      showToast('خطای شبکه در استخراج مطالب', 'error');
+    } catch (err: any) {
+      showToast(`خطای شبکه در استخراج مطالب: ${err?.message || 'بررسی ارتباط اینترنت'}`, 'error');
     } finally {
       setActionLoading(null);
     }
