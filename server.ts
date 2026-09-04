@@ -39,7 +39,10 @@ import {
   TechItemCategory,
   TechImportance,
   AiPrompt,
-  AiPromptCategory
+  AiPromptCategory,
+  FunNewsItem,
+  FunNewsSource,
+  SecondaryChannelSettings
 } from './src/types';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -131,6 +134,8 @@ interface DatabaseSchema {
   postedMessages?: ChannelPost[];
   techItems?: TechItem[];
   aiPrompts?: AiPrompt[];
+  funNewsItems?: FunNewsItem[];
+  funSources?: FunNewsSource[];
 }
 
 // --- Pre-populated default sources ---
@@ -239,6 +244,120 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
 
 const DEFAULT_KNOWN_APP_URL = 'https://ais-dev-3wfduwtghl6fqrseyhtp5l-217900666396.europe-west2.run.app';
 
+const DEFAULT_FUN_SOURCES: FunNewsSource[] = [
+  {
+    id: 'fun-src-1',
+    name: 'آخرین خبر (اخبار روز و فوری)',
+    urlOrHandle: '@akharinkhabar',
+    enabled: true,
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'fun-src-2',
+    name: 'جوکر تلگرام (سرگرمی و طنز)',
+    urlOrHandle: '@joker_ir',
+    enabled: true,
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'fun-src-3',
+    name: 'کانال طنز و خنده تلگرام',
+    urlOrHandle: '@funny_teleg',
+    enabled: true,
+    extractedCount: 0,
+    lastExtracted: null
+  }
+];
+
+const DEFAULT_FUN_NEWS_ITEMS: FunNewsItem[] = [
+  {
+    id: 'fun-item-1',
+    title: 'وقتی بعد از یه روز کاری طولانی می‌رسی خونه...',
+    text: 'وقتی بعد از ۱۰ ساعت کار، کفشاتو درمیاری و دراز می‌کشی رو مبل... آرامش مطلق یعنی همین لحظه! 😴🛋️ کیا این حسو با هیچی تو دنیا عوض نمی‌کنن؟',
+    imageUrl: 'https://images.unsplash.com/photo-1517849845537-4d257902454a?w=800&auto=format&fit=crop&q=80',
+    sourceChannel: '@joker_ir',
+    sourceMessageId: 101,
+    category: 'fun',
+    tags: ['طنز', 'خستگی', 'زندگی_روزمره'],
+    createdAt: new Date().toISOString(),
+    postedToChannel1: false,
+    postedToChannel2: false
+  },
+  {
+    id: 'fun-item-2',
+    title: 'خبر فوری: کشف سیاره جدید با احتمال جو متراکم و آب مایع',
+    text: 'ستاره‌شناسان تلسکوپ فضایی جیمز وب موفق به شناسایی یک سیاره فراخورشیدی شگفت‌انگیز در کمربند حیات ستاره خود شدند که نشانه‌های واضحی از بخار آب و متان در جو آن ثبت گردیده است. 🔭🌌 این کشف گامی بزرگ در جهت یافتن نشانه‌های حیات فرازمینی به شمار می‌رود.',
+    imageUrl: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800&auto=format&fit=crop&q=80',
+    sourceChannel: '@akharinkhabar',
+    sourceMessageId: 204,
+    category: 'news',
+    tags: ['اخبار_علمی', 'جیمز_وب', 'فضا'],
+    createdAt: new Date().toISOString(),
+    postedToChannel1: false,
+    postedToChannel2: false
+  },
+  {
+    id: 'fun-item-3',
+    title: 'فرق برنامه‌نویسی تو فیلما با واقعیت 😂',
+    text: 'تو فیلما: ۳۰ ثانیه تندتند تایپ می‌کنه، میگه: من سازمان انرژی اتمی رو هک کردم! 😎💻\n\nتو واقعیت: ۵ ساعت دنبال یه سمیکالن (;) جاافتاده می‌گرده و آخرشم می‌فهمه کیبورد قطع بوده! 🤦‍♂️🤣',
+    imageUrl: 'https://images.unsplash.com/photo-1531482615713-2afd69097998?w=800&auto=format&fit=crop&q=80',
+    sourceChannel: '@funny_teleg',
+    sourceMessageId: 305,
+    category: 'fun',
+    tags: ['طنز_برنامه_نویسی', 'خنده', 'حق'],
+    createdAt: new Date().toISOString(),
+    postedToChannel1: false,
+    postedToChannel2: false
+  }
+];
+
+const DEFAULT_CHANNEL2_SETTINGS: SecondaryChannelSettings = {
+  enabled: false,
+  targetChannel: '',
+  adText: 'کانال دوم ما: @MyChannel2',
+  silentMode: true,
+  antiFloodDelayMinutes: 3,
+  lastAnyPostAt: null,
+  lastPostedAt: null,
+
+  // 1. Fun & General News Schedule for Channel 2 (Default Active for Channel 2)
+  funNewsEnabled: true,
+  funNewsIntervalHours: 2,
+  funNewsIntervalMinutes: 120,
+  funNewsCount: 1,
+  lastFunNewsPostedAt: null,
+
+  // Optional toggles for other content types
+  configsEnabled: false,
+  postIntervalHours: 4,
+  configIntervalHours: 4,
+  configIntervalMinutes: 240,
+  configCount: 5,
+  proxyCount: 1,
+  customText: '💎 کانفیگ‌ها و پروکسی‌های اختصاصی تقدیم به شما:',
+  lastConfigsPostedAt: null,
+
+  techNewsEnabled: false,
+  techNewsIntervalHours: 4,
+  techNewsIntervalMinutes: 240,
+  techNewsCount: 2,
+  lastTechNewsPostedAt: null,
+
+  techTricksEnabled: false,
+  techTricksIntervalHours: 6,
+  techTricksIntervalMinutes: 360,
+  techTricksCount: 2,
+  lastTechTricksPostedAt: null,
+
+  aiPromptsEnabled: false,
+  aiPromptsIntervalHours: 6,
+  aiPromptsIntervalMinutes: 360,
+  aiPromptsCount: 1,
+  lastAiPromptsPostedAt: null
+};
+
 const DEFAULT_AUTO_POST: AutoPostSettings = {
   enabled: false,
   targetChannel: '',
@@ -282,7 +401,17 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   aiPromptsCount: 1,
   lastAiPromptsPostedAt: null,
 
-  techPostMode: 'combined'
+  // 5. Fun & General News Schedule (Channel 1)
+  funNewsEnabled: false,
+  funNewsIntervalHours: 3,
+  funNewsIntervalMinutes: 180,
+  funNewsCount: 1,
+  lastFunNewsPostedAt: null,
+
+  techPostMode: 'combined',
+
+  // Channel 2 Dedicated Auto-Post Settings
+  channel2: DEFAULT_CHANNEL2_SETTINGS
 };
 
 const DEFAULT_SETTINGS: SystemSettings = {
@@ -391,6 +520,18 @@ function loadDatabase() {
       ? loadedDataStore.aiPrompts
       : DEFAULT_AI_PROMPTS;
 
+    const finalFunSources = Array.isArray(loadedSettings?.funSources)
+      ? loadedSettings.funSources
+      : (Array.isArray(loadedDataStore?.funSources) ? loadedDataStore.funSources : DEFAULT_FUN_SOURCES);
+
+    const finalFunNewsItems = Array.isArray(loadedDataStore?.funNewsItems) && loadedDataStore.funNewsItems.length > 0
+      ? loadedDataStore.funNewsItems
+      : DEFAULT_FUN_NEWS_ITEMS;
+
+    if (!finalSettings.autoPost.channel2) {
+      finalSettings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
+    }
+
     db = {
       settings: finalSettings,
       sources: finalSources,
@@ -402,7 +543,9 @@ function loadDatabase() {
       logs: finalLogs,
       postedMessages: finalPosted,
       techItems: finalTechItems,
-      aiPrompts: finalAiPrompts
+      aiPrompts: finalAiPrompts,
+      funNewsItems: finalFunNewsItems,
+      funSources: finalFunSources
     };
 
     // Correct stale/mismatched default prompt image URLs
@@ -456,7 +599,8 @@ function saveDatabase(immediate = false) {
         settings: db.settings,
         sources: db.sources,
         forceJoinChannels: db.forceJoinChannels,
-        users: db.users
+        users: db.users,
+        funSources: db.funSources || []
       };
       writeJsonAtomic(SETTINGS_FILE, systemData);
 
@@ -468,7 +612,8 @@ function saveDatabase(immediate = false) {
         techItems: db.techItems || [],
         logs: db.logs,
         postedMessages: db.postedMessages,
-        aiPrompts: db.aiPrompts || []
+        aiPrompts: db.aiPrompts || [],
+        funNewsItems: db.funNewsItems || []
       };
       writeJsonAtomic(DB_FILE, storeData);
     } catch (err) {
@@ -4661,11 +4806,301 @@ async function executeAiPromptsAutoPost(customTargetChannel?: string): Promise<b
   }
 }
 
+// ----------------------------------------------------
+// 5. DEDICATED EXECUTOR: FUN & GENERAL NEWS AUTO-POST
+// ----------------------------------------------------
+async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetChannel?: string): Promise<boolean> {
+  const isCh2 = channelTargetNum === 2;
+  const ap = isCh2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
+  const targetChannel = customTargetChannel || ap?.targetChannel;
+
+  if (!targetChannel) {
+    addLog('warn', `ارسال فان و اخبار به کانال ${channelTargetNum} انجام نشد: کانال مقصد تنظیم نشده است.`);
+    return false;
+  }
+  if (!db.settings.botToken) {
+    addLog('warn', 'ارسال فان و اخبار انجام نشد: توکن ربات فعال نیست.');
+    return false;
+  }
+
+  try {
+    addLog('info', `در حال آماده‌سازی و ارسال پست فان و اخبار به کانال ${channelTargetNum} (${targetChannel})...`);
+
+    if (!db.funNewsItems || db.funNewsItems.length === 0) {
+      addLog('warn', 'دیتابیس فان و اخبار خالی است؛ تلاش برای استخراج خودکار از منابع...');
+      await extractFunNewsFromSources();
+    }
+
+    const allItems = db.funNewsItems || [];
+    if (allItems.length === 0) {
+      addLog('warn', 'هیچ مطلب فان یا خبری در سیستم موجود نیست.');
+      return false;
+    }
+
+    // Filter unposted items for this specific channel
+    let eligible = allItems.filter(item => isCh2 ? !item.postedToChannel2 : !item.postedToChannel1);
+    if (eligible.length === 0) {
+      // If all have been posted, reset rotation
+      eligible = [...allItems].reverse();
+    }
+
+    const countToPost = Math.max(1, ap?.funNewsCount || 1);
+    const selected = eligible.slice(0, countToPost);
+
+    const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
+    const adText = ap?.adText || db.settings.branding || '';
+    const nowIso = new Date().toISOString();
+
+    let anySuccess = false;
+    for (const item of selected) {
+      const isFun = item.category === 'fun';
+      const categoryEmoji = isFun ? '🎭' : '📰';
+      const categoryName = isFun ? 'طنز و سرگرمی تلگرام' : 'اخبار عمومی و مهم روز';
+
+      let text = `${categoryEmoji} <b>« ${categoryName} »</b>\n`;
+      text += `📌 <b>${escapeHtml(item.title)}</b>\n\n`;
+      text += `${escapeHtml(item.text)}\n\n`;
+
+      if (item.tags && item.tags.length > 0) {
+        const formattedTags = item.tags
+          .slice(0, 5)
+          .map(t => `#${t.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '')}`)
+          .join(' ');
+        text += `🏷 <i>${formattedTags}</i>\n`;
+      }
+
+      if (adText) {
+        text += `\n📢 <i>${escapeHtml(adText)}</i>\n`;
+      }
+      text += `🆔 ${escapeHtml(channelHandle)}`;
+
+      let sendSuccess = false;
+      const inlineButtons: any[] = [];
+      const sponsorBtn = getSponsorChannelInlineButton();
+      if (sponsorBtn) {
+        inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url }]);
+      }
+
+      if (item.imageUrl && text.length <= 1000) {
+        try {
+          await callTelegramApi('sendPhoto', {
+            chat_id: channelHandle,
+            photo: item.imageUrl,
+            caption: text,
+            parse_mode: 'HTML',
+            reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+            disable_notification: !!ap.silentMode
+          });
+          sendSuccess = true;
+        } catch (photoErr: any) {
+          addLog('warn', `ارسال تصویر فان/خبر با خطا مواجه شد، ارسال متنی انجام می‌شود: ${photoErr?.message || photoErr}`);
+        }
+      }
+
+      if (!sendSuccess) {
+        await callTelegramApi('sendMessage', {
+          chat_id: channelHandle,
+          text: safeTelegramHtmlLength(text, 3900),
+          parse_mode: 'HTML',
+          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+          disable_notification: !!ap.silentMode
+        });
+      }
+
+      if (isCh2) {
+        item.postedToChannel2 = true;
+      } else {
+        item.postedToChannel1 = true;
+      }
+      item.postedAt = nowIso;
+      anySuccess = true;
+
+      if (selected.length > 1) {
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+
+    if (isCh2 && db.settings.autoPost.channel2) {
+      db.settings.autoPost.channel2.lastFunNewsPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastAnyPostAt = nowIso;
+      db.settings.autoPost.channel2.lastPostedAt = nowIso;
+    } else if (db.settings.autoPost) {
+      db.settings.autoPost.lastFunNewsPostedAt = nowIso;
+      db.settings.autoPost.lastAnyPostAt = nowIso;
+      db.settings.autoPost.lastPostedAt = nowIso;
+    }
+    saveDatabase();
+
+    if (anySuccess) {
+      addLog('success', `پست فان و اخبار (${selected.length} مطلب) با موفقیت به کانال ${channelTargetNum} (${channelHandle}) ارسال گردید.`);
+      return true;
+    }
+    return false;
+  } catch (err: any) {
+    addLog('error', `خطا در ارسال پست فان و اخبار به کانال ${channelTargetNum}: ${err.message || err}`);
+    return false;
+  }
+}
+
+// ----------------------------------------------------
+// DEDICATED CRAWLER: FUN & NEWS TELEGRAM SOURCES
+// ----------------------------------------------------
+async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ added: number; total: number; skipped: number }> {
+  if (!db.funSources || db.funSources.length === 0) {
+    db.funSources = [...DEFAULT_FUN_SOURCES];
+  }
+  if (!db.funNewsItems) {
+    db.funNewsItems = [...DEFAULT_FUN_NEWS_ITEMS];
+  }
+
+  const sourcesToScrape = specificSourceId 
+    ? db.funSources.filter(s => s.id === specificSourceId)
+    : db.funSources.filter(s => s.enabled);
+
+  if (sourcesToScrape.length === 0) {
+    addLog('warn', 'هیچ کانال تلگرامی فعالی برای استخراج فان و اخبار یافت نشد.');
+    return { added: 0, total: db.funNewsItems.length, skipped: 0 };
+  }
+
+  addLog('info', `شروع استخراج مطالب فان و اخبار از ${sourcesToScrape.length} کانال تلگرامی منبع...`);
+  let addedCount = 0;
+  let skippedCount = 0;
+
+  for (const source of sourcesToScrape) {
+    try {
+      const cleanHandle = source.urlOrHandle.replace(/^@/, '').replace(/^https?:\/\/t\.me\/(s\/)?/, '').trim();
+      if (!cleanHandle) continue;
+
+      const url = `https://t.me/s/${cleanHandle}`;
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'fa-IR,fa;q=0.9,en-US;q=0.8,en;q=0.7'
+        }
+      });
+
+      if (!response.ok) {
+        addLog('warn', `خطا در دریافت کانال منبع ${source.name} (@${cleanHandle}): کد وضعیت ${response.status}`);
+        continue;
+      }
+
+      const html = await response.text();
+
+      // Parse individual Telegram message blocks
+      const messageBlockRegex = /<div[^>]*class="[^"]*tgme_widget_message\b[^"]*"[^>]*data-post="([^"]+)"[\s\S]*?(?=<div[^>]*class="[^"]*tgme_widget_message\b[^"]*"[^>]*data-post=|$)/gi;
+      const matches = Array.from(html.matchAll(messageBlockRegex));
+
+      let sourceAdded = 0;
+      for (const match of matches) {
+        const fullBlock = match[0];
+        const postAttr = match[1] || ''; // e.g. "joker_ir/4523"
+        const msgIdParts = postAttr.split('/');
+        const msgId = msgIdParts.length > 1 ? parseInt(msgIdParts[1], 10) : undefined;
+
+        // Extract image url if present
+        let imageUrl: string | undefined = undefined;
+        const imgMatch = fullBlock.match(/background-image:\s*url\('(https?:\/\/[^']+)'\)/i) 
+          || fullBlock.match(/src="(https?:\/\/[^"]+)"/i);
+        if (imgMatch && imgMatch[1] && !imgMatch[1].includes('favicon') && !imgMatch[1].includes('avatar')) {
+          imageUrl = imgMatch[1];
+        }
+
+        // Extract text
+        const textMatch = fullBlock.match(/<div[^>]*class="[^"]*tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        if (!textMatch && !imageUrl) continue;
+
+        const rawHtmlText = textMatch ? textMatch[1] : '';
+        let cleanText = rawHtmlText
+          .replace(/<br\s*[\/]?>/gi, '\n')
+          .replace(/<a[^>]*href="[^"]*"[^>]*>([\s\S]*?)<\/a>/gi, '$1')
+          .replace(/<[^>]+>/g, '')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .trim();
+
+        cleanText = cleanText.replace(/Forwarded from[^\n]*\n?/gi, '').trim();
+
+        if (!cleanText && !imageUrl) continue;
+        if (cleanText.length < 15 && !imageUrl) continue;
+
+        // Check for duplicates
+        const isDuplicate = db.funNewsItems.some(item => {
+          if (msgId && item.sourceChannel === `@${cleanHandle}` && item.sourceMessageId === msgId) return true;
+          if (cleanText && item.text === cleanText) return true;
+          return false;
+        });
+
+        if (isDuplicate) {
+          skippedCount++;
+          continue;
+        }
+
+        // Generate clean title
+        const firstLine = cleanText.split('\n')[0].trim();
+        const title = firstLine.length > 0
+          ? (firstLine.length > 65 ? firstLine.substring(0, 62) + '...' : firstLine)
+          : (imageUrl ? `تصویر جدید از @${cleanHandle}` : `مطلب جدید از @${cleanHandle}`);
+
+        // Classify into 'fun' or 'news'
+        const lower = (cleanText + ' ' + source.name).toLowerCase();
+        const isFun = lower.includes('طنز') || lower.includes('جوک') || lower.includes('خنده') || 
+                      lower.includes('fun') || lower.includes('شوخی') || lower.includes('سوتی') || 
+                      lower.includes('😂') || lower.includes('🤣') || lower.includes('میم') ||
+                      source.name.includes('طنز') || source.name.includes('جوکر');
+
+        const category: 'fun' | 'news' = isFun ? 'fun' : 'news';
+
+        const tagMatches = cleanText.match(/#([\w\u0600-\u06FF]+)/g);
+        const tags = tagMatches 
+          ? tagMatches.map(t => t.replace('#', '')) 
+          : (isFun ? ['سرگرمی', 'طنز', 'تلگرام'] : ['اخبار_فوری', 'تلگرام']);
+
+        const newItem: FunNewsItem = {
+          id: generateId(),
+          title,
+          text: cleanText,
+          imageUrl,
+          sourceChannel: `@${cleanHandle}`,
+          sourceMessageId: msgId,
+          category,
+          tags: tags.slice(0, 5),
+          createdAt: new Date().toISOString(),
+          postedToChannel1: false,
+          postedToChannel2: false
+        };
+
+        db.funNewsItems.unshift(newItem);
+        sourceAdded++;
+        addedCount++;
+      }
+
+      source.extractedCount = (source.extractedCount || 0) + sourceAdded;
+      source.lastExtracted = new Date().toISOString();
+      await new Promise(r => setTimeout(r, 800));
+    } catch (err: any) {
+      addLog('error', `خطا در استخراج از کانال ${source.name}: ${err.message || err}`);
+    }
+  }
+
+  if (db.funNewsItems.length > 1000) {
+    db.funNewsItems = db.funNewsItems.slice(0, 1000);
+  }
+
+  saveDatabase();
+  addLog('success', `استخراج فان و اخبار پایان یافت: ${addedCount} مطلب جدید استخراج شد (${skippedCount} مورد تکراری رد شد).`);
+  return { added: addedCount, total: db.funNewsItems.length, skipped: skippedCount };
+}
+
 // Master Auto-Post Dispatcher
-async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'prompts' = 'all'): Promise<boolean> {
-  const settings = db.settings.autoPost;
+async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'prompts' | 'fun' = 'all', channelTarget: 1 | 2 = 1): Promise<boolean> {
+  const isCh2 = channelTarget === 2;
+  const settings = isCh2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
+
   if (!settings || !settings.enabled || !settings.targetChannel) {
-    addLog('warn', 'ارسال خودکار انجام نشد: غیرفعال است یا کانال هدف تنظیم نشده است.');
+    addLog('warn', `ارسال خودکار به کانال ${channelTarget} انجام نشد: غیرفعال است یا کانال هدف تنظیم نشده است.`);
     return false;
   }
   if (!db.settings.botToken) {
@@ -4674,40 +5109,50 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'pr
   }
 
   if (mode === 'configs') {
-    return await executeConfigsAutoPost();
+    return await executeConfigsAutoPost(settings.targetChannel);
   }
   if (mode === 'news') {
-    return await executeTechNewsAutoPost();
+    return await executeTechNewsAutoPost(settings.targetChannel);
   }
   if (mode === 'tricks') {
-    return await executeTechTricksAutoPost();
+    return await executeTechTricksAutoPost(settings.targetChannel);
   }
   if (mode === 'prompts') {
-    return await executeAiPromptsAutoPost();
+    return await executeAiPromptsAutoPost(settings.targetChannel);
+  }
+  if (mode === 'fun') {
+    return await executeFunNewsAutoPost(channelTarget, settings.targetChannel);
   }
 
   // mode === 'all'
   let anySuccess = false;
   if (settings.configsEnabled !== false && ((settings.configCount || 0) > 0 || (settings.proxyCount || 0) > 0)) {
-    const res = await executeConfigsAutoPost();
+    const res = await executeConfigsAutoPost(settings.targetChannel);
     if (res) anySuccess = true;
   }
   if (settings.techNewsEnabled !== false && (settings.techNewsCount || 0) > 0) {
-    const res = await executeTechNewsAutoPost();
+    const res = await executeTechNewsAutoPost(settings.targetChannel);
     if (res) anySuccess = true;
   }
   if (settings.techTricksEnabled !== false && (settings.techTricksCount || 0) > 0) {
-    const res = await executeTechTricksAutoPost();
+    const res = await executeTechTricksAutoPost(settings.targetChannel);
     if (res) anySuccess = true;
   }
   if (settings.aiPromptsEnabled !== false && (settings.aiPromptsCount || 0) > 0) {
-    const res = await executeAiPromptsAutoPost();
+    const res = await executeAiPromptsAutoPost(settings.targetChannel);
+    if (res) anySuccess = true;
+  }
+  if (settings.funNewsEnabled === true && (settings.funNewsCount || 0) > 0) {
+    const res = await executeFunNewsAutoPost(channelTarget, settings.targetChannel);
     if (res) anySuccess = true;
   }
 
-  // Fallback: if all counts were 0, try sending configs
   if (!anySuccess) {
-    anySuccess = await executeConfigsAutoPost();
+    if (isCh2) {
+      anySuccess = await executeFunNewsAutoPost(2, settings.targetChannel);
+    } else {
+      anySuccess = await executeConfigsAutoPost(settings.targetChannel);
+    }
   }
 
   return anySuccess;
@@ -4732,69 +5177,158 @@ function setupAutoPostInterval() {
 
 async function checkAndTriggerAutoPost() {
   const ap = db.settings.autoPost;
-  if (!ap || !ap.enabled || !ap.targetChannel || !db.settings.botToken) return;
-
+  const ap2 = db.settings.autoPost?.channel2;
   const now = Date.now();
 
-  // Anti-Flood delay check (prevents back-to-back spamming of posts)
-  const antiFloodMinutes = typeof ap.antiFloodDelayMinutes === 'number' ? ap.antiFloodDelayMinutes : 3;
-  const antiFloodDelayMs = antiFloodMinutes * 60 * 1000;
-  if (ap.lastAnyPostAt) {
-    const timeSinceAny = now - new Date(ap.lastAnyPostAt).getTime();
-    if (timeSinceAny < antiFloodDelayMs) {
-      return; // Cooldown between posts is active!
+  // ==========================================
+  // 1. CHECK CHANNEL 1 SCHEDULE
+  // ==========================================
+  if (ap && ap.enabled && ap.targetChannel && db.settings.botToken) {
+    const antiFloodMinutes = typeof ap.antiFloodDelayMinutes === 'number' ? ap.antiFloodDelayMinutes : 3;
+    const antiFloodDelayMs = antiFloodMinutes * 60 * 1000;
+    const timeSinceAny = ap.lastAnyPostAt ? (now - new Date(ap.lastAnyPostAt).getTime()) : Infinity;
+
+    if (timeSinceAny >= antiFloodDelayMs) {
+      // 1. Configs & Proxies Schedule Check
+      const configsActive = ap.configsEnabled !== false && ((ap.configCount || 0) > 0 || (ap.proxyCount || 0) > 0);
+      if (configsActive) {
+        const configMinutes = ap.configIntervalMinutes || (ap.configIntervalHours ? ap.configIntervalHours * 60 : (ap.postIntervalHours ? ap.postIntervalHours * 60 : 240));
+        const configIntervalMs = configMinutes * 60 * 1000;
+        const lastConfigTime = ap.lastConfigsPostedAt || ap.lastPostedAt;
+        const timeSinceLastConfig = lastConfigTime ? (now - new Date(lastConfigTime).getTime()) : Infinity;
+        if (timeSinceLastConfig >= configIntervalMs) {
+          await executeConfigsAutoPost(ap.targetChannel);
+          return;
+        }
+      }
+
+      // 2. Tech News Schedule Check
+      const newsActive = ap.techNewsEnabled !== false && (ap.techNewsCount || 0) > 0;
+      if (newsActive) {
+        const newsMinutes = ap.techNewsIntervalMinutes || (ap.techNewsIntervalHours ? ap.techNewsIntervalHours * 60 : 240);
+        const newsIntervalMs = newsMinutes * 60 * 1000;
+        const lastNewsTime = ap.lastTechNewsPostedAt;
+        const timeSinceLastNews = lastNewsTime ? (now - new Date(lastNewsTime).getTime()) : Infinity;
+        if (timeSinceLastNews >= newsIntervalMs) {
+          await executeTechNewsAutoPost(ap.targetChannel);
+          return;
+        }
+      }
+
+      // 3. Tech Tricks & Secrets Schedule Check
+      const tricksActive = ap.techTricksEnabled !== false && (ap.techTricksCount || 0) > 0;
+      if (tricksActive) {
+        const tricksMinutes = ap.techTricksIntervalMinutes || (ap.techTricksIntervalHours ? ap.techTricksIntervalHours * 60 : 360);
+        const tricksIntervalMs = tricksMinutes * 60 * 1000;
+        const lastTricksTime = ap.lastTechTricksPostedAt;
+        const timeSinceLastTricks = lastTricksTime ? (now - new Date(lastTricksTime).getTime()) : Infinity;
+        if (timeSinceLastTricks >= tricksIntervalMs) {
+          await executeTechTricksAutoPost(ap.targetChannel);
+          return;
+        }
+      }
+
+      // 4. AI Prompts Schedule Check
+      const promptsActive = ap.aiPromptsEnabled !== false && (ap.aiPromptsCount || 0) > 0;
+      if (promptsActive) {
+        const promptsMinutes = ap.aiPromptsIntervalMinutes || (ap.aiPromptsIntervalHours ? ap.aiPromptsIntervalHours * 60 : 360);
+        const promptsIntervalMs = promptsMinutes * 60 * 1000;
+        const lastPromptsTime = ap.lastAiPromptsPostedAt;
+        const timeSinceLastPrompts = lastPromptsTime ? (now - new Date(lastPromptsTime).getTime()) : Infinity;
+        if (timeSinceLastPrompts >= promptsIntervalMs) {
+          await executeAiPromptsAutoPost(ap.targetChannel);
+          return;
+        }
+      }
+
+      // 5. Fun & General News Schedule Check (Channel 1)
+      const funActive = ap.funNewsEnabled === true && (ap.funNewsCount || 0) > 0;
+      if (funActive) {
+        const funMinutes = ap.funNewsIntervalMinutes || (ap.funNewsIntervalHours ? ap.funNewsIntervalHours * 60 : 180);
+        const funIntervalMs = funMinutes * 60 * 1000;
+        const lastFunTime = ap.lastFunNewsPostedAt;
+        const timeSinceLastFun = lastFunTime ? (now - new Date(lastFunTime).getTime()) : Infinity;
+        if (timeSinceLastFun >= funIntervalMs) {
+          await executeFunNewsAutoPost(1, ap.targetChannel);
+          return;
+        }
+      }
     }
   }
 
-  // 1. Configs & Proxies Schedule Check
-  const configsActive = ap.configsEnabled !== false && ((ap.configCount || 0) > 0 || (ap.proxyCount || 0) > 0);
-  if (configsActive) {
-    const configMinutes = ap.configIntervalMinutes || (ap.configIntervalHours ? ap.configIntervalHours * 60 : (ap.postIntervalHours ? ap.postIntervalHours * 60 : 240));
-    const configIntervalMs = configMinutes * 60 * 1000;
-    const lastConfigTime = ap.lastConfigsPostedAt || ap.lastPostedAt;
-    const timeSinceLastConfig = lastConfigTime ? (now - new Date(lastConfigTime).getTime()) : Infinity;
-    if (timeSinceLastConfig >= configIntervalMs) {
-      await executeConfigsAutoPost();
-      return; // Return immediately to let anti-flood protect next schedule
-    }
-  }
+  // ==========================================
+  // 2. CHECK CHANNEL 2 SCHEDULE (Dedicated)
+  // ==========================================
+  if (ap2 && ap2.enabled && ap2.targetChannel && db.settings.botToken) {
+    const antiFloodMinutes2 = typeof ap2.antiFloodDelayMinutes === 'number' ? ap2.antiFloodDelayMinutes : 3;
+    const antiFloodDelayMs2 = antiFloodMinutes2 * 60 * 1000;
+    const timeSinceAny2 = ap2.lastAnyPostAt ? (now - new Date(ap2.lastAnyPostAt).getTime()) : Infinity;
 
-  // 2. Tech News Schedule Check
-  const newsActive = ap.techNewsEnabled !== false && (ap.techNewsCount || 0) > 0;
-  if (newsActive) {
-    const newsMinutes = ap.techNewsIntervalMinutes || (ap.techNewsIntervalHours ? ap.techNewsIntervalHours * 60 : 240);
-    const newsIntervalMs = newsMinutes * 60 * 1000;
-    const lastNewsTime = ap.lastTechNewsPostedAt;
-    const timeSinceLastNews = lastNewsTime ? (now - new Date(lastNewsTime).getTime()) : Infinity;
-    if (timeSinceLastNews >= newsIntervalMs) {
-      await executeTechNewsAutoPost();
-      return; // Return immediately to let anti-flood protect next schedule
-    }
-  }
+    if (timeSinceAny2 >= antiFloodDelayMs2) {
+      // 1. Fun & General News for Channel 2 (Primary role for Channel 2)
+      const funActive2 = ap2.funNewsEnabled !== false && (ap2.funNewsCount || 0) > 0;
+      if (funActive2) {
+        const funMinutes2 = ap2.funNewsIntervalMinutes || (ap2.funNewsIntervalHours ? ap2.funNewsIntervalHours * 60 : 120);
+        const funIntervalMs2 = funMinutes2 * 60 * 1000;
+        const lastFunTime2 = ap2.lastFunNewsPostedAt;
+        const timeSinceLastFun2 = lastFunTime2 ? (now - new Date(lastFunTime2).getTime()) : Infinity;
+        if (timeSinceLastFun2 >= funIntervalMs2) {
+          await executeFunNewsAutoPost(2, ap2.targetChannel);
+          return;
+        }
+      }
 
-  // 3. Tech Tricks & Secrets Schedule Check
-  const tricksActive = ap.techTricksEnabled !== false && (ap.techTricksCount || 0) > 0;
-  if (tricksActive) {
-    const tricksMinutes = ap.techTricksIntervalMinutes || (ap.techTricksIntervalHours ? ap.techTricksIntervalHours * 60 : 360);
-    const tricksIntervalMs = tricksMinutes * 60 * 1000;
-    const lastTricksTime = ap.lastTechTricksPostedAt;
-    const timeSinceLastTricks = lastTricksTime ? (now - new Date(lastTricksTime).getTime()) : Infinity;
-    if (timeSinceLastTricks >= tricksIntervalMs) {
-      await executeTechTricksAutoPost();
-      return; // Return immediately to let anti-flood protect next schedule
-    }
-  }
+      // 2. Configs for Channel 2
+      const configsActive2 = ap2.configsEnabled === true && ((ap2.configCount || 0) > 0 || (ap2.proxyCount || 0) > 0);
+      if (configsActive2) {
+        const configMinutes2 = ap2.configIntervalMinutes || (ap2.configIntervalHours ? ap2.configIntervalHours * 60 : 240);
+        const configIntervalMs2 = configMinutes2 * 60 * 1000;
+        const lastConfigTime2 = ap2.lastConfigsPostedAt;
+        const timeSinceLastConfig2 = lastConfigTime2 ? (now - new Date(lastConfigTime2).getTime()) : Infinity;
+        if (timeSinceLastConfig2 >= configIntervalMs2) {
+          await executeConfigsAutoPost(ap2.targetChannel);
+          return;
+        }
+      }
 
-  // 4. AI Prompts Schedule Check
-  const promptsActive = ap.aiPromptsEnabled !== false && (ap.aiPromptsCount || 0) > 0;
-  if (promptsActive) {
-    const promptsMinutes = ap.aiPromptsIntervalMinutes || (ap.aiPromptsIntervalHours ? ap.aiPromptsIntervalHours * 60 : 360);
-    const promptsIntervalMs = promptsMinutes * 60 * 1000;
-    const lastPromptsTime = ap.lastAiPromptsPostedAt;
-    const timeSinceLastPrompts = lastPromptsTime ? (now - new Date(lastPromptsTime).getTime()) : Infinity;
-    if (timeSinceLastPrompts >= promptsIntervalMs) {
-      await executeAiPromptsAutoPost();
-      return; // Return immediately to let anti-flood protect next schedule
+      // 3. Tech News for Channel 2
+      const newsActive2 = ap2.techNewsEnabled === true && (ap2.techNewsCount || 0) > 0;
+      if (newsActive2) {
+        const newsMinutes2 = ap2.techNewsIntervalMinutes || (ap2.techNewsIntervalHours ? ap2.techNewsIntervalHours * 60 : 240);
+        const newsIntervalMs2 = newsMinutes2 * 60 * 1000;
+        const lastNewsTime2 = ap2.lastTechNewsPostedAt;
+        const timeSinceLastNews2 = lastNewsTime2 ? (now - new Date(lastNewsTime2).getTime()) : Infinity;
+        if (timeSinceLastNews2 >= newsIntervalMs2) {
+          await executeTechNewsAutoPost(ap2.targetChannel);
+          return;
+        }
+      }
+
+      // 4. Tech Tricks for Channel 2
+      const tricksActive2 = ap2.techTricksEnabled === true && (ap2.techTricksCount || 0) > 0;
+      if (tricksActive2) {
+        const tricksMinutes2 = ap2.techTricksIntervalMinutes || (ap2.techTricksIntervalHours ? ap2.techTricksIntervalHours * 60 : 360);
+        const tricksIntervalMs2 = tricksMinutes2 * 60 * 1000;
+        const lastTricksTime2 = ap2.lastTechTricksPostedAt;
+        const timeSinceLastTricks2 = lastTricksTime2 ? (now - new Date(lastTricksTime2).getTime()) : Infinity;
+        if (timeSinceLastTricks2 >= tricksIntervalMs2) {
+          await executeTechTricksAutoPost(ap2.targetChannel);
+          return;
+        }
+      }
+
+      // 5. AI Prompts for Channel 2
+      const promptsActive2 = ap2.aiPromptsEnabled === true && (ap2.aiPromptsCount || 0) > 0;
+      if (promptsActive2) {
+        const promptsMinutes2 = ap2.aiPromptsIntervalMinutes || (ap2.aiPromptsIntervalHours ? ap2.aiPromptsIntervalHours * 60 : 360);
+        const promptsIntervalMs2 = promptsMinutes2 * 60 * 1000;
+        const lastPromptsTime2 = ap2.lastAiPromptsPostedAt;
+        const timeSinceLastPrompts2 = lastPromptsTime2 ? (now - new Date(lastPromptsTime2).getTime()) : Infinity;
+        if (timeSinceLastPrompts2 >= promptsIntervalMs2) {
+          await executeAiPromptsAutoPost(ap2.targetChannel);
+          return;
+        }
+      }
     }
   }
 }
@@ -9356,6 +9890,12 @@ async function startExpressServer() {
       }
     }).length;
 
+    const funItems = db.funNewsItems || [];
+    const totalFunNewsItems = funItems.length;
+    const funItemsCount = funItems.filter(i => i.category === 'fun').length;
+    const newsItemsCount = funItems.filter(i => i.category === 'news').length;
+    const funSourcesCount = (db.funSources || []).length;
+
     res.json({
       totalUsers,
       totalConfigs,
@@ -9370,7 +9910,11 @@ async function startExpressServer() {
       untestedProxiesCount,
       telegramChannelsCount,
       subsCount,
-      extractedTodayCount
+      extractedTodayCount,
+      totalFunNewsItems,
+      funItemsCount,
+      newsItemsCount,
+      funSourcesCount
     } as DashboardStats);
   });
 
@@ -9845,13 +10389,63 @@ async function startExpressServer() {
         aiPromptsEnabled,
         aiPromptsIntervalHours,
         aiPromptsIntervalMinutes,
-        aiPromptsCount
+        aiPromptsCount,
+        funNewsEnabled,
+        funNewsIntervalHours,
+        funNewsIntervalMinutes,
+        funNewsCount,
+        channel2
       } = req.body;
       
       const parsedConfigMinutes = Number(configIntervalMinutes) || (Number(configIntervalHours) ? Number(configIntervalHours) * 60 : (Number(postIntervalHours) ? Number(postIntervalHours) * 60 : (db.settings.autoPost?.configIntervalMinutes || 240)));
       const parsedNewsMinutes = Number(techNewsIntervalMinutes) || (Number(techNewsIntervalHours) ? Number(techNewsIntervalHours) * 60 : (db.settings.autoPost?.techNewsIntervalMinutes || 240));
       const parsedTricksMinutes = Number(techTricksIntervalMinutes) || (Number(techTricksIntervalHours) ? Number(techTricksIntervalHours) * 60 : (db.settings.autoPost?.techTricksIntervalMinutes || 360));
       const parsedPromptsMinutes = Number(aiPromptsIntervalMinutes) || (Number(aiPromptsIntervalHours) ? Number(aiPromptsIntervalHours) * 60 : (db.settings.autoPost?.aiPromptsIntervalMinutes || 360));
+      const parsedFunMinutes = Number(funNewsIntervalMinutes) || (Number(funNewsIntervalHours) ? Number(funNewsIntervalHours) * 60 : (db.settings.autoPost?.funNewsIntervalMinutes || 180));
+
+      let updatedChannel2 = db.settings.autoPost?.channel2 || { ...DEFAULT_CHANNEL2_SETTINGS };
+      if (channel2 && typeof channel2 === 'object') {
+        const c2ConfigMin = Number(channel2.configIntervalMinutes) || (Number(channel2.configIntervalHours) ? Number(channel2.configIntervalHours) * 60 : 240);
+        const c2NewsMin = Number(channel2.techNewsIntervalMinutes) || (Number(channel2.techNewsIntervalHours) ? Number(channel2.techNewsIntervalHours) * 60 : 240);
+        const c2TricksMin = Number(channel2.techTricksIntervalMinutes) || (Number(channel2.techTricksIntervalHours) ? Number(channel2.techTricksIntervalHours) * 60 : 360);
+        const c2PromptsMin = Number(channel2.aiPromptsIntervalMinutes) || (Number(channel2.aiPromptsIntervalHours) ? Number(channel2.aiPromptsIntervalHours) * 60 : 360);
+        const c2FunMin = Number(channel2.funNewsIntervalMinutes) || (Number(channel2.funNewsIntervalHours) ? Number(channel2.funNewsIntervalHours) * 60 : 120);
+
+        updatedChannel2 = {
+          ...updatedChannel2,
+          enabled: typeof channel2.enabled !== 'undefined' ? !!channel2.enabled : updatedChannel2.enabled,
+          targetChannel: channel2.targetChannel || updatedChannel2.targetChannel,
+          adText: channel2.adText || '',
+          silentMode: !!channel2.silentMode,
+          antiFloodDelayMinutes: Number(channel2.antiFloodDelayMinutes) || updatedChannel2.antiFloodDelayMinutes || 3,
+
+          configsEnabled: typeof channel2.configsEnabled !== 'undefined' ? !!channel2.configsEnabled : updatedChannel2.configsEnabled,
+          configCount: typeof channel2.configCount !== 'undefined' ? Math.max(0, Number(channel2.configCount)) : updatedChannel2.configCount,
+          proxyCount: typeof channel2.proxyCount !== 'undefined' ? Math.max(0, Number(channel2.proxyCount)) : updatedChannel2.proxyCount,
+          configIntervalMinutes: c2ConfigMin,
+          configIntervalHours: Math.max(1, Math.round(c2ConfigMin / 60)),
+
+          techNewsEnabled: typeof channel2.techNewsEnabled !== 'undefined' ? !!channel2.techNewsEnabled : updatedChannel2.techNewsEnabled,
+          techNewsCount: typeof channel2.techNewsCount !== 'undefined' ? Math.max(0, Number(channel2.techNewsCount)) : updatedChannel2.techNewsCount,
+          techNewsIntervalMinutes: c2NewsMin,
+          techNewsIntervalHours: Math.max(1, Math.round(c2NewsMin / 60)),
+
+          techTricksEnabled: typeof channel2.techTricksEnabled !== 'undefined' ? !!channel2.techTricksEnabled : updatedChannel2.techTricksEnabled,
+          techTricksCount: typeof channel2.techTricksCount !== 'undefined' ? Math.max(0, Number(channel2.techTricksCount)) : updatedChannel2.techTricksCount,
+          techTricksIntervalMinutes: c2TricksMin,
+          techTricksIntervalHours: Math.max(1, Math.round(c2TricksMin / 60)),
+
+          aiPromptsEnabled: typeof channel2.aiPromptsEnabled !== 'undefined' ? !!channel2.aiPromptsEnabled : updatedChannel2.aiPromptsEnabled,
+          aiPromptsCount: typeof channel2.aiPromptsCount !== 'undefined' ? Math.max(0, Number(channel2.aiPromptsCount)) : updatedChannel2.aiPromptsCount,
+          aiPromptsIntervalMinutes: c2PromptsMin,
+          aiPromptsIntervalHours: Math.max(1, Math.round(c2PromptsMin / 60)),
+
+          funNewsEnabled: typeof channel2.funNewsEnabled !== 'undefined' ? !!channel2.funNewsEnabled : updatedChannel2.funNewsEnabled,
+          funNewsCount: typeof channel2.funNewsCount !== 'undefined' ? Math.max(0, Number(channel2.funNewsCount)) : updatedChannel2.funNewsCount,
+          funNewsIntervalMinutes: c2FunMin,
+          funNewsIntervalHours: Math.max(1, Math.round(c2FunMin / 60))
+        };
+      }
 
       db.settings.autoPost = {
         ...DEFAULT_AUTO_POST,
@@ -9868,6 +10462,7 @@ async function startExpressServer() {
         techNewsCount: typeof techNewsCount !== 'undefined' && !isNaN(Number(techNewsCount)) ? Math.max(0, Number(techNewsCount)) : 2,
         techTricksCount: typeof techTricksCount !== 'undefined' && !isNaN(Number(techTricksCount)) ? Math.max(0, Number(techTricksCount)) : 2,
         aiPromptsCount: typeof aiPromptsCount !== 'undefined' && !isNaN(Number(aiPromptsCount)) ? Math.max(0, Number(aiPromptsCount)) : 1,
+        funNewsCount: typeof funNewsCount !== 'undefined' && !isNaN(Number(funNewsCount)) ? Math.max(0, Number(funNewsCount)) : 1,
         techPostMode: techPostMode || 'combined',
         autoPurgeOldTechDays: Number(autoPurgeOldTechDays) || 7,
         includeTechImportanceBadge: includeTechImportanceBadge !== false,
@@ -9875,7 +10470,7 @@ async function startExpressServer() {
         antiFloodDelayMinutes: typeof antiFloodDelayMinutes !== 'undefined' && !isNaN(Number(antiFloodDelayMinutes)) ? Math.max(1, Number(antiFloodDelayMinutes)) : (db.settings.autoPost?.antiFloodDelayMinutes ?? 3),
         lastAnyPostAt: db.settings.autoPost?.lastAnyPostAt || null,
         
-        // Granular independent schedule fields
+        // Granular independent schedule fields for Channel 1
         configsEnabled: typeof configsEnabled !== 'undefined' ? !!configsEnabled : db.settings.autoPost?.configsEnabled ?? true,
         configIntervalMinutes: parsedConfigMinutes,
         configIntervalHours: Math.max(1, Math.round(parsedConfigMinutes / 60)),
@@ -9894,7 +10489,14 @@ async function startExpressServer() {
         aiPromptsEnabled: typeof aiPromptsEnabled !== 'undefined' ? !!aiPromptsEnabled : db.settings.autoPost?.aiPromptsEnabled ?? true,
         aiPromptsIntervalMinutes: parsedPromptsMinutes,
         aiPromptsIntervalHours: Math.max(1, Math.round(parsedPromptsMinutes / 60)),
-        lastAiPromptsPostedAt: db.settings.autoPost?.lastAiPromptsPostedAt || null
+        lastAiPromptsPostedAt: db.settings.autoPost?.lastAiPromptsPostedAt || null,
+
+        funNewsEnabled: typeof funNewsEnabled !== 'undefined' ? !!funNewsEnabled : (db.settings.autoPost?.funNewsEnabled ?? false),
+        funNewsIntervalMinutes: parsedFunMinutes,
+        funNewsIntervalHours: Math.max(1, Math.round(parsedFunMinutes / 60)),
+        lastFunNewsPostedAt: db.settings.autoPost?.lastFunNewsPostedAt || null,
+
+        channel2: updatedChannel2
       };
 
       saveDatabase();
@@ -10100,11 +10702,13 @@ async function startExpressServer() {
   // API: Trigger Auto-Post manually (All / Default)
   app.post('/api/bot/auto-post/trigger', async (req, res) => {
     try {
-      const success = await executeAutoPost();
+      const channelNum = req.body?.channelNum === 2 ? 2 : 1;
+      const mode = req.body?.mode || 'all';
+      const success = await executeAutoPost(mode, channelNum);
       if (success) {
-        res.json({ success: true, message: 'پست با موفقیت به کانال ارسال گردید.' });
+        res.json({ success: true, message: `پست با موفقیت به کانال ${channelNum} ارسال گردید.` });
       } else {
-        res.status(400).json({ success: false, message: 'ارسال پست با خطا مواجه شد. جزئیات را در بخش گزارشات بررسی کنید.' });
+        res.status(400).json({ success: false, message: `ارسال پست به کانال ${channelNum} با خطا مواجه شد. جزئیات را در بخش گزارشات بررسی کنید.` });
       }
     } catch(err: any) {
       res.status(500).json({ success: false, message: err.message });
@@ -10114,9 +10718,11 @@ async function startExpressServer() {
   // API: Trigger Configs & Proxies Auto-Post manually
   app.post('/api/bot/auto-post/trigger-configs', async (req, res) => {
     try {
-      const success = await executeConfigsAutoPost();
+      const channelNum = req.body?.channelNum === 2 ? 2 : 1;
+      const ap = channelNum === 2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
+      const success = await executeConfigsAutoPost(ap?.targetChannel);
       if (success) {
-        res.json({ success: true, message: 'پست کانفیگ‌ها و پروکسی‌ها با موفقیت به کانال ارسال گردید.' });
+        res.json({ success: true, message: `پست کانفیگ‌ها و پروکسی‌ها با موفقیت به کانال ${channelNum} ارسال گردید.` });
       } else {
         res.status(400).json({ success: false, message: 'ارسال کانفیگ‌ها با خطا مواجه شد یا موردی یافت نشد.' });
       }
@@ -10128,9 +10734,11 @@ async function startExpressServer() {
   // API: Trigger Tech News Auto-Post manually
   app.post('/api/bot/auto-post/trigger-tech-news', async (req, res) => {
     try {
-      const success = await executeTechNewsAutoPost();
+      const channelNum = req.body?.channelNum === 2 ? 2 : 1;
+      const ap = channelNum === 2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
+      const success = await executeTechNewsAutoPost(ap?.targetChannel);
       if (success) {
-        res.json({ success: true, message: 'پست اخبار تکنولوژی با موفقیت به کانال ارسال گردید.' });
+        res.json({ success: true, message: `پست اخبار تکنولوژی با موفقیت به کانال ${channelNum} ارسال گردید.` });
       } else {
         res.status(400).json({ success: false, message: 'ارسال اخبار با خطا مواجه شد یا خبری یافت نشد.' });
       }
@@ -10142,13 +10750,229 @@ async function startExpressServer() {
   // API: Trigger Tech Tricks Auto-Post manually
   app.post('/api/bot/auto-post/trigger-tech-tricks', async (req, res) => {
     try {
-      const success = await executeTechTricksAutoPost();
+      const channelNum = req.body?.channelNum === 2 ? 2 : 1;
+      const ap = channelNum === 2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
+      const success = await executeTechTricksAutoPost(ap?.targetChannel);
       if (success) {
-        res.json({ success: true, message: 'پست ترفندها و رازهای تکنولوژی با موفقیت به کانال ارسال گردید.' });
+        res.json({ success: true, message: `پست ترفندها و رازهای تکنولوژی با موفقیت به کانال ${channelNum} ارسال گردید.` });
       } else {
         res.status(400).json({ success: false, message: 'ارسال ترفندها با خطا مواجه شد یا مطلبی یافت نشد.' });
       }
     } catch(err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Trigger Fun & News Auto-Post manually
+  app.post('/api/bot/auto-post/trigger-fun-news', async (req, res) => {
+    try {
+      const channelNum = req.body?.channelNum === 1 ? 1 : 2;
+      const success = await executeFunNewsAutoPost(channelNum);
+      if (success) {
+        res.json({ success: true, message: `پست فان و اخبار با موفقیت به کانال ${channelNum} ارسال گردید.` });
+      } else {
+        res.status(400).json({ success: false, message: 'ارسال با خطا مواجه شد یا مطلبی یافت نشد.' });
+      }
+    } catch(err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Get Fun News Items
+  app.get('/api/fun-news', (req, res) => {
+    if (!db.funNewsItems || db.funNewsItems.length === 0) {
+      db.funNewsItems = [...DEFAULT_FUN_NEWS_ITEMS];
+    }
+    res.json(db.funNewsItems || []);
+  });
+
+  // API: Refresh / Extract Fun News from Telegram sources
+  app.post('/api/fun-news/refresh', async (req, res) => {
+    try {
+      const { sourceId } = req.body || {};
+      const result = await extractFunNewsFromSources(sourceId);
+      res.json({ success: true, addedCount: result.added, totalCount: result.total, skippedCount: result.skipped });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Send specific Fun News Item to Channel
+  app.post('/api/fun-news/send', async (req, res) => {
+    try {
+      const { itemId, channelNum } = req.body;
+      const item = (db.funNewsItems || []).find(i => i.id === itemId);
+      if (!item) {
+        return res.status(404).json({ success: false, message: 'مطلب مورد نظر یافت نشد.' });
+      }
+
+      const targetNum = channelNum === 1 ? 1 : 2;
+      const isCh2 = targetNum === 2;
+      const ap = isCh2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
+      const targetChannel = ap?.targetChannel;
+
+      if (!targetChannel) {
+        return res.status(400).json({ success: false, message: `کانال مقصد شماره ${targetNum} تنظیم نشده است.` });
+      }
+
+      const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
+      const adText = ap?.adText || db.settings.branding || '';
+
+      const isFun = item.category === 'fun';
+      const categoryEmoji = isFun ? '🎭' : '📰';
+      const categoryName = isFun ? 'طنز و سرگرمی تلگرام' : 'اخبار عمومی و مهم روز';
+
+      let text = `${categoryEmoji} <b>« ${categoryName} »</b>\n`;
+      text += `📌 <b>${escapeHtml(item.title)}</b>\n\n`;
+      text += `${escapeHtml(item.text)}\n\n`;
+
+      if (item.tags && item.tags.length > 0) {
+        const formattedTags = item.tags
+          .slice(0, 5)
+          .map(t => `#${t.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '')}`)
+          .join(' ');
+        text += `🏷 <i>${formattedTags}</i>\n`;
+      }
+      if (adText) {
+        text += `\n📢 <i>${escapeHtml(adText)}</i>\n`;
+      }
+      text += `🆔 ${escapeHtml(channelHandle)}`;
+
+      let sendSuccess = false;
+      const inlineButtons: any[] = [];
+      const sponsorBtn = getSponsorChannelInlineButton();
+      if (sponsorBtn) {
+        inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url }]);
+      }
+
+      if (item.imageUrl && text.length <= 1000) {
+        try {
+          await callTelegramApi('sendPhoto', {
+            chat_id: channelHandle,
+            photo: item.imageUrl,
+            caption: text,
+            parse_mode: 'HTML',
+            reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+            disable_notification: !!ap.silentMode
+          });
+          sendSuccess = true;
+        } catch (e) {
+          // fallback to text
+        }
+      }
+
+      if (!sendSuccess) {
+        await callTelegramApi('sendMessage', {
+          chat_id: channelHandle,
+          text: safeTelegramHtmlLength(text, 3900),
+          parse_mode: 'HTML',
+          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+          disable_notification: !!ap.silentMode
+        });
+      }
+
+      if (isCh2) {
+        item.postedToChannel2 = true;
+      } else {
+        item.postedToChannel1 = true;
+      }
+      item.postedAt = new Date().toISOString();
+      saveDatabase();
+
+      res.json({ success: true, message: `مطلب با موفقیت به کانال ${targetNum} (${channelHandle}) ارسال شد.` });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Delete Fun News Item
+  app.delete('/api/fun-news/:id', (req, res) => {
+    try {
+      const { id } = req.params;
+      const idx = (db.funNewsItems || []).findIndex(i => i.id === id);
+      if (idx === -1) {
+        return res.status(404).json({ success: false, message: 'مطلب یافت نشد.' });
+      }
+      db.funNewsItems.splice(idx, 1);
+      saveDatabase();
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Get Fun Sources
+  app.get('/api/fun-sources', (req, res) => {
+    if (!db.funSources || db.funSources.length === 0) {
+      db.funSources = [...DEFAULT_FUN_SOURCES];
+    }
+    res.json(db.funSources || []);
+  });
+
+  // API: Add Fun Source
+  app.post('/api/fun-sources', (req, res) => {
+    try {
+      const { name, urlOrHandle, category } = req.body;
+      if (!urlOrHandle) {
+        return res.status(400).json({ success: false, message: 'شناسه یا آدرس کانال تلگرام الزامی است.' });
+      }
+
+      const cleanHandle = urlOrHandle.replace(/^https?:\/\/t\.me\/(s\/)?/, '').trim();
+      const formattedHandle = cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`;
+
+      const newSource: FunNewsSource = {
+        id: generateId(),
+        name: (name || cleanHandle).trim(),
+        urlOrHandle: formattedHandle,
+        enabled: true,
+        category: category === 'news' ? 'news' : 'fun',
+        extractedCount: 0,
+        createdAt: new Date().toISOString()
+      };
+
+      if (!db.funSources) db.funSources = [];
+      db.funSources.push(newSource);
+      saveDatabase();
+      addLog('success', `کانال منبع فان و اخبار افزوده شد: ${newSource.name} (${newSource.urlOrHandle})`);
+      res.json({ success: true, source: newSource });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Toggle or Update Fun Source
+  app.put('/api/fun-sources/:id', (req, res) => {
+    try {
+      const { id } = req.params;
+      const { enabled, name, category } = req.body;
+      const source = (db.funSources || []).find(s => s.id === id);
+      if (!source) {
+        return res.status(404).json({ success: false, message: 'منبع یافت نشد.' });
+      }
+
+      if (typeof enabled !== 'undefined') source.enabled = !!enabled;
+      if (name) source.name = name.trim();
+      if (category) source.category = category === 'news' ? 'news' : 'fun';
+
+      saveDatabase();
+      res.json({ success: true, source });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Delete Fun Source
+  app.delete('/api/fun-sources/:id', (req, res) => {
+    try {
+      const { id } = req.params;
+      const idx = (db.funSources || []).findIndex(s => s.id === id);
+      if (idx === -1) {
+        return res.status(404).json({ success: false, message: 'منبع یافت نشد.' });
+      }
+      db.funSources.splice(idx, 1);
+      saveDatabase();
+      res.json({ success: true });
+    } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
   });

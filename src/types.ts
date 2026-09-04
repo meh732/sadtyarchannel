@@ -96,8 +96,92 @@ export interface AutoPostSettings {
   aiPromptsCount?: number; // Number of AI prompts to post (1, 2, 3, etc.)
   lastAiPromptsPostedAt?: string | null;
 
+  // 5. Fun & General News Schedule (Channel 1)
+  funNewsEnabled?: boolean; // Toggle for fun & general news auto-posting
+  funNewsIntervalHours?: number;
+  funNewsIntervalMinutes?: number;
+  funNewsCount?: number; // Number of fun/news items to post (1, 2, 3, etc.)
+  lastFunNewsPostedAt?: string | null;
+
   // Legacy/Backwards compatibility
   techPostMode?: 'combined' | 'standalone' | 'both';
+
+  // Channel 2 Dedicated Auto-Post Configuration
+  channel2?: SecondaryChannelSettings;
+}
+
+export interface SecondaryChannelSettings {
+  enabled: boolean; // Master switch for Channel 2
+  targetChannel: string; // e.g., @my_target_channel_2
+  adText: string; // bot or channel to advertise on Channel 2
+  silentMode: boolean; // send silently
+  antiFloodDelayMinutes?: number; // Anti-flood delay between posts in minutes
+  lastAnyPostAt?: string | null;
+  lastPostedAt?: string | null;
+
+  // 1. Configs & Proxies Schedule for Channel 2
+  configsEnabled?: boolean;
+  postIntervalHours?: number;
+  configIntervalHours?: number;
+  configIntervalMinutes?: number;
+  configCount?: number;
+  proxyCount?: number;
+  customText?: string;
+  lastConfigsPostedAt?: string | null;
+
+  // 2. Tech News Schedule for Channel 2
+  techNewsEnabled?: boolean;
+  techNewsIntervalHours?: number;
+  techNewsIntervalMinutes?: number;
+  techNewsCount?: number;
+  lastTechNewsPostedAt?: string | null;
+
+  // 3. Tech Tricks & Secrets Schedule for Channel 2
+  techTricksEnabled?: boolean;
+  techTricksIntervalHours?: number;
+  techTricksIntervalMinutes?: number;
+  techTricksCount?: number;
+  lastTechTricksPostedAt?: string | null;
+
+  // 4. AI Prompts Schedule for Channel 2
+  aiPromptsEnabled?: boolean;
+  aiPromptsIntervalHours?: number;
+  aiPromptsIntervalMinutes?: number;
+  aiPromptsCount?: number;
+  lastAiPromptsPostedAt?: string | null;
+
+  // 5. Fun & General News Schedule for Channel 2 (Primary use-case)
+  funNewsEnabled?: boolean;
+  funNewsIntervalHours?: number;
+  funNewsIntervalMinutes?: number;
+  funNewsCount?: number;
+  lastFunNewsPostedAt?: string | null;
+}
+
+export interface FunNewsItem {
+  id: string;
+  title: string;
+  text: string;
+  imageUrl?: string;
+  sourceChannel: string; // e.g. @khandeh_bazaar
+  sourceMessageId?: number;
+  category: 'fun' | 'news' | 'meme' | 'lifestyle';
+  tags: string[];
+  createdAt: string;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  postedAt?: string | null;
+}
+
+export interface FunNewsSource {
+  id: string;
+  name: string;
+  urlOrHandle: string; // Telegram channel handle (e.g. @channel) or URL
+  category?: 'fun' | 'news';
+  enabled: boolean;
+  extractedCount: number;
+  lastExtracted?: string | null;
+  createdAt?: string;
 }
 
 export interface SystemSettings {
@@ -234,5 +318,10 @@ export interface DashboardStats {
   aiPromptsImageCount?: number;
   aiPromptsVideoCount?: number;
   aiPromptsChatCount?: number;
+  // Fun & General News Stats
+  totalFunNewsItems?: number;
+  funItemsCount?: number;
+  newsItemsCount?: number;
+  funSourcesCount?: number;
 }
 
