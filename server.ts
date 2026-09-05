@@ -6170,7 +6170,7 @@ async function checkUserChannelMember(channelUsername: string, userId: number): 
 }
 
 /**
- * Sends request to Telegram Bot API
+ * Sends request to Telegram Bot API with automatic error recovery for formatting and keyboard errors
  */
 async function callTelegramApi(method: string, body: object | FormData): Promise<any> {
   const token = db.settings.botToken;
@@ -6193,6 +6193,49 @@ async function callTelegramApi(method: string, body: object | FormData): Promise
 
   const data = await response.json();
   if (!data.ok) {
+    const errorDesc = String(data.description || '');
+
+    // Fallback 1: If Markdown/HTML parsing failed (e.g. unescaped character), retry without parse_mode
+    if (!isFormData && typeof body === 'object' && (body as any).parse_mode && (
+      errorDesc.includes("can't parse entities") || 
+      errorDesc.includes("character '") || 
+      errorDesc.includes("tag")
+    )) {
+      try {
+        const cleanBody = { ...(body as any) };
+        delete cleanBody.parse_mode;
+        const retryRes = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cleanBody),
+          signal: AbortSignal.timeout(15000)
+        });
+        const retryData = await retryRes.json();
+        if (retryData.ok) return retryData.result;
+      } catch (_) {}
+    }
+
+    // Fallback 2: If reply_markup was rejected (e.g. invalid keyboard format or button), retry without reply_markup
+    if (!isFormData && typeof body === 'object' && (body as any).reply_markup && (
+      errorDesc.includes("reply keyboard") || 
+      errorDesc.includes("BUTTON_TYPE_INVALID") || 
+      errorDesc.includes("can't parse") ||
+      errorDesc.includes("markup")
+    )) {
+      try {
+        const cleanBody = { ...(body as any) };
+        delete cleanBody.reply_markup;
+        const retryRes = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cleanBody),
+          signal: AbortSignal.timeout(15000)
+        });
+        const retryData = await retryRes.json();
+        if (retryData.ok) return retryData.result;
+      } catch (_) {}
+    }
+
     throw new Error(data.description || 'Unknown Telegram Error');
   }
   return data.result;
@@ -6275,7 +6318,7 @@ async function setupBotMenuButton(token?: string, req?: express.Request): Promis
         if (adminData.ok) {
           adminResult = isHttps 
             ? ' و پنل وب‌ویو اختصاصی برای ادمین فعال شد'
-            : ' (به دلیل عدم استفاده از HTTPS روی سرور لینوکس، منوی وب‌ویو غیرفعال شد)';
+            : ' (به دلیل عدم استفاده از HTTPS روی سرور، منوی وب‌ویو غیرفعال شد)';
         }
       }
     }
@@ -6319,7 +6362,9 @@ async function setBotCommands(token: string) {
 }
 
 /**
- * Generates the persistent custom keyboard (ReplyKeyboardMarkup) to be displayed in the bar below the chat
+ * Generates the persistent custom keyboard (ReplyKeyboardMarkup) to be displayed in the bar below the chat.
+ * CRITICAL: Telegram KeyboardButton inside ReplyKeyboardMarkup ONLY supports text or web_app (must be https).
+ * It NEVER supports 'url' field (that causes 400 Bad Request error).
  */
 function getReplyKeyboard(userId: string | number, username?: string | null) {
   const isAdmin = checkIsAdmin(userId, username);
@@ -6327,43 +6372,42 @@ function getReplyKeyboard(userId: string | number, username?: string | null) {
 
   const keyboard: any[][] = [
     [
-      { text: '🔥 دریافت یکجای ۵۰ کانفیگ ⭐', style: 'success' },
-      { text: '⚡️ دریافت یکجای ۱۵ کانفیگ', style: 'success' }
+      { text: '🔥 دریافت یکجای ۵۰ کانفیگ ⭐' },
+      { text: '⚡️ دریافت یکجای ۱۵ کانفیگ' }
     ],
     [
-      { text: '📥 دریافت کانفیگ ویتوری ⚡', style: 'primary' }
+      { text: '📥 دریافت کانفیگ ویتوری ⚡' }
     ],
     [
-      { text: '🌀 فایل .NPVT', style: 'success' },
-      { text: '🔑 فایل .OVPN', style: 'success' },
-      { text: '📄 فایل .TXT', style: 'success' }
+      { text: '🌀 فایل .NPVT' },
+      { text: '🔑 فایل .OVPN' },
+      { text: '📄 فایل .TXT' }
     ],
     [
-      { text: '🔌 دریافت پروکسی تلگرام 🚀', style: 'primary' },
-      { text: '📊 وضعیت شبکه و پینگ نت 🟢', style: 'primary' }
+      { text: '🔌 دریافت پروکسی تلگرام 🚀' },
+      { text: '📊 وضعیت شبکه و پینگ نت 🟢' }
     ],
     [
-      { text: '💡 ترفندها 📱', style: 'primary' },
-      { text: '📰 اخبار روز تکنولوژی 🌐', style: 'primary' }
+      { text: '💡 ترفندها 📱' },
+      { text: '📰 اخبار روز تکنولوژی 🌐' }
     ],
     [
-      { text: '🎨 پرامپت‌های طلایی هوش مصنوعی ✨', style: 'primary' }
+      { text: '🎨 پرامپت‌های طلایی هوش مصنوعی ✨' }
     ],
     [
-      { text: 'ℹ️ راهنمای اتصال گام به گام 📚', style: 'primary' }
+      { text: 'ℹ️ راهنمای اتصال گام به گام 📚' }
     ]
   ];
 
   if (isAdmin) {
-    // Show Admin WebApp button & quick shortcut button directly in the bar below the chat for the admin!
     const isHttps = appUrl.startsWith('https://');
-    keyboard.unshift([
-      isHttps 
-        ? { text: '🌐 باز کردن وب‌ویو پنل مدیریت (WebApp) 🚀', web_app: { url: appUrl } }
-        : { text: '🔗 باز کردن پنل مدیریت در مرورگر 🚀', url: appUrl }
-    ]);
+    if (isHttps) {
+      keyboard.unshift([
+        { text: '🌐 باز کردن وب‌ویو پنل مدیریت (WebApp) 🚀', web_app: { url: appUrl } }
+      ]);
+    }
     keyboard.push([
-      { text: '⚙️ ورود به پنل مدیریت در تلگرام 🔴', style: 'danger' }
+      { text: '⚙️ ورود به پنل مدیریت در تلگرام 🔴' }
     ]);
   }
 
