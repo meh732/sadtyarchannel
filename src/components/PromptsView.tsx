@@ -281,7 +281,7 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
                         // Hide broken image and fallback to placeholder
                         (e.currentTarget as HTMLElement).style.display = 'none';
                       }}
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 relative z-10"
                     />
                   ) : null}
 
