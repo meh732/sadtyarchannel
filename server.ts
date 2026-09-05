@@ -9134,11 +9134,11 @@ async function handleBotUpdate(update: any) {
       const workingConfigsCount = db.configs.filter(c => c.status === 'working').length;
       const workingProxiesCount = (db.proxies || []).filter(p => p.status === 'working').length;
 
-      let welcome = `سلام **${escapeHtml(firstName)}** عزیز! 🌹\n` +
+      let welcome = `سلام <b>${escapeHtml(firstName)}</b> عزیز! 🌹\n` +
         `به ربات بزرگ استخراج و پخش کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده خوش آمدید.\n\n` +
-        `📊 **وضعیت لحظه‌ای دیتابیس ربات:**\n` +
-        `🟢 تعداد کانفیگ‌های فعال V2Ray: **${workingConfigsCount} عدد**\n` +
-        `🚀 تعداد پروکسی‌های فعال تلگرام: **${workingProxiesCount} عدد**\n\n` +
+        `📊 <b>وضعیت لحظه‌ای دیتابیس ربات:</b>\n` +
+        `🟢 تعداد کانفیگ‌های فعال V2Ray: <b>${workingConfigsCount} عدد</b>\n` +
+        `🚀 تعداد پروکسی‌های فعال تلگرام: <b>${workingProxiesCount} عدد</b>\n\n` +
         `💡 سیستم به صورت ۲۴ ساعته منابع معتبر را پایش کرده و پورت‌ها را از داخل شبکه ایران تست می‌کند.\n\n` +
         `جهت دریافت کانفیگ و پروکسی، از گزینه‌های زیر استفاده کنید:`;
 
@@ -9146,15 +9146,15 @@ async function handleBotUpdate(update: any) {
         const ch1 = db.settings.autoPost?.targetChannel || 'تنظیم نشده';
         const ch2 = db.settings.autoPost?.channel2?.targetChannel || 'تنظیم نشده';
         const cronStatus = db.settings.autoPost?.enabled ? '🟢 فعال' : '🔴 غیرفعال';
-        welcome = `👑 **پنل وضعیت و مدیریت ربات (مدیر سیستم):**\n\n` +
-          `🟢 **وضعیت هسته ربات:** متصل و آنلاین ⚡\n` +
-          `🚀 **کانفیگ‌های فعال V2Ray:** ${workingConfigsCount} عدد (کل: ${db.configs.length})\n` +
-          `🔌 **پروکسی‌های فعال تلگرام:** ${workingProxiesCount} عدد (کل: ${(db.proxies || []).length})\n` +
-          `📢 **کانال ۱ (اصلی):** \`${escapeHtml(ch1)}\`\n` +
-          `🎭 **کانال ۲ (فان و اخبار):** \`${escapeHtml(ch2)}\`\n` +
-          `⏱ **وضعیت ارسال خودکار (کرون):** ${cronStatus}\n` +
-          `👥 **تعداد کل کاربران:** ${db.users.length} نفر\n\n` +
-          `🔄 تمامی حافظه‌های موقت و وضعیت‌های ورودی پاکسازی و ربات به طور کامل **بروزرسانی** شد.\n` +
+        welcome = `👑 <b>پنل وضعیت و مدیریت ربات (مدیر سیستم):</b>\n\n` +
+          `🟢 <b>وضعیت هسته ربات:</b> متصل و آنلاین ⚡\n` +
+          `🚀 <b>کانفیگ‌های فعال V2Ray:</b> ${workingConfigsCount} عدد (کل: ${db.configs.length})\n` +
+          `🔌 <b>پروکسی‌های فعال تلگرام:</b> ${workingProxiesCount} عدد (کل: ${(db.proxies || []).length})\n` +
+          `📢 <b>کانال ۱ (اصلی):</b> <code>${escapeHtml(ch1)}</code>\n` +
+          `🎭 <b>کانال ۲ (فان و اخبار):</b> <code>${escapeHtml(ch2)}</code>\n` +
+          `⏱ <b>وضعیت ارسال خودکار (کرون):</b> ${cronStatus}\n` +
+          `👥 <b>تعداد کل کاربران:</b> ${db.users.length} نفر\n\n` +
+          `🔄 تمامی حافظه‌های موقت و وضعیت‌های ورودی پاکسازی و ربات به طور کامل <b>بروزرسانی</b> شد.\n` +
           `جهت مدیریت یا دریافت کانفیگ، از دکمه‌های زیر استفاده کنید:`;
       }
 
@@ -9176,26 +9176,26 @@ async function handleBotUpdate(update: any) {
 
       startInlineKeyboard.push(
         [
-          { text: '🔥 🚀 دریافت یکجای ۵۰ کانفیگ (توصیه ویژه ⭐)', callback_data: 'v2ray_qty_50', style: 'success' }
+          { text: '🔥 🚀 دریافت یکجای ۵۰ کانفیگ (توصیه ویژه ⭐)', callback_data: 'v2ray_qty_50' }
         ],
         [
-          { text: '📥 انتخاب تعداد دلخواه کانفیگ V2Ray', callback_data: 'get_v2ray_configs', style: 'primary' }
+          { text: '📥 انتخاب تعداد دلخواه کانفیگ V2Ray', callback_data: 'get_v2ray_configs' }
         ],
         [
-          { text: '🌀 فایل NPVT', callback_data: 'get_file_npvt', style: 'success' },
-          { text: '🔑 فایل OVPN', callback_data: 'get_file_ovpn', style: 'success' },
-          { text: '📄 فایل TXT', callback_data: 'get_file_txt', style: 'success' }
+          { text: '🌀 فایل NPVT', callback_data: 'get_file_npvt' },
+          { text: '🔑 فایل OVPN', callback_data: 'get_file_ovpn' },
+          { text: '📄 فایل TXT', callback_data: 'get_file_txt' }
         ],
         [
-          { text: '🔌 دریافت پروکسی جدید تلگرام', callback_data: 'get_proxies', style: 'primary' },
-          { text: '📊 وضعیت شبکه و پینگ نت 🟢', callback_data: 'get_net_status', style: 'primary' }
+          { text: '🔌 دریافت پروکسی جدید تلگرام', callback_data: 'get_proxies' },
+          { text: '📊 وضعیت شبکه و پینگ نت 🟢', callback_data: 'get_net_status' }
         ],
         [
-          { text: '💡 ترفندها 📱', callback_data: 'get_tech_tricks', style: 'primary' },
-          { text: '📰 اخبار روز تکنولوژی 🌐', callback_data: 'get_tech_news', style: 'primary' }
+          { text: '💡 ترفندها 📱', callback_data: 'get_tech_tricks' },
+          { text: '📰 اخبار روز تکنولوژی 🌐', callback_data: 'get_tech_news' }
         ],
         [
-          { text: '🎨 پرامپت‌های طلایی هوش مصنوعی ✨', callback_data: 'get_ai_prompts', style: 'primary' }
+          { text: '🎨 پرامپت‌های طلایی هوش مصنوعی ✨', callback_data: 'get_ai_prompts' }
         ],
         [
           { text: 'ℹ️ راهنمای اتصال آسان 📚', callback_data: 'get_help' },
@@ -9205,20 +9205,20 @@ async function handleBotUpdate(update: any) {
 
       if (requiredChannels.length > 0 && requiredChannels[0]?.username) {
         const url = requiredChannels[0].inviteLink || `https://t.me/${requiredChannels[0].username.replace('@', '')}`;
-        startInlineKeyboard.push([{ text: '⭐ کانال رسمی پشتیبانی و اخبار', url, style: 'primary' }]);
+        startInlineKeyboard.push([{ text: '⭐ کانال رسمی پشتیبانی و اخبار', url }]);
       }
 
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: welcome,
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
         reply_markup: getReplyKeyboard(userId, username)
       });
 
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
-        text: isAdmin ? '👇 **منوی دسترسی سریع مدیریت و امکانات ربات:**' : '👇 **منوی دسترسی سریع و میانبرها:**',
-        parse_mode: 'Markdown',
+        text: isAdmin ? '👇 <b>منوی دسترسی سریع مدیریت و امکانات ربات:</b>' : '👇 <b>منوی دسترسی سریع و میانبرها:</b>',
+        parse_mode: 'HTML',
         reply_markup: { inline_keyboard: startInlineKeyboard }
       });
       return;
