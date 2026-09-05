@@ -4842,6 +4842,210 @@ async function executeAiPromptsAutoPost(customTargetChannel?: string): Promise<b
 // ----------------------------------------------------
 // 5. DEDICATED EXECUTOR: FUN & GENERAL NEWS AUTO-POST
 // ----------------------------------------------------
+// ----------------------------------------------------
+// CONTENT SANITIZATION HELPERS (STRIP SOURCE GROUP/CHANNEL IDS & ADS)
+// ----------------------------------------------------
+function escapeRegex(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Strips all configured source group IDs, channel usernames, invite links, cross-promotions, and foreign handles
+ * from text before posting to Telegram channels (Channel 1, Channel 2, or Bot).
+ */
+function sanitizeContentForTelegramPost(
+  content: string,
+  targetChannelHandle?: string,
+  knownSources?: string[]
+): string {
+  if (!content) return '';
+
+  let text = content;
+
+  // 1. Collect all known source channel/group handles to eliminate
+  const allSourceHandles = new Set<string>();
+  if (db.funSources) {
+    db.funSources.forEach(s => {
+      const h = (s.urlOrHandle || '').replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').trim().toLowerCase();
+      if (h) allSourceHandles.add(h);
+      if (s.name) {
+        const cleanN = s.name.replace(/[@#]/g, '').trim().toLowerCase();
+        if (cleanN.length >= 3) allSourceHandles.add(cleanN);
+      }
+    });
+  }
+  if (db.sources) {
+    db.sources.forEach(s => {
+      const h = (s.urlOrHandle || '').replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').trim().toLowerCase();
+      if (h) allSourceHandles.add(h);
+    });
+  }
+  if (db.forceJoinChannels) {
+    db.forceJoinChannels.forEach(c => {
+      const h = (c.username || '').replace(/^@+/, '').trim().toLowerCase();
+      if (h) allSourceHandles.add(h);
+    });
+  }
+  if (knownSources) {
+    knownSources.forEach(s => {
+      const h = s.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').trim().toLowerCase();
+      if (h) allSourceHandles.add(h);
+    });
+  }
+
+  const cleanTarget = (targetChannelHandle || '').replace(/^@+/, '').toLowerCase().trim();
+
+  // 2. Filter lines
+  const lines = text.split('\n');
+  const keptLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (keptLines.length > 0 && keptLines[keptLines.length - 1] !== '') {
+        keptLines.push('');
+      }
+      continue;
+    }
+
+    const lower = trimmed.toLowerCase();
+
+    // Check for ad/promotional patterns
+    if (
+      lower.includes('سفارش تبلیغ') ||
+      lower.includes('تبلیغات') ||
+      lower.includes('تعرفه تبلیغ') ||
+      lower.includes('هزینه تبلیغ') ||
+      lower.includes('ثبت نام در سایت') ||
+      lower.includes('پیش بینی فوتبال') ||
+      lower.includes('بازی انفجار') ||
+      lower.includes('وان ایکس') ||
+      lower.includes('۱xbet') ||
+      lower.includes('1xbet') ||
+      lower.includes('کانال ما را دنبال کنید') ||
+      lower.includes('عضویت در کانال') ||
+      lower.includes('عضویت در گروه') ||
+      lower.includes('پیوستن به کانال') ||
+      lower.includes('پیوستن به گروه') ||
+      lower.includes('لینک کانال') ||
+      lower.includes('لینک گروه') ||
+      lower.includes('آیدی گروه') ||
+      lower.includes('آیدی کانال') ||
+      lower.includes('گروه چت') ||
+      lower.includes('لینک چت') ||
+      lower.includes('join group') ||
+      lower.includes('join channel') ||
+      lower.includes('instagram.com') ||
+      lower.includes('اینستاگرام:') ||
+      lower.includes('اینستاگرام ما') ||
+      lower.includes('پیج اینستا') ||
+      lower.includes('rubika.ir') ||
+      lower.includes('eitaa.com') ||
+      lower.includes('ble.ir') ||
+      lower.includes('akharinkhabarads')
+    ) {
+      continue;
+    }
+
+    // Lines that are just IDs, links, or channel/group references
+    if (/^[🆔📢🔗📡👉📍👈🔹🔺🔻▪️▫️•\-\*\s]*(منبع\s*:|کانال\s*:|گروه\s*:|channel\s*:|source\s*:)?\s*(@[\w\d_]+|https?:\/\/(t\.me|telegram\.me)\/[^\s]+)\s*$/i.test(trimmed)) {
+      continue;
+    }
+
+    // Line containing source references
+    let isSourceCreditLine = false;
+    for (const src of allSourceHandles) {
+      if (src.length >= 3 && lower.includes(src) && src !== cleanTarget) {
+        if (
+          lower.startsWith('منبع') ||
+          lower.startsWith('source') ||
+          lower.startsWith('کانال') ||
+          lower.startsWith('گروه') ||
+          lower.includes('@' + src) ||
+          lower.includes('t.me/' + src)
+        ) {
+          isSourceCreditLine = true;
+          break;
+        }
+      }
+    }
+    if (isSourceCreditLine) continue;
+
+    // Process line content
+    let processedLine = line;
+
+    // Remove Telegram links unless they match targetChannelHandle
+    processedLine = processedLine.replace(/https?:\/\/(www\.)?(t\.me|telegram\.me|telegram\.dog)\/(joinchat\/|\+)?([\w\d_\-]+)/gi, (match, _, _2, _3, handle) => {
+      if (cleanTarget && handle && handle.toLowerCase() === cleanTarget) {
+        return match;
+      }
+      return '';
+    });
+
+    // Remove @mentions unless they match targetChannelHandle
+    processedLine = processedLine.replace(/@([a-zA-Z0-9_]{3,32})/g, (match, uname) => {
+      if (cleanTarget && uname.toLowerCase() === cleanTarget) {
+        return match;
+      }
+      return '';
+    });
+
+    // Remove all known source names or handles if remaining in text
+    for (const src of allSourceHandles) {
+      if (src.length >= 4 && src !== cleanTarget) {
+        const regex = new RegExp(`@?${escapeRegex(src)}`, 'gi');
+        processedLine = processedLine.replace(regex, '');
+      }
+    }
+
+    // Strip dangling ID/link icons left behind
+    processedLine = processedLine
+      .replace(/^[🆔📢🔗📡👉📍👈🔹🔺🔻▪️▫️•\-:\s]+$/g, '')
+      .replace(/([🆔📢🔗📡👉📍👈🔹🔺🔻▪️▫️•\-:\s])\s*$/g, (m, icon) => {
+        return icon === '🆔' || icon === '🔗' || icon === '👉' || icon === '👈' ? '' : m;
+      })
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
+    if (processedLine) {
+      keptLines.push(processedLine);
+    }
+  }
+
+  return keptLines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function sanitizePostTitle(title: string, targetChannelHandle?: string): string {
+  if (!title) return 'مطلب و خبر روز';
+  let t = title;
+  t = t.replace(/https?:\/\/[^\s]+/g, '');
+  t = t.replace(/@[\w\d_]+/g, '');
+  t = t.replace(/(تصویر جدید از|مطلب سرگرمی از|پست جدید از|خبر جدید از)\s*(@?[\w\d_\u0600-\u06FF]+)/gi, 'مطلب منتخب طنز و روز');
+  t = t.replace(/^[🆔📢🔗📡👉📍👈🔹🔺🔻▪️▫️•\-:\s]+/g, '');
+  t = t.replace(/\s{2,}/g, ' ').trim();
+  return t || 'مطلب و خبر روز';
+}
+
+function cleanAllFunNewsItemsInDb(): void {
+  if (!db.funNewsItems || db.funNewsItems.length === 0) return;
+  let changed = false;
+  for (const item of db.funNewsItems) {
+    const cleanT = sanitizeContentForTelegramPost(item.text);
+    const cleanTitle = sanitizePostTitle(item.title);
+    if (cleanT !== item.text || cleanTitle !== item.title) {
+      item.text = cleanT || item.text;
+      item.title = cleanTitle || item.title;
+      changed = true;
+    }
+  }
+  if (changed) {
+    saveDatabase();
+  }
+}
+
 async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetChannel?: string): Promise<boolean> {
   const isCh2 = channelTargetNum === 2;
   const ap = isCh2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
@@ -4921,9 +5125,13 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       const categoryEmoji = isFun ? '🎭' : '📰';
       const categoryName = isFun ? 'طنز و سرگرمی تلگرام' : 'اخبار عمومی و مهم روز';
 
+      // Thoroughly sanitize title and body text so NO source group/channel handles appear
+      const sanitizedText = sanitizeContentForTelegramPost(item.text, channelHandle);
+      const sanitizedTitle = sanitizePostTitle(item.title, channelHandle);
+
       let text = `${categoryEmoji} <b>« ${categoryName} »</b>\n`;
-      text += `📌 <b>${escapeHtml(item.title)}</b>\n\n`;
-      text += `${escapeHtml(item.text)}\n\n`;
+      text += `📌 <b>${escapeHtml(sanitizedTitle)}</b>\n\n`;
+      text += `${escapeHtml(sanitizedText)}\n\n`;
 
       if (item.tags && item.tags.length > 0) {
         const formattedTags = item.tags
@@ -5023,21 +5231,7 @@ function cleanTelegramFunText(rawHtml: string): string {
 
   text = text.replace(/Forwarded from[^\n]*\n?/gi, '').trim();
 
-  // Strip common telegram ad lines and cross-channel promotions
-  const lines = text.split('\n');
-  const filteredLines = lines.filter(line => {
-    const l = line.trim().toLowerCase();
-    if (!l) return true;
-    if (l.startsWith('تبلیغات') || l.startsWith('سفارش تبلیغ') || l.startsWith('تعرفه تبلیغ') || l.startsWith('هزینه تبلیغ')) return false;
-    if (l.includes('akharinkhabarads') || l.includes('tabligh')) return false;
-    if (l.includes('ثبت نام در سایت') || l.includes('وان ایکس') || l.includes('بت ') || l.includes('پیش بینی') || l.includes('بازی انفجار')) return false;
-    if (l.startsWith('🆔 @') || l.startsWith('👉 @') || l.startsWith('کانال ما: @') || l.startsWith('عضویت: @') || l.startsWith('لینک کانال:')) return false;
-    if (l.startsWith('instagram:') || l.startsWith('اینستاگرام:') || l.includes('instagram.com/')) return false;
-    if (l.includes('rubika.ir') || l.includes('eitaa.com') || l.includes('ble.ir')) return false;
-    return true;
-  });
-
-  return filteredLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return sanitizeContentForTelegramPost(text);
 }
 
 async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ added: number; total: number; skipped: number }> {
@@ -5058,6 +5252,9 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
       db.funSources.push({ ...defSrc });
     }
   }
+
+  // Clean all existing items in database
+  cleanAllFunNewsItemsInDb();
 
   const validSpecificId = (typeof specificSourceId === 'string' && specificSourceId.trim().length > 0 && specificSourceId !== '[object Object]')
     ? specificSourceId.trim()
@@ -5144,11 +5341,13 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
           continue;
         }
 
-        // Generate clean title
+        // Generate clean title without source handles
         const firstLine = cleanText.split('\n')[0].trim();
-        const title = firstLine.length > 0
-          ? (firstLine.length > 65 ? firstLine.substring(0, 62) + '...' : firstLine)
-          : (imageUrl ? `تصویر جدید از @${cleanHandle}` : `مطلب سرگرمی از @${cleanHandle}`);
+        const title = sanitizePostTitle(
+          firstLine.length > 0
+            ? (firstLine.length > 65 ? firstLine.substring(0, 62) + '...' : firstLine)
+            : (imageUrl ? 'تصویر منتخب سرگرمی و جذاب' : 'مطلب منتخب طنز و روز')
+        );
 
         // Classify into 'fun' or 'news'
         const isNewsSource = cleanHandle.toLowerCase().includes('khabar') || source.name.includes('خبر') || source.category === 'news';
@@ -6000,19 +6199,25 @@ async function callTelegramApi(method: string, body: object | FormData): Promise
 }
 
 /**
- * Checks if a user is the configured admin (supports numeric chat ID and @username)
+ * Checks if a user is the configured admin (supports numeric chat ID and @username, single or comma-separated)
  */
 function checkIsAdmin(userId?: string | number, username?: string | null): boolean {
   if (!db.settings.adminId) return false;
-  const adminSetting = String(db.settings.adminId).replace(/^['"\s]+|['"\s]+$/g, '').trim();
+  const adminSetting = String(db.settings.adminId).trim();
   if (!adminSetting) return false;
   
-  if (userId && String(userId).trim() === adminSetting) return true;
-  
-  if (username) {
-    const cleanUser = username.replace(/^@/, '').toLowerCase().trim();
-    const cleanAdmin = adminSetting.replace(/^@/, '').toLowerCase().trim();
-    if (cleanUser && cleanAdmin && cleanUser === cleanAdmin) return true;
+  const adminTokens = adminSetting
+    .split(/[,;\s\n]+/)
+    .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
+    .filter(Boolean);
+
+  const cleanUser = username ? username.replace(/^@/, '').toLowerCase().trim() : '';
+  const strUserId = userId !== undefined ? String(userId).trim() : '';
+
+  for (const token of adminTokens) {
+    if (strUserId && token === strUserId) return true;
+    const cleanToken = token.replace(/^@/, '').toLowerCase().trim();
+    if (cleanUser && cleanToken && cleanUser === cleanToken) return true;
   }
   
   return false;
@@ -6396,8 +6601,10 @@ async function handleBotUpdate(update: any) {
 
     // --- Map persistent custom keyboard buttons to standard commands/callbacks ---
     const lowerMsg = cleanMsg.toLowerCase();
-    if (lowerMsg.startsWith('/start') || cleanMsg === 'شروع' || cleanMsg === 'شروع مجدد' || cleanMsg === 'بروزرسانی' || cleanMsg === 'منوی اصلی' || cleanMsg === 'شروع دوباره' || cleanMsg === 'رفرش') {
+    if (lowerMsg.startsWith('/start') || cleanMsg === 'شروع' || cleanMsg === 'شروع مجدد' || cleanMsg === 'بروزرسانی' || cleanMsg === 'منوی اصلی' || cleanMsg === 'شروع دوباره' || cleanMsg === 'رفرش' || cleanMsg.includes('بروزرسانی و استارت')) {
       messageText = '/start';
+      delete adminStates[chatId];
+      if (userId) delete joinChecksCache[userId];
     } else if (cleanMsg.includes('۵۰ کانفیگ') || cleanMsg.includes('پک ۵۰') || cleanMsg.includes('50 کانفیگ') || lowerMsg === '/50') {
       callbackData = 'v2ray_qty_50';
       messageText = '';
@@ -6427,8 +6634,14 @@ async function handleBotUpdate(update: any) {
       messageText = '';
     } else if (cleanMsg.includes('پنل مدیریت') || lowerMsg.startsWith('/admin')) {
       messageText = '/admin';
+      delete adminStates[chatId];
     } else if (lowerMsg.startsWith('/panel') || lowerMsg.startsWith('/webapp') || cleanMsg.includes('وب‌ویو') || cleanMsg.includes('وبویو') || cleanMsg.includes('پنل وب')) {
       messageText = '/panel';
+      delete adminStates[chatId];
+    }
+
+    if (messageText.startsWith('/') || messageText === 'لغو' || messageText === '/cancel') {
+      delete adminStates[chatId];
     }
 
     // Save or update bot user
@@ -8861,14 +9074,23 @@ async function handleBotUpdate(update: any) {
     }
 
     if (messageText === '/start' || callbackData === 'back_to_main' || callbackData === 'start_refresh' || callbackData === 'start') {
+      delete adminStates[chatId];
+      if (userId) delete joinChecksCache[userId];
+
       if (callbackData) {
-        await answerCallback('🔄 منوی اصلی و ربات بروزرسانی شد');
+        await answerCallback(isAdmin ? '👑 🔄 ربات و دسترسی مدیریت با موفقیت بروزرسانی شد' : '🔄 منوی اصلی و ربات بروزرسانی شد');
+      }
+
+      // If admin, trigger background refresh of Telegram commands & menu button
+      if (isAdmin && db.settings.botToken) {
+        setupBotMenuButton(db.settings.botToken).catch(() => {});
+        setBotCommands(db.settings.botToken).catch(() => {});
       }
 
       const workingConfigsCount = db.configs.filter(c => c.status === 'working').length;
       const workingProxiesCount = (db.proxies || []).filter(p => p.status === 'working').length;
 
-      const welcome = `سلام **${escapeHtml(firstName)}** عزیز! 🌹\n` +
+      let welcome = `سلام **${escapeHtml(firstName)}** عزیز! 🌹\n` +
         `به ربات بزرگ استخراج و پخش کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده خوش آمدید.\n\n` +
         `📊 **وضعیت لحظه‌ای دیتابیس ربات:**\n` +
         `🟢 تعداد کانفیگ‌های فعال V2Ray: **${workingConfigsCount} عدد**\n` +
@@ -8876,7 +9098,39 @@ async function handleBotUpdate(update: any) {
         `💡 سیستم به صورت ۲۴ ساعته منابع معتبر را پایش کرده و پورت‌ها را از داخل شبکه ایران تست می‌کند.\n\n` +
         `جهت دریافت کانفیگ و پروکسی، از گزینه‌های زیر استفاده کنید:`;
 
-      const startInlineKeyboard: any[][] = [
+      if (isAdmin) {
+        const ch1 = db.settings.autoPost?.targetChannel || 'تنظیم نشده';
+        const ch2 = db.settings.autoPost?.channel2?.targetChannel || 'تنظیم نشده';
+        const cronStatus = db.settings.autoPost?.enabled ? '🟢 فعال' : '🔴 غیرفعال';
+        welcome = `👑 **پنل وضعیت و مدیریت ربات (مدیر سیستم):**\n\n` +
+          `🟢 **وضعیت هسته ربات:** متصل و آنلاین ⚡\n` +
+          `🚀 **کانفیگ‌های فعال V2Ray:** ${workingConfigsCount} عدد (کل: ${db.configs.length})\n` +
+          `🔌 **پروکسی‌های فعال تلگرام:** ${workingProxiesCount} عدد (کل: ${(db.proxies || []).length})\n` +
+          `📢 **کانال ۱ (اصلی):** \`${escapeHtml(ch1)}\`\n` +
+          `🎭 **کانال ۲ (فان و اخبار):** \`${escapeHtml(ch2)}\`\n` +
+          `⏱ **وضعیت ارسال خودکار (کرون):** ${cronStatus}\n` +
+          `👥 **تعداد کل کاربران:** ${db.users.length} نفر\n\n` +
+          `🔄 تمامی حافظه‌های موقت و وضعیت‌های ورودی پاکسازی و ربات به طور کامل **بروزرسانی** شد.\n` +
+          `جهت مدیریت یا دریافت کانفیگ، از دکمه‌های زیر استفاده کنید:`;
+      }
+
+      const startInlineKeyboard: any[][] = [];
+
+      if (isAdmin) {
+        const appUrl = getPublicAppUrl();
+        const isHttps = appUrl.startsWith('https://');
+        startInlineKeyboard.push(
+          isHttps 
+            ? [{ text: '👑 🌐 باز کردن وب‌ویو پنل مدیریت (WebApp) 🚀', web_app: { url: appUrl } }]
+            : [{ text: '🔗 👑 باز کردن پنل مدیریت در مرورگر 🚀', url: appUrl }]
+        );
+        startInlineKeyboard.push([
+          { text: '⚙️ ورود به منوی مدیریت در تلگرام', callback_data: 'admin_menu' },
+          { text: '🔄 اسکن و استخراج سریع منابع', callback_data: 'admin_scrape_now' }
+        ]);
+      }
+
+      startInlineKeyboard.push(
         [
           { text: '🔥 🚀 دریافت یکجای ۵۰ کانفیگ (توصیه ویژه ⭐)', callback_data: 'v2ray_qty_50', style: 'success' }
         ],
@@ -8903,20 +9157,7 @@ async function handleBotUpdate(update: any) {
           { text: 'ℹ️ راهنمای اتصال آسان 📚', callback_data: 'get_help' },
           { text: '🔄 بروزرسانی ربات ⚡', callback_data: 'start_refresh' }
         ]
-      ];
-
-      if (isAdmin) {
-        const appUrl = getPublicAppUrl();
-        const isHttps = appUrl.startsWith('https://');
-        startInlineKeyboard.unshift(
-          isHttps 
-            ? [{ text: '👑 🌐 باز کردن وب‌ویو پنل مدیریت (WebApp) 🚀', web_app: { url: appUrl } }]
-            : [{ text: '🔗 👑 باز کردن پنل مدیریت در مرورگر 🚀', url: appUrl }]
-        );
-        startInlineKeyboard.splice(1, 0, [
-          { text: '⚙️ ورود به منوی مدیریت در تلگرام', callback_data: 'admin_menu' }
-        ]);
-      }
+      );
 
       if (requiredChannels.length > 0 && requiredChannels[0]?.username) {
         const url = requiredChannels[0].inviteLink || `https://t.me/${requiredChannels[0].username.replace('@', '')}`;
@@ -8932,7 +9173,7 @@ async function handleBotUpdate(update: any) {
 
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
-        text: '👇 **منوی دسترسی سریع و میانبرها:**',
+        text: isAdmin ? '👇 **منوی دسترسی سریع مدیریت و امکانات ربات:**' : '👇 **منوی دسترسی سریع و میانبرها:**',
         parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: startInlineKeyboard }
       });
@@ -11054,9 +11295,13 @@ async function startExpressServer() {
       const categoryEmoji = isFun ? '🎭' : '📰';
       const categoryName = isFun ? 'طنز و سرگرمی تلگرام' : 'اخبار عمومی و مهم روز';
 
+      // Thoroughly sanitize title and body text so NO source group/channel handles appear
+      const sanitizedText = sanitizeContentForTelegramPost(item.text, channelHandle);
+      const sanitizedTitle = sanitizePostTitle(item.title, channelHandle);
+
       let text = `${categoryEmoji} <b>« ${categoryName} »</b>\n`;
-      text += `📌 <b>${escapeHtml(item.title)}</b>\n\n`;
-      text += `${escapeHtml(item.text)}\n\n`;
+      text += `📌 <b>${escapeHtml(sanitizedTitle)}</b>\n\n`;
+      text += `${escapeHtml(sanitizedText)}\n\n`;
 
       if (item.tags && item.tags.length > 0) {
         const formattedTags = item.tags
