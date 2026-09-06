@@ -13,6 +13,13 @@ export interface ConfigItem {
   lastChecked: string | null;
   isNpv?: boolean;
   createdAt?: string;
+  postedToChannel?: boolean;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  lastPostedAt?: string | null;
+  lastPostedAtCh1?: string | null;
+  lastPostedAtCh2?: string | null;
+  postCount?: number;
   reports?: {
     up: number;
     down: number;
@@ -31,6 +38,13 @@ export interface ProxyItem {
   latency: number | null;
   lastChecked: string | null;
   createdAt?: string;
+  postedToChannel?: boolean;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  lastPostedAt?: string | null;
+  lastPostedAtCh1?: string | null;
+  lastPostedAtCh2?: string | null;
+  postCount?: number;
 }
 
 export interface SourceItem {
@@ -283,7 +297,12 @@ export interface TechItem {
   importanceScore: number; // 1-100 (امتیاز اهمیت جهت اولویت‌بندی ارسال خودکار)
   createdAt: string;
   postedToChannel?: boolean;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  lastPostedAtCh1?: string | null;
+  lastPostedAtCh2?: string | null;
   postedAt?: string | null;
+  postCount?: number;
 }
 
 export type AiPromptCategory = 'image' | 'video' | 'chat' | 'other';
@@ -301,7 +320,12 @@ export interface AiPrompt {
   tipsForPersonalPhoto?: string; // راهنمای فارسی ترکیب با عکس
   createdAt: string;
   postedToChannel?: boolean;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  lastPostedAtCh1?: string | null;
+  lastPostedAtCh2?: string | null;
   postedAt?: string | null;
+  postCount?: number;
 }
 
 export interface DashboardStats {

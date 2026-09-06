@@ -228,52 +228,244 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     id: 'prompt-1',
     title: 'پرتره مدلینگ فشن استودیویی سونی آلفا (Midjourney v6)',
     category: 'image',
+    styleCategory: 'photography',
     description: 'پرتره کلوزآپ فوق‌العاده باکیفیت و هایپررئالیستیک با شبیه‌سازی دقیق سنسور فول‌فریم Sony A7III و نورپردازی حرفه‌ای استودیو مد.',
-    promptText: 'close-up of a stunning fashion model, ultra-realistic, portrait, shot on a Sony A7III, high quality --ar 35:64 --stylize 250',
+    promptText: 'close-up of a stunning fashion model, ultra-realistic, portrait, shot on a Sony A7III, 85mm lens, f/1.4, cinematic studio lighting, high quality --ar 35:64 --stylize 250 --v 6.0',
     imageUrl: 'https://cdn.prompthero.com/9qbfr7mlnt8sn7yp01pw02z7ez1r-midjourney-6-close-up-of-a-stunning-fashion-model-ultra-realistic-portrait-shot-on-a-sony-a7iii-high-quality-ar-3564-stylize.png',
     tags: ['میدجرنی', 'عکاسی_مدلینگ', 'سونی_آلفا', 'فوتورئال'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
     postedAt: null
   },
   {
     id: 'prompt-2',
     title: 'پرتره دختر با تم دوربین پولاروید نوستالژیک (Midjourney v6)',
     category: 'image',
+    styleCategory: 'vintage',
     description: 'عکاسی چهره با رنگ‌های ملایم و نوستالژیک دوربین آنالوگ پولاروید، شبیه‌سازی بافت دانه‌بندی فیلم (Grain) و بوکه جذاب.',
-    promptText: 'Japanese girl, 18-21 years old, brown hair, high-quality photo portrait, shot on a Polaroid camera, double eyelid --ar 9:16 --v 6.0',
+    promptText: 'Japanese girl, 18-21 years old, brown hair, high-quality photo portrait, shot on a Polaroid camera, natural lighting, subtle film grain, double eyelid --ar 9:16 --v 6.0',
     imageUrl: 'https://cdn.prompthero.com/xjsos7jl5jltflxms50aa37a4bw5-midjourney-6-japanese-girl-18-21-years-old-brown-hair-high-quality-photo-portrait-shot-on-a-polaroid-camera-double-eyelid-ar.png',
     tags: ['پولاروید', 'پرتره_آنالوگ', 'میدجرنی', 'نوستالژی'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
     postedAt: null
   },
   {
     id: 'prompt-3',
     title: 'عکاسی فشن پرتره تضاد و سیلوئت نئونی (Midjourney v6)',
     category: 'image',
+    styleCategory: 'neon',
     description: 'عکاسی مدرن با پس‌زمینه هات‌پینک (سرخابی پررنگ)، تضاد شدید نوری (High Contrast) و خطوط هندسی سیلوئت صورت.',
-    promptText: 'photography, portrait of contrast, profile silhouette of a woman, vibrant hot pink backdrop, visual depth, high fashion --ar 3:4 --v 6.0',
+    promptText: 'photography, portrait of contrast, profile silhouette of a woman, vibrant hot pink backdrop, visual depth, high fashion, sharp focus, 8k resolution --ar 3:4 --v 6.0',
     imageUrl: 'https://cdn.prompthero.com/7nqvhyrmf607ngkesub1l7kxc9j3-midjourney-6-chroma-portrait.png',
     tags: ['سیلوئت', 'های_فشن', 'نئونی', 'میدجرنی'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
     postedAt: null
   },
   {
     id: 'prompt-4',
     title: 'عکاسی ادیتوریال فشن با دوربین هاسلبلاد (Midjourney v6)',
     category: 'image',
+    styleCategory: 'editorial',
     description: 'شات بالاتنه ادیتوریال فشن مجلات بین‌المللی با دوربین قطع متوسط هاسلبلاد و رندر شگفت‌انگیز جزئیات لباس و چهره.',
-    promptText: 'fashion editorial photography, front shot, upper body, professional female model, shot with hasselblad, soft directional lighting --ar 9:16 --v 6.0',
+    promptText: 'fashion editorial photography, front shot, upper body, professional female model, shot with hasselblad, soft directional lighting, luxury styling --ar 9:16 --v 6.0',
     imageUrl: 'https://cdn.prompthero.com/zgkq5uftglj1q0xkl07ycr2n839i-midjourney-6-model-portrait.png',
     tags: ['هاسلبلاد', 'ادیتوریال', 'مد_و_فشن', 'میدجرنی'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-5',
+    title: 'کاراکتر سه‌بعدی دیزنی / پیکسار با رندر سینمایی (FLUX.1 / Midjourney)',
+    category: 'image',
+    styleCategory: '3d-animation',
+    description: 'ساخت کاراکتر فانتزی و دوست‌داشتنی سبک انیمیشن‌های برتر پیکسار با نورپردازی گرم، جزییات چشم‌نواز موها و متریال واقع‌گرایانه.',
+    promptText: 'cute stylized 3D character in Pixar animation style, big expressive eyes, soft warm rim lighting, highly detailed fur and clothing textures, octane render, Unreal Engine 5 cinematic --ar 1:1 --v 6.0',
+    tags: ['پیکسار', 'سه_بعدی', 'انیمیشن', 'کاراکتر'],
+    importance: 'hot',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-6',
+    title: 'طراحی لوگو مینیمال و نشان تجاری لوکس با خطوط طلایی',
+    category: 'image',
+    styleCategory: 'branding',
+    description: 'پرامپت تخصصی ساخت لوگو و آیکون اپلیکیشن مدرن، وکتور مینیمال با تایپوگرافی تمیز و پالت رنگی مشکی و طلایی متالیک.',
+    promptText: 'minimalist modern brand logo, geometric falcon emblem, clean sharp lines, gold metallic foil on matte black background, vector design, flat 2D graphic design, Behance trending --no realistic photo --v 6.0',
+    tags: ['لوگو', 'گرافیک', 'برندینگ', 'مینیمال'],
+    importance: 'normal',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-7',
+    title: 'عکاسی ماکرو سینمایی از چشم انسان با کهکشان کیهانی',
+    category: 'image',
+    styleCategory: 'sci-fi',
+    description: 'نمای نزدیک فوق‌العاده از عنبیه چشم که گویی کل کهکشان و ستارگان درون آن می‌درخشند با جزئیات میکروسکوپی و بازتاب نوری.',
+    promptText: 'extreme macro photography of human eye iris, glowing nebula and galaxy reflection inside the pupil, bioluminescent details, shot on Canon MP-E 65mm, hyper-detailed, 8k --ar 16:9 --v 6.0',
+    tags: ['ماکرو', 'کیهان', 'چشم', 'سینمایی'],
+    importance: 'hot',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-8',
+    title: 'طراحی معماری ویلای مدرن بتنی و شیشه‌ای در دل جنگل بارانی',
+    category: 'image',
+    styleCategory: 'architecture',
+    description: 'رندر معماری مدرن ویلای لوکس با استخر بی‌انتها (Infinity Pool)، ترکیب متریال بتن اکسپوز، چوب ترمووود و گیاهان استوایی.',
+    promptText: 'architectural digest photography, modern luxury villa made of glass and raw concrete, situated in a misty pine forest, infinity pool reflecting dusk sky, architectural lighting, photorealistic --ar 16:9 --v 6.0',
+    tags: ['معماری', 'طراحی_داخلی', 'ویلا', 'رندر'],
+    importance: 'normal',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-9',
+    title: 'پرامپت مهندسی چت‌جی‌پی‌تی برای تبدیل به برنامه‌نویس ارشد (Senior Full-Stack)',
+    category: 'chat',
+    styleCategory: 'coding',
+    description: 'پرامپت سیستمی برای تبدیل هوش مصنوعی به یک معمار ارشد نرم‌افزار جهت دیباگ کدهای پیچیده، بهینه‌سازی الگوریتم‌ها و نوشتن تست.',
+    promptText: 'Act as a Principal Software Architect with 15+ years experience. Analyze the following code for: 1) Performance bottlenecks, 2) Security vulnerabilities (OWASP Top 10), 3) Architectural anti-patterns. Provide refactored clean code with TypeScript types and unit tests.',
+    tags: ['کدنویسی', 'چت_جی_پی_تی', 'برنامه‌نویسی', 'پرامپت_متنی'],
+    importance: 'hot',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-10',
+    title: 'طراحی صحنه سایبرپانک بارانی توکیو با ماشین‌های پرنده (Midjourney v6)',
+    category: 'image',
+    styleCategory: 'cyberpunk',
+    description: 'فضای پر از نورهای نئونی بارانی در خیابان‌های آینده‌نگر توکیو با بازتاب روی آسفالت خیس و جو اتمسفریک سبک بلید رانر.',
+    promptText: 'cyberpunk Tokyo street at rainy midnight, neon sign reflections on wet asphalt, flying holographic vehicles, moody cinematic haze, volumetric lighting, shot on 35mm anamorphic lens, blade runner aesthetic --ar 16:9 --v 6.0',
+    tags: ['سایبرپانک', 'نئون', 'سینمایی', 'توکیو'],
+    importance: 'hot',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-11',
+    title: 'پرامپت استراتژیست بازاریابی و فروش محتوایی اینستاگرام (ChatGPT / Claude)',
+    category: 'chat',
+    styleCategory: 'marketing',
+    description: 'پرامپت ساخت تقویم محتوایی ۳۰ روزه ویرال با قلاب‌های روانشناسی (Hook)، متن کپشن ترغیب‌کننده و کال تو اکشن (CTA) قوی.',
+    promptText: 'Act as an elite Social Media Growth Strategist. Create a 30-day viral content calendar for [Topic/Niche]. For each day provide: 1) Irresistible 3-second hook, 2) Core value delivery script, 3) High-converting CTA, 4) Visual storyboarding suggestions.',
+    tags: ['اینستاگرام', 'مارکتینگ', 'تولید_محتوا', 'چت_جی_پی_تی'],
+    importance: 'normal',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-12',
+    title: 'عکاسی تبلیغاتی محصول عطر لوکس با اسپلش قطرات آب (Midjourney v6)',
+    category: 'image',
+    styleCategory: 'product',
+    description: 'شات تبلیغاتی کامرشیال بطری عطر شیشه‌ای کریستال روی سنگ بازالت تیره با پاشش آب اسلوموشن و نورپردازی استودیو.',
+    promptText: 'commercial product photography of a luxury crystal perfume bottle standing on wet black basalt rock, dynamic water splash frozen in motion, studio rim lighting, luxury advertising, crystal clear reflections, 8k --ar 4:5 --v 6.0',
+    tags: ['عکاسی_محصول', 'تبلیغات', 'لوکس', 'اسپلش'],
+    importance: 'normal',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-13',
+    title: 'تصویرسازی فانتزی کوهستان جادویی در سبک انیمه استودیو جیبلی',
+    category: 'image',
+    styleCategory: 'anime',
+    description: 'نقاشی دست‌ساز اتمسفریک و خیال‌انگیز به سبک هایائو میازاکی با ابرهای پف‌دار، چمنزارهای سبز مواج و قلعه‌های باستانی شناور.',
+    promptText: 'Studio Ghibli style landscape painting, floating ancient castle on lush green hills, dramatic fluffy cumulus clouds, Hayao Miyazaki aesthetic, warm sunlight, watercolor texture, masterpiece --ar 16:9 --v 6.0',
+    tags: ['جیبلی', 'انیمه', 'تصویرسازی', 'طبیعت'],
+    importance: 'hot',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-14',
+    title: 'پرامپت دستیار تولید مقاله سئو شده و بهینه برای گوگل (Rank #1 SEO Specialist)',
+    category: 'chat',
+    styleCategory: 'seo',
+    description: 'پرامپت جامع برای نگارش مقالات فوق تخصصی سئو با رعایت تگ‌های H2/H3، چگالی کلمات کلیدی، ساخت جدول، سوالات متداول (FAQ) و اسکیما.',
+    promptText: 'Act as a top-tier SEO Copywriter. Write an in-depth 2000-word comprehensive guide on [Keyword]. Include: 1) Meta Title & Description, 2) Search Intent breakdown, 3) Structured H2/H3 outline with semantic LSI keywords, 4) Comparison tables, 5) FAQ section with Schema markup readiness.',
+    tags: ['سئو', 'تولید_محتوا', 'چت_جی_پی_تی', 'رنک_گوگل'],
+    importance: 'normal',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-15',
+    title: 'عکاسی حیات وحش کلوزآپ شاهین شکاری با لنز تله ۶۰۰ میلی‌متر',
+    category: 'image',
+    styleCategory: 'wildlife',
+    description: 'شکار لحظه‌ای فرود شاهین شکاری با پرهای فوق‌العاده واضح، چشمان خیره‌کننده و پس‌زمینه محو نرم (Creamy Bokeh).',
+    promptText: 'national geographic wildlife photography, peregrine falcon diving down, razor-sharp feather details, piercing amber eyes, shot on Sony FE 600mm f/4 GM OSS, high shutter speed, beautiful golden hour bokeh --ar 16:9 --v 6.0',
+    tags: ['حیات_وحش', 'نشنال_جئوگرافیک', 'شاهین', 'تله_فوتو'],
+    importance: 'normal',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-16',
+    title: 'پرامپت تدوین استراتژی کسب‌وکار و تحلیل ماتریس SWOT و رقبا',
+    category: 'chat',
+    styleCategory: 'business',
+    description: 'پرامپت مشاور استراتژیک برای تحلیل جامع مدل کسب‌وکار، نقاط قوت/ضعف، فرصت‌ها/تهدیدها و خلق ارزش پیشنهادی یکتا (UVP).',
+    promptText: 'Act as a McKinsey Senior Business Consultant. Conduct a rigorous strategic analysis for [Business Idea/Company]. Deliver: 1) Deep SWOT Matrix, 2) Competitor Moat breakdown, 3) Unique Value Proposition, 4) Monetization roadmap with risk mitigation.',
+    tags: ['بیزنس', 'استراتژی', 'کسب_و_کار', 'چت_جی_پی_تی'],
+    importance: 'normal',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
     postedAt: null
   }
 ];
@@ -3566,6 +3758,51 @@ const SEED_TECH_ITEMS: Array<Omit<TechItem, 'id' | 'createdAt' | 'importanceScor
     source: 'اخبار سخت‌افزار و شبکه',
     importance: 'high',
     importanceScore: 87
+  },
+  {
+    title: '🔒 ترفند فعال‌سازی تایید دو مرحله‌ای (2FA) پیشرفته ابری در تلگرام جهت جلوگیری قطعی از هک',
+    summary: 'در تلگرام به Settings > Privacy and Security > Two-Step Verification رفته و یک رمز قوی به همراه ایمیل ریکاوری معتبر تنظیم کنید تا حتی در صورت لو رفتن سیمکارت، امکان دسترسی به اکانت وجود نداشته باشد.',
+    category: 'secret',
+    tags: ['امنیت_تلگرام', 'ضد_هک', 'حریم_خصوصی', 'امنیت_سایبری'],
+    source: 'مرکز امنیت دیجیتال',
+    importance: 'breaking',
+    importanceScore: 97
+  },
+  {
+    title: '⚡ افزایش سرعت دانلود در ویندوز با حذف محدودیت پهنای باند رزرو شده (QoS)',
+    summary: 'کلید Win+R را زده، gpedit.msc را باز کنید. به مسیر Computer Configuration > Administrative Templates > Network > QoS Packet Scheduler رفته و Limit reservable bandwidth را روی 0% تنظیم کنید.',
+    category: 'trick',
+    tags: ['ویندوز', 'افزایش_سرعت_اینترنت', 'ترفند_کامپیوتر', 'دانلود'],
+    source: 'ترفندهای تخصصی کامپیوتر',
+    importance: 'high',
+    importanceScore: 91
+  },
+  {
+    title: '🤖 یکپارچه‌سازی دستیارهای صوتی محلی هوش مصنوعی بدون نیاز به اینترنت در گوشی‌ها',
+    summary: 'شرکت‌های مطرح پردازنده‌سازی مانند کوالکام و اپل، مدل‌های زبان بزرگ (On-Device LLM) را درون NPU پردازنده‌ها قرار داده‌اند تا پردازش‌های متنی و ترجمه بدون ارسال داده به سرور و کاملاً آفلاین انجام شود.',
+    category: 'news',
+    tags: ['هوش_مصنوعی', 'پردازنده', 'حریم_خصوصی', 'تکنولوژی_روز'],
+    source: 'دنیای سخت‌افزار و پردازش',
+    importance: 'high',
+    importanceScore: 89
+  },
+  {
+    title: '📷 ترفند عکاسی حرفه‌ای شبانه (Astrophotography) با فعال کردن فرمت RAW و تنظیم شاتر',
+    summary: 'در تنظیمات دوربین گوشی حالت Pro را فعال کرده و فرمت ذخیره‌سازی را روی RAW/DNG بگذارید. با قرار دادن ISO بین ۱۰۰ تا ۲۰۰ و سرعت شاتر روی ۱۰ تا ۲۰ ثانیه با پایه ثابت، عکس‌هایی خیره‌کننده از آسمان شب ثبت کنید.',
+    category: 'trick',
+    tags: ['عکاسی_موبایل', 'ترفند_دوربین', 'آسمان_شب', 'آموزش_عکاسی'],
+    source: 'آموزش عکاسی تخصصی',
+    importance: 'medium',
+    importanceScore: 83
+  },
+  {
+    title: '💡 کلیدهای میانبر جادویی کیبورد ویندوز و مک برای افزایش ۳ برابری راندمان کار',
+    summary: 'ترکیب Win+V برای باز کردن تاریخچه کلیپ‌بورد متنی و تصویری و Win+Shift+S برای اسکرین‌شات ناحیه‌ای در ویندوز، و Cmd+Space در مک سرعت کار با سیستم را به شدت افزایش می‌دهد.',
+    category: 'trick',
+    tags: ['میانبر_ویندوز', 'ترفند_کیبورد', 'افزایش_بهره_وری', 'ویندوز'],
+    source: 'ترفندهای سیستم‌عامل',
+    importance: 'medium',
+    importanceScore: 79
   }
 ];
 
@@ -4247,33 +4484,73 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
     const rawConfCount = typeof settings.configCount === 'number' ? settings.configCount : parseInt(String(settings.configCount), 10);
     const configLimit = !isNaN(rawConfCount) && rawConfCount >= 0 ? rawConfCount : 5;
     
-    let availableConfigs = db.configs.filter(c => c.status === 'working');
-    if (availableConfigs.length < configLimit) {
-      const untested = db.configs.filter(c => c.status === 'untested');
-      availableConfigs = [...availableConfigs, ...untested];
+    // Anti-duplicate config selection: prioritize unposted configs for target channel
+    const targetChannelKey = isCh2 ? 'postedToChannel2' : 'postedToChannel1';
+    let selectedConfigs: ConfigItem[] = [];
+
+    if (configLimit > 0) {
+      // 1. Unposted working configs
+      const unpostedWorking = db.configs.filter(c => c.status === 'working' && !c[targetChannelKey]);
+      // 2. Unposted untested configs
+      const unpostedUntested = db.configs.filter(c => c.status === 'untested' && !c[targetChannelKey]);
+      const allUnposted = [...unpostedWorking, ...unpostedUntested];
+
+      if (allUnposted.length >= configLimit) {
+        // We have enough fresh unposted configs! Pick from them
+        const shuffled = [...allUnposted].sort(() => 0.5 - Math.random());
+        selectedConfigs = shuffled.slice(0, configLimit);
+      } else {
+        // Take all available unposted
+        selectedConfigs = [...allUnposted];
+        const needed = configLimit - selectedConfigs.length;
+
+        // For the remainder, pick configs sorted by oldest lastPostedAt (least recently posted)
+        const alreadyChosenIds = new Set(selectedConfigs.map(c => c.id));
+        const pool = db.configs.filter(c => !alreadyChosenIds.has(c.id) && (c.status === 'working' || c.status === 'untested'));
+        pool.sort((a, b) => {
+          const aCount = a.postCount || 0;
+          const bCount = b.postCount || 0;
+          if (aCount !== bCount) return aCount - bCount;
+          const aTime = a.lastPostedAt ? new Date(a.lastPostedAt).getTime() : 0;
+          const bTime = b.lastPostedAt ? new Date(b.lastPostedAt).getTime() : 0;
+          return aTime - bTime;
+        });
+
+        selectedConfigs = [...selectedConfigs, ...pool.slice(0, needed)];
+      }
     }
-    if (availableConfigs.length < configLimit) {
-      const otherConfigs = db.configs.filter(c => c.status !== 'working' && c.status !== 'untested');
-      availableConfigs = [...availableConfigs, ...otherConfigs];
-    }
-    const shuffledConfigs = [...availableConfigs].sort(() => 0.5 - Math.random());
-    const selectedConfigs = configLimit === 0 ? [] : shuffledConfigs.slice(0, Math.min(configLimit, shuffledConfigs.length));
 
     // Get requested proxies count
     const rawProxyCount = typeof settings.proxyCount === 'number' ? settings.proxyCount : parseInt(String(settings.proxyCount), 10);
     const proxyLimit = !isNaN(rawProxyCount) && rawProxyCount >= 0 ? rawProxyCount : 1;
     
-    let availableProxies = (db.proxies || []).filter(p => p.status === 'working');
-    if (availableProxies.length < proxyLimit) {
-      const untestedProxies = (db.proxies || []).filter(p => p.status === 'untested');
-      availableProxies = [...availableProxies, ...untestedProxies];
+    let selectedProxies: ProxyItem[] = [];
+
+    if (proxyLimit > 0) {
+      const allProxies = db.proxies || [];
+      const unpostedWorkingProxies = allProxies.filter(p => p.status === 'working' && !p[targetChannelKey]);
+      const unpostedUntestedProxies = allProxies.filter(p => p.status === 'untested' && !p[targetChannelKey]);
+      const allUnpostedProxies = [...unpostedWorkingProxies, ...unpostedUntestedProxies];
+
+      if (allUnpostedProxies.length >= proxyLimit) {
+        const shuffled = [...allUnpostedProxies].sort(() => 0.5 - Math.random());
+        selectedProxies = shuffled.slice(0, proxyLimit);
+      } else {
+        selectedProxies = [...allUnpostedProxies];
+        const needed = proxyLimit - selectedProxies.length;
+        const alreadyChosenIds = new Set(selectedProxies.map(p => p.id));
+        const pool = allProxies.filter(p => !alreadyChosenIds.has(p.id) && (p.status === 'working' || p.status === 'untested'));
+        pool.sort((a, b) => {
+          const aCount = a.postCount || 0;
+          const bCount = b.postCount || 0;
+          if (aCount !== bCount) return aCount - bCount;
+          const aTime = a.lastPostedAt ? new Date(a.lastPostedAt).getTime() : 0;
+          const bTime = b.lastPostedAt ? new Date(b.lastPostedAt).getTime() : 0;
+          return aTime - bTime;
+        });
+        selectedProxies = [...selectedProxies, ...pool.slice(0, needed)];
+      }
     }
-    if (availableProxies.length < proxyLimit) {
-      const otherProxies = (db.proxies || []).filter(p => p.status !== 'working' && p.status !== 'untested');
-      availableProxies = [...availableProxies, ...otherProxies];
-    }
-    const shuffledProxies = [...availableProxies].sort(() => 0.5 - Math.random());
-    const selectedProxies = proxyLimit === 0 ? [] : shuffledProxies.slice(0, Math.min(proxyLimit, shuffledProxies.length));
 
     if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
       addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} انجام نشد: هیچ کانفیگ یا پروکسی برای ارسال یافت نشد.`);
@@ -4506,6 +4783,37 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
     });
 
     const nowIso = new Date().toISOString();
+    for (const c of selectedConfigs) {
+      const dbConf = db.configs.find(item => item.id === c.id || item.raw === c.raw);
+      if (dbConf) {
+        if (isCh2) {
+          dbConf.postedToChannel2 = true;
+          dbConf.lastPostedAtCh2 = nowIso;
+        } else {
+          dbConf.postedToChannel1 = true;
+          dbConf.lastPostedAtCh1 = nowIso;
+        }
+        dbConf.postedToChannel = true;
+        dbConf.lastPostedAt = nowIso;
+        dbConf.postCount = (dbConf.postCount || 0) + 1;
+      }
+    }
+    for (const p of selectedProxies) {
+      const dbProxy = db.proxies.find(item => item.id === p.id || item.raw === p.raw);
+      if (dbProxy) {
+        if (isCh2) {
+          dbProxy.postedToChannel2 = true;
+          dbProxy.lastPostedAtCh2 = nowIso;
+        } else {
+          dbProxy.postedToChannel1 = true;
+          dbProxy.lastPostedAtCh1 = nowIso;
+        }
+        dbProxy.postedToChannel = true;
+        dbProxy.lastPostedAt = nowIso;
+        dbProxy.postCount = (dbProxy.postCount || 0) + 1;
+      }
+    }
+
     if (isCh2) {
       if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
       db.settings.autoPost.channel2.lastConfigsPostedAt = nowIso;
@@ -4549,22 +4857,21 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
     const count = settings.techNewsCount && settings.techNewsCount > 0 ? settings.techNewsCount : 2;
     const allTech = db.techItems || [];
 
-    // Filter news items
-    const newsItems = allTech.filter(i => i.category === 'news');
-    if (newsItems.length === 0) {
-      addLog('warn', 'هیچ خبر تکنولوژی در دیتابیس یافت نشد.');
+    // Filter news items that have NEVER been posted to this specific channel
+    const targetChannelKey = isCh2 ? 'postedToChannel2' : 'postedToChannel1';
+    const eligibleNews = allTech.filter(i => i.category === 'news' && !i[targetChannelKey]);
+
+    if (eligibleNews.length === 0) {
+      addLog('warn', `تمامی اخبار تکنولوژی موجود قبلاً به کانال ${channelTargetNum} ارسال شده‌اند. جهت پیشگیری قاطع از ارسال تکراری، ارسال متوقف گردید.`);
       return false;
     }
 
-    // Sort: unposted first, then highest score, then newest
-    newsItems.sort((a, b) => {
-      if (a.postedToChannel !== b.postedToChannel) {
-        return a.postedToChannel ? 1 : -1;
-      }
+    // Sort eligible: highest score first, then newest
+    eligibleNews.sort((a, b) => {
       return (b.importanceScore || 50) - (a.importanceScore || 50);
     });
 
-    const selectedNews = newsItems.slice(0, count);
+    const selectedNews = eligibleNews.slice(0, count);
 
     let text = `🔥 <b>تازه‌ترین اخبار دنیای تکنولوژی و هوش مصنوعی:</b>\n\n`;
 
@@ -4642,8 +4949,19 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
 
     const nowIso = new Date().toISOString();
     for (const it of selectedNews) {
-      it.postedToChannel = true;
-      it.postedAt = nowIso;
+      const dbRef = db.techItems.find(t => t.id === it.id);
+      if (dbRef) {
+        if (isCh2) {
+          dbRef.postedToChannel2 = true;
+          dbRef.lastPostedAtCh2 = nowIso;
+        } else {
+          dbRef.postedToChannel1 = true;
+          dbRef.lastPostedAtCh1 = nowIso;
+        }
+        dbRef.postedToChannel = true;
+        dbRef.postedAt = nowIso;
+        dbRef.postCount = (dbRef.postCount || 0) + 1;
+      }
     }
     if (isCh2) {
       if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
@@ -4688,22 +5006,21 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
     const count = settings.techTricksCount && settings.techTricksCount > 0 ? settings.techTricksCount : 2;
     const allTech = db.techItems || [];
 
-    // Filter tricks & secrets
-    const tricksItems = allTech.filter(i => i.category === 'trick' || i.category === 'secret');
-    if (tricksItems.length === 0) {
-      addLog('warn', 'هیچ ترفند یا راز آموزشی در دیتابیس یافت نشد.');
+    // Filter tricks & secrets that have NEVER been posted to this specific channel
+    const targetChannelKey = isCh2 ? 'postedToChannel2' : 'postedToChannel1';
+    const eligibleTricks = allTech.filter(i => (i.category === 'trick' || i.category === 'secret') && !i[targetChannelKey]);
+
+    if (eligibleTricks.length === 0) {
+      addLog('warn', `تمامی ترفندها و رازهای تکنولوژی موجود قبلاً به کانال ${channelTargetNum} ارسال شده‌اند. جهت پیشگیری قاطع از ارسال تکراری، ارسال متوقف گردید.`);
       return false;
     }
 
-    // Sort: unposted first, then highest score, then newest
-    tricksItems.sort((a, b) => {
-      if (a.postedToChannel !== b.postedToChannel) {
-        return a.postedToChannel ? 1 : -1;
-      }
+    // Sort: highest score first, then newest
+    eligibleTricks.sort((a, b) => {
       return (b.importanceScore || 50) - (a.importanceScore || 50);
     });
 
-    const selectedTricks = tricksItems.slice(0, count);
+    const selectedTricks = eligibleTricks.slice(0, count);
 
     let text = `💡 <b>ترفندها، رازها و آموزش‌های کاربردی موبایل و امنیت:</b>\n\n`;
 
@@ -4781,8 +5098,19 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
 
     const nowIso = new Date().toISOString();
     for (const it of selectedTricks) {
-      it.postedToChannel = true;
-      it.postedAt = nowIso;
+      const dbRef = db.techItems.find(t => t.id === it.id);
+      if (dbRef) {
+        if (isCh2) {
+          dbRef.postedToChannel2 = true;
+          dbRef.lastPostedAtCh2 = nowIso;
+        } else {
+          dbRef.postedToChannel1 = true;
+          dbRef.lastPostedAtCh1 = nowIso;
+        }
+        dbRef.postedToChannel = true;
+        dbRef.postedAt = nowIso;
+        dbRef.postCount = (dbRef.postCount || 0) + 1;
+      }
     }
     if (isCh2) {
       if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
@@ -4867,24 +5195,24 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
     const count = settings.aiPromptsCount && settings.aiPromptsCount > 0 ? settings.aiPromptsCount : 1;
     const allPrompts = db.aiPrompts || [];
 
-    if (allPrompts.length === 0) {
-      addLog('warn', 'هیچ پرامپت هوش مصنوعی در دیتابیس یافت نشد.');
+    // Filter prompts that have NEVER been posted to this specific channel
+    const targetChannelKey = isCh2 ? 'postedToChannel2' : 'postedToChannel1';
+    const eligiblePrompts = allPrompts.filter(p => !p[targetChannelKey]);
+
+    if (eligiblePrompts.length === 0) {
+      addLog('warn', `تمامی پرامپت‌های هوش مصنوعی موجود قبلاً به کانال ${channelTargetNum} ارسال شده‌اند. جهت پیشگیری قاطع از ارسال تکراری، ارسال متوقف گردید.`);
       return false;
     }
 
-    // Sort: unposted first, then hot first, then newest
-    const copyPrompts = [...allPrompts];
-    copyPrompts.sort((a, b) => {
-      if (a.postedToChannel !== b.postedToChannel) {
-        return a.postedToChannel ? 1 : -1;
-      }
+    // Sort eligible: hot first, then newest
+    eligiblePrompts.sort((a, b) => {
       if (a.importance !== b.importance) {
         return a.importance === 'hot' ? -1 : 1;
       }
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
-    const selectedPrompts = copyPrompts.slice(0, count);
+    const selectedPrompts = eligiblePrompts.slice(0, count);
 
     let text = `🔮 <b>پک اختصاصی پرامپت‌های ترند و برتر هوش مصنوعی:</b>\n\n`;
 
@@ -4962,11 +5290,18 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
 
     const nowIso = new Date().toISOString();
     for (const it of selectedPrompts) {
-      // update original references in database
       const dbRef = db.aiPrompts.find(p => p.id === it.id);
       if (dbRef) {
+        if (isCh2) {
+          dbRef.postedToChannel2 = true;
+          dbRef.lastPostedAtCh2 = nowIso;
+        } else {
+          dbRef.postedToChannel1 = true;
+          dbRef.lastPostedAtCh1 = nowIso;
+        }
         dbRef.postedToChannel = true;
         dbRef.postedAt = nowIso;
+        dbRef.postCount = (dbRef.postCount || 0) + 1;
       }
     }
     if (isCh2) {
@@ -6447,7 +6782,7 @@ async function setupBotMenuButton(token?: string, req?: express.Request): Promis
   }
 
   try {
-    // 1. Set global menu button to standard command menu (type: 'commands') for all users (removing web_app for public)
+    // Set clean standard command menu (type: 'commands') for all users
     const res = await fetch(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -6460,39 +6795,9 @@ async function setupBotMenuButton(token?: string, req?: express.Request): Promis
     });
     const data = await res.json();
     
-    // 2. Set WebApp button ONLY and EXCLUSIVELY for the admin's chat id
-    let adminResult = '';
-    if (db.settings.adminId) {
-      const adminIdNum = Number(String(db.settings.adminId).replace(/[^0-9]/g, ''));
-      if (adminIdNum) {
-        const isHttps = appUrl.startsWith('https://');
-        const adminRes = await fetch(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: adminIdNum,
-            menu_button: isHttps ? {
-              type: 'web_app',
-              text: '⚙️ پنل مدیریت',
-              web_app: { url: appUrl }
-            } : {
-              type: 'commands'
-            }
-          }),
-          signal: AbortSignal.timeout(10000)
-        });
-        const adminData = await adminRes.json();
-        if (adminData.ok) {
-          adminResult = isHttps 
-            ? ' و پنل وب‌ویو اختصاصی برای ادمین فعال شد'
-            : ' (به دلیل عدم استفاده از HTTPS روی سرور، منوی وب‌ویو غیرفعال شد)';
-        }
-      }
-    }
-
     if (data.ok) {
-      addLog('success', `دکمه منوی کاربران عمومی به منوی دستورات تلگرام (Commands Hub) تغییر یافت${adminResult}.`);
-      return { success: true, message: `منوی عمومی ربات به منوی اصلی دستورات (Commands Hub) تغییر یافت${adminResult} ✅` };
+      addLog('success', 'دکمه منوی ربات به منوی استاندارد دستورات تلگرام تغییر یافت.');
+      return { success: true, message: 'منوی ربات به منوی استاندارد دستورات تغییر یافت ✅' };
     } else {
       return { success: false, message: data.description || 'خطا در ثبت دکمه منو در تلگرام.' };
     }
@@ -6556,13 +6861,11 @@ async function setBotCommands(token: string) {
 }
 
 /**
- * Generates the persistent custom keyboard (ReplyKeyboardMarkup) to be displayed in the bar below the chat.
- * CRITICAL: Telegram KeyboardButton inside ReplyKeyboardMarkup ONLY supports text or web_app (must be https).
- * It NEVER supports 'url' field (that causes 400 Bad Request error).
+ * Generates the clean standard custom keyboard (ReplyKeyboardMarkup) to be displayed in the bar below the chat.
+ * Removed web_app buttons to eliminate glass/ring backgrounds and ensure smooth opening/closing.
  */
 function getReplyKeyboard(userId: string | number, username?: string | null) {
   const isAdmin = checkIsAdmin(userId, username);
-  const appUrl = getPublicAppUrl();
 
   const keyboard: any[][] = [
     [
@@ -6595,12 +6898,6 @@ function getReplyKeyboard(userId: string | number, username?: string | null) {
   ];
 
   if (isAdmin) {
-    const isHttps = appUrl.startsWith('https://');
-    if (isHttps) {
-      keyboard.unshift([
-        { text: '🌐 باز کردن وب‌ویو پنل مدیریت (WebApp) 🚀', web_app: { url: appUrl } }
-      ]);
-    }
     keyboard.push([
       { text: '⚙️ ورود به پنل مدیریت در تلگرام 🔴' },
       { text: '🔄 استخراج سریع کانفیگ‌ها ⚡' }
@@ -6610,7 +6907,7 @@ function getReplyKeyboard(userId: string | number, username?: string | null) {
   return {
     keyboard,
     resize_keyboard: true,
-    is_persistent: false, // Set to false so user can open/close or minimize the keyboard at will in Telegram!
+    is_persistent: false, // Allows users to easily toggle/minimize or hide the keyboard in Telegram
     one_time_keyboard: false
   };
 }
@@ -6846,10 +7143,10 @@ async function handleBotUpdate(update: any) {
       messageText = '/start';
       delete adminStates[chatId];
       if (userId) delete joinChecksCache[userId];
-    } else if (cleanMsg.includes('بستن منو') || cleanMsg.includes('بستن کیبورد') || lowerMsg === '/close' || lowerMsg === '/hide' || lowerMsg === '/hide_menu') {
+    } else if (cleanMsg.includes('بستن') || cleanMsg.includes('مخفی کردن') || lowerMsg === '/close' || lowerMsg === '/hide' || lowerMsg === '/hide_menu') {
       callbackData = 'hide_reply_keyboard';
       messageText = '';
-    } else if (cleanMsg.includes('باز کردن منو') || lowerMsg === '/menu') {
+    } else if (cleanMsg.includes('باز کردن منو') || cleanMsg.includes('نمایش منو') || cleanMsg === 'منو' || lowerMsg === '/menu') {
       callbackData = 'open_reply_menu';
       messageText = '';
     } else if (cleanMsg.includes('۵۰ کانفیگ') || cleanMsg.includes('پک ۵۰') || cleanMsg.includes('50 کانفیگ') || lowerMsg === '/50') {
