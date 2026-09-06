@@ -136,6 +136,7 @@ export interface SecondaryChannelSettings {
   configIntervalMinutes?: number;
   configCount?: number;
   proxyCount?: number;
+  postFiles?: boolean; // send NPV/OVPN files alongside configs
   customText?: string;
   lastConfigsPostedAt?: string | null;
 
@@ -144,6 +145,7 @@ export interface SecondaryChannelSettings {
   techNewsIntervalHours?: number;
   techNewsIntervalMinutes?: number;
   techNewsCount?: number;
+  includeTechImportanceBadge?: boolean;
   lastTechNewsPostedAt?: string | null;
 
   // 3. Tech Tricks & Secrets Schedule for Channel 2

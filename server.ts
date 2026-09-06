@@ -143,8 +143,8 @@ const DEFAULT_SOURCES: SourceItem[] = [
   {
     id: 'src-1',
     type: 'telegram',
-    name: 'V2ray Outline configs',
-    urlOrHandle: '@v2ray_outline',
+    name: 'V2Ray Alpha Configs',
+    urlOrHandle: '@v2ray_alpha',
     enabled: true,
     extractedCount: 0,
     lastExtracted: null
@@ -161,26 +161,62 @@ const DEFAULT_SOURCES: SourceItem[] = [
   {
     id: 'src-3',
     type: 'telegram',
-    name: 'V2Ray Configs Pool',
-    urlOrHandle: '@v2ray_configs_pool',
+    name: 'VPN Ocean (Configs & Proxies)',
+    urlOrHandle: '@vpn_ocean',
     enabled: true,
     extractedCount: 0,
     lastExtracted: null
   },
   {
     id: 'src-4',
-    type: 'github',
-    name: 'Yebekhe V2ray Mix Source',
-    urlOrHandle: 'https://raw.githubusercontent.com/yebekhe/TVC/main/subscriptions/xray/normal/mix',
+    type: 'telegram',
+    name: 'Private VPNs Channel',
+    urlOrHandle: '@PrivateVPNs',
     enabled: true,
     extractedCount: 0,
     lastExtracted: null
   },
   {
     id: 'src-5',
+    type: 'telegram',
+    name: 'Proxy MTProto Live',
+    urlOrHandle: '@ProxyMTProto',
+    enabled: true,
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'src-6',
     type: 'sub',
     name: 'BarryFar All Configs Sub',
     urlOrHandle: 'https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_Sub.txt',
+    enabled: true,
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'src-7',
+    type: 'sub',
+    name: 'MahdiBland V2Ray Aggregator',
+    urlOrHandle: 'https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt',
+    enabled: true,
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'src-8',
+    type: 'sub',
+    name: 'Epodonios All Configs Sub',
+    urlOrHandle: 'https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt',
+    enabled: true,
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'src-9',
+    type: 'sub',
+    name: 'Mineral Nodes Hub',
+    urlOrHandle: 'https://raw.githubusercontent.com/LalatinaHub/Mineral/master/result/nodes',
     enabled: true,
     extractedCount: 0,
     lastExtracted: null
@@ -561,15 +597,15 @@ function loadDatabase() {
     const finalLogs = Array.isArray(loadedDataStore?.logs) ? loadedDataStore.logs : [];
     const finalPosted = Array.isArray(loadedDataStore?.postedMessages) ? loadedDataStore.postedMessages : [];
     const finalTechItems = Array.isArray(loadedDataStore?.techItems) ? loadedDataStore.techItems : [];
-    const finalAiPrompts = Array.isArray(loadedDataStore?.aiPrompts) && loadedDataStore.aiPrompts.length > 0
+    const finalAiPrompts = Array.isArray(loadedDataStore?.aiPrompts)
       ? loadedDataStore.aiPrompts
-      : DEFAULT_AI_PROMPTS;
+      : (Array.isArray(loadedSettings?.aiPrompts) ? loadedSettings.aiPrompts : DEFAULT_AI_PROMPTS);
 
     const finalFunSources = Array.isArray(loadedSettings?.funSources)
       ? loadedSettings.funSources
       : (Array.isArray(loadedDataStore?.funSources) ? loadedDataStore.funSources : DEFAULT_FUN_SOURCES);
 
-    const finalFunNewsItems = Array.isArray(loadedDataStore?.funNewsItems) && loadedDataStore.funNewsItems.length > 0
+    const finalFunNewsItems = Array.isArray(loadedDataStore?.funNewsItems)
       ? loadedDataStore.funNewsItems
       : DEFAULT_FUN_NEWS_ITEMS;
 
@@ -593,8 +629,32 @@ function loadDatabase() {
       funSources: finalFunSources
     };
 
-    // Correct stale/mismatched default prompt image URLs
+    // Migration: Update any stale or dead sources to modern active verified sources
+    let sourcesMigrated = false;
+    for (const s of db.sources) {
+      if (s.urlOrHandle && (s.urlOrHandle.includes('yebekhe/TVC') || s.urlOrHandle.includes('yebekhe/TelegramV2rayCollector'))) {
+        s.name = 'MahdiBland V2Ray Aggregator';
+        s.urlOrHandle = 'https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt';
+        s.type = 'sub';
+        sourcesMigrated = true;
+      } else if (s.urlOrHandle === '@v2ray_outline') {
+        s.name = 'V2Ray Alpha Configs';
+        s.urlOrHandle = '@v2ray_alpha';
+        sourcesMigrated = true;
+      } else if (s.urlOrHandle === '@v2ray_configs_pool') {
+        s.name = 'VPN Ocean (Configs & Proxies)';
+        s.urlOrHandle = '@vpn_ocean';
+        sourcesMigrated = true;
+      }
+    }
+
     let needsSave = false;
+
+    if (sourcesMigrated) {
+      needsSave = true;
+    }
+
+    // Correct stale/mismatched default prompt image URLs
     for (const p of db.aiPrompts) {
       if (p.id === 'prompt-2' && (p.imageUrl?.includes('photo-1509198397868') || p.title?.includes('تهران سایبرپانک'))) {
         p.imageUrl = 'https://images.unsplash.com/photo-1578894381163-e72c17f2d45f?w=800&auto=format&fit=crop&q=60';
@@ -626,7 +686,8 @@ function loadDatabase() {
       settings: db.settings,
       sources: db.sources,
       forceJoinChannels: db.forceJoinChannels,
-      users: db.users
+      users: db.users,
+      funSources: db.funSources || []
     });
   } catch (err) {
     console.error('Critical error loading database:', err);
@@ -2845,23 +2906,36 @@ async function scrapeSource(source: SourceItem): Promise<number> {
     // Purge items older than 3 days
     purgeOldConfigsAndProxies();
 
-    let url = source.urlOrHandle;
+    let url = source.urlOrHandle.trim();
     addLog('info', `در حال استخراج کدهای کانفیگ و پروکسی از منبع: ${source.name}`);
 
     if (source.type === 'telegram') {
       // Remove @ prefix if provided
-      const handle = source.urlOrHandle.startsWith('@') ? source.urlOrHandle.substring(1) : source.urlOrHandle;
+      const handle = url.startsWith('@') ? url.substring(1) : url;
       url = `https://t.me/s/${handle}`;
     }
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7'
+        },
+        signal: AbortSignal.timeout(15000)
+      });
+    } catch (fetchErr: any) {
+      if (fetchErr.name === 'AbortError' || fetchErr.name === 'TimeoutError') {
+        throw new Error('زمان انتظار به پایان رسید (Timeout)');
       }
-    });
+      throw new Error(`خطای ارتباط شبکه: ${fetchErr.message || 'fetch failed'}`);
+    }
 
     if (!response.ok) {
-      throw new Error(`خطای HTTP: ${response.status}`);
+      if (response.status === 404) {
+        throw new Error(`منبع یافت نشد (خطای 404) - لطفاً آدرس یا آیدی کانال را بررسی کنید`);
+      }
+      throw new Error(`خطای سرور منبع (HTTP ${response.status})`);
     }
 
     let rawText = await response.text();
@@ -2873,15 +2947,20 @@ async function scrapeSource(source: SourceItem): Promise<number> {
 
     // Check if subscription body is base64 encoded (very common for V2Ray subscriptions)
     if (source.type === 'sub' && isBase64(text)) {
-      const decoded = Buffer.from(text, 'base64').toString('utf8');
-      extracted = extractConfigsFromText(decoded, source.name);
-      extractedProxies = extractProxiesFromText(decoded, source.name);
+      try {
+        const decoded = Buffer.from(text, 'base64').toString('utf8');
+        extracted = extractConfigsFromText(decoded, source.name);
+        extractedProxies = extractProxiesFromText(decoded, source.name);
+      } catch {
+        extracted = extractConfigsFromText(text, source.name);
+        extractedProxies = extractProxiesFromText(text, source.name);
+      }
     } else {
       extracted = extractConfigsFromText(text, source.name);
       extractedProxies = extractProxiesFromText(text, source.name);
 
-      // Deep scan Telegram channels for attached NPVT / document post files
-      if (source.type === 'telegram') {
+      // Deep scan Telegram channels for attached NPVT / document post files safely
+      if (source.type === 'telegram' && db.settings.adminId && db.settings.botToken) {
         const handle = source.urlOrHandle.replace(/^@/, '').trim();
         const msgLinkRegex = new RegExp(`href="(https?:\\/\\/t\\.me\\/(?:s\\/)?${handle}\\/(\\d+))"`, 'gi');
         const matches = Array.from(text.matchAll(msgLinkRegex));
@@ -2892,91 +2971,53 @@ async function scrapeSource(source: SourceItem): Promise<number> {
           }
         }
         
-        const uniquePosts: typeof postData = [];
-        const seenUrls = new Set();
-        for (const pd of postData) {
-          if (!seenUrls.has(pd.url)) {
-            seenUrls.add(pd.url);
-            uniquePosts.push(pd);
-          }
-        }
-        
-        const finalPosts = uniquePosts.slice(-20);
-        if (finalPosts.length > 0) {
-          const postResults = await Promise.allSettled(
-            finalPosts.map(pData => fetch(pData.url, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36' }
-            }).then(r => r.text()))
-          );
-
-          for (let i = 0; i < postResults.length; i++) {
-            const res = postResults[i];
-            const pData = finalPosts[i];
-            if (res.status === 'fulfilled') {
-              const pText = res.value;
-
-              // Check if individual post is older than 3 days
-              const timeMatch = pText.match(/<time[^>]+datetime=["']([^"']+)["']/i);
-              if (timeMatch && timeMatch[1]) {
-                const postTime = new Date(timeMatch[1]).getTime();
-                if (!isNaN(postTime) && (Date.now() - postTime > THREE_DAYS_MS)) {
-                  continue; // Skip post older than 3 days
-                }
-              }
-
-              const hasNpvDoc = pText.toLowerCase().includes('.npvt') || pText.toLowerCase().includes('.npv') || pText.includes('NPVT') || pText.toLowerCase().includes('napsternet');
-              const srcLabel = hasNpvDoc ? `${source.name} (.npvt)` : source.name;
+        // Check top 3 newest posts for attached NPVT files if relevant keywords exist in text
+        const hasNpvDocKeyword = text.toLowerCase().includes('.npvt') || text.toLowerCase().includes('.npv') || text.includes('NPVT') || text.toLowerCase().includes('napsternet');
+        if (hasNpvDocKeyword && postData.length > 0) {
+          const recentPosts = postData.slice(-3);
+          for (const pData of recentPosts) {
+            try {
+              const fwRes = await callTelegramApi('forwardMessage', {
+                chat_id: db.settings.adminId,
+                from_chat_id: `@${handle}`,
+                message_id: Number(pData.msgId),
+                disable_notification: true
+              });
               
-              if (hasNpvDoc && db.settings.adminId && db.settings.botToken) {
-                try {
-                  const fwRes = await callTelegramApi('forwardMessage', {
-                    chat_id: db.settings.adminId,
-                    from_chat_id: `@${handle}`,
-                    message_id: Number(pData.msgId),
-                    disable_notification: true
-                  });
-                  
-                  if (fwRes && fwRes.document) {
-                    const cDoc = fwRes.document;
-                    const isVpnFormat = cDoc.file_name && (cDoc.file_name.endsWith('.npvt') || cDoc.file_name.endsWith('.npv') || cDoc.file_name.endsWith('.ovpn') || cDoc.file_name.endsWith('.txt'));
-                    if (isVpnFormat) {
-                      const fileInfo = await callTelegramApi('getFile', { file_id: cDoc.file_id });
-                      if (fileInfo && fileInfo.file_path) {
-                        const fRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${fileInfo.file_path}`);
-                        const arrayBuffer = await fRes.arrayBuffer();
-                        const fContentBase64 = Buffer.from(arrayBuffer).toString('base64');
-                        if (!db.npvFiles) db.npvFiles = [];
-                        
-                        if (!db.npvFiles.some(f => f.filename === cDoc.file_name && f.content === fContentBase64)) {
-                          db.npvFiles.unshift({
-                            id: Date.now().toString() + Math.floor(Math.random() * 1000),
-                            filename: cDoc.file_name,
-                            content: fContentBase64,
-                            status: 'untested',
-                            createdAt: new Date().toISOString()
-                          });
-                          addLog('success', `فایل ${cDoc.file_name} از کانال @${handle} استخراج و ذخیره شد.`);
-                        }
-                      }
+              if (fwRes && fwRes.document) {
+                const cDoc = fwRes.document;
+                const isVpnFormat = cDoc.file_name && (cDoc.file_name.endsWith('.npvt') || cDoc.file_name.endsWith('.npv') || cDoc.file_name.endsWith('.ovpn') || cDoc.file_name.endsWith('.txt'));
+                if (isVpnFormat) {
+                  const fileInfo = await callTelegramApi('getFile', { file_id: cDoc.file_id });
+                  if (fileInfo && fileInfo.file_path) {
+                    const fRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${fileInfo.file_path}`, { signal: AbortSignal.timeout(10000) });
+                    const arrayBuffer = await fRes.arrayBuffer();
+                    const fContentBase64 = Buffer.from(arrayBuffer).toString('base64');
+                    if (!db.npvFiles) db.npvFiles = [];
+                    
+                    if (!db.npvFiles.some(f => f.filename === cDoc.file_name && f.content === fContentBase64)) {
+                      db.npvFiles.unshift({
+                        id: Date.now().toString() + Math.floor(Math.random() * 1000),
+                        filename: cDoc.file_name,
+                        content: fContentBase64,
+                        status: 'untested',
+                        createdAt: new Date().toISOString()
+                      });
+                      addLog('success', `فایل ${cDoc.file_name} از کانال @${handle} استخراج و ذخیره شد.`);
                     }
                   }
-                  
-                  // Instantly delete the forwarded message so it doesn't spam the admin
-                  if (fwRes && fwRes.message_id) {
-                    await callTelegramApi('deleteMessage', {
-                      chat_id: db.settings.adminId,
-                      message_id: fwRes.message_id
-                    }).catch(() => {});
-                  }
-                } catch (fwErr) {
-                  console.error('Failed to forward/extract document from channel:', fwErr);
                 }
               }
               
-              const pConfigs = extractConfigsFromText(pText, srcLabel);
-              const pProxies = extractProxiesFromText(pText, srcLabel);
-              extracted.push(...pConfigs);
-              extractedProxies.push(...pProxies);
+              // Instantly delete the forwarded message so it doesn't spam the admin
+              if (fwRes && fwRes.message_id) {
+                await callTelegramApi('deleteMessage', {
+                  chat_id: db.settings.adminId,
+                  message_id: fwRes.message_id
+                }).catch(() => {});
+              }
+            } catch (fwErr) {
+              // Silent skip for individual document forward errors
             }
           }
         }
@@ -5346,22 +5387,11 @@ function cleanTelegramFunText(rawHtml: string): string {
 }
 
 async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ added: number; total: number; skipped: number }> {
-  if (!db.funSources || db.funSources.length === 0) {
-    db.funSources = [...DEFAULT_FUN_SOURCES];
+  if (!Array.isArray(db.funSources)) {
+    db.funSources = [];
   }
-  if (!db.funNewsItems) {
-    db.funNewsItems = [...DEFAULT_FUN_NEWS_ITEMS];
-  }
-
-  // Remove stale or inactive sources
-  const deadHandles = ['@joker_ir', '@funny_teleg'];
-  db.funSources = db.funSources.filter(s => !deadHandles.includes(s.urlOrHandle.toLowerCase()));
-
-  // Ensure known active channels are present
-  for (const defSrc of DEFAULT_FUN_SOURCES) {
-    if (!db.funSources.some(s => s.urlOrHandle.toLowerCase() === defSrc.urlOrHandle.toLowerCase())) {
-      db.funSources.push({ ...defSrc });
-    }
+  if (!Array.isArray(db.funNewsItems)) {
+    db.funNewsItems = [];
   }
 
   // Clean all existing items in database
@@ -5376,8 +5406,8 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
     : db.funSources.filter(s => s.enabled);
 
   if (sourcesToScrape.length === 0) {
-    addLog('warn', 'هیچ کانال تلگرامی فعالی برای استخراج فان و اخبار یافت نشد.');
-    return { added: 0, total: db.funNewsItems.length, skipped: 0 };
+    addLog('warn', 'هیچ کانال تلگرامی فعالی برای استخراج فان و اخبار یافت نشد. لطفاً در تب فان و اخبار یک کانال فعال تعریف کنید.');
+    return { added: 0, total: (db.funNewsItems || []).length, skipped: 0 };
   }
 
   addLog('info', `شروع استخراج دقیق مطالب طنز و اخبار از ${sourcesToScrape.length} کانال منبع...`);
@@ -6174,6 +6204,26 @@ function getChannelInlineButton(channelNum: 1 | 2, targetChannelHandle?: string)
     }
   }
 
+  // 5. Fallback to global Branding if it points to a channel or link
+  if (db.settings.branding && db.settings.branding.trim()) {
+    const branding = db.settings.branding.trim();
+    if (branding.includes('@')) {
+      const handleMatch = branding.match(/@[a-zA-Z0-9_]+/);
+      const handle = handleMatch ? handleMatch[0].replace('@', '') : '';
+      if (handle) {
+        const label = ap?.inlineButtonText?.trim() || `📢 کانال رسمی: @${handle}`;
+        return { text: label, url: `https://t.me/${handle}` };
+      }
+    } else if (branding.startsWith('http://') || branding.startsWith('https://')) {
+      return { text: ap?.inlineButtonText?.trim() || `📢 کانال رسمی و پشتیبانی`, url: branding };
+    } else {
+      const cleanHandle = branding.replace(/[^a-zA-Z0-9_]/g, '');
+      if (cleanHandle) {
+        return { text: ap?.inlineButtonText?.trim() || `📢 کانال رسمی: @${cleanHandle}`, url: `https://t.me/${cleanHandle}` };
+      }
+    }
+  }
+
   return null;
 }
 
@@ -6539,7 +6589,8 @@ function getReplyKeyboard(userId: string | number, username?: string | null) {
       { text: '🎨 پرامپت‌های طلایی هوش مصنوعی ✨' }
     ],
     [
-      { text: 'ℹ️ راهنمای اتصال گام به گام 📚' }
+      { text: 'ℹ️ راهنمای اتصال گام به گام 📚' },
+      { text: '❌ بستن منو' }
     ]
   ];
 
@@ -6559,7 +6610,7 @@ function getReplyKeyboard(userId: string | number, username?: string | null) {
   return {
     keyboard,
     resize_keyboard: true,
-    is_persistent: true,
+    is_persistent: false, // Set to false so user can open/close or minimize the keyboard at will in Telegram!
     one_time_keyboard: false
   };
 }
@@ -6795,6 +6846,12 @@ async function handleBotUpdate(update: any) {
       messageText = '/start';
       delete adminStates[chatId];
       if (userId) delete joinChecksCache[userId];
+    } else if (cleanMsg.includes('بستن منو') || cleanMsg.includes('بستن کیبورد') || lowerMsg === '/close' || lowerMsg === '/hide' || lowerMsg === '/hide_menu') {
+      callbackData = 'hide_reply_keyboard';
+      messageText = '';
+    } else if (cleanMsg.includes('باز کردن منو') || lowerMsg === '/menu') {
+      callbackData = 'open_reply_menu';
+      messageText = '';
     } else if (cleanMsg.includes('۵۰ کانفیگ') || cleanMsg.includes('پک ۵۰') || cleanMsg.includes('50 کانفیگ') || lowerMsg === '/50') {
       callbackData = 'v2ray_qty_50';
       messageText = '';
@@ -7641,10 +7698,10 @@ async function handleBotUpdate(update: any) {
           text: '⏳ **در حال استخراج خودکار و اسکن تمامی کانال‌ها و سابسکریپشن‌ها...**\nاین فرآیند ممکن است چند ثانیه زمان ببرد.',
           parse_mode: 'Markdown'
         });
-        const result = await scrapeAllSources();
+        const count = await triggerBulkScrape();
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `✅ **استخراج منابع با موفقیت انجام شد!**\n\n🟢 کانفیگ‌های جدید اضافه شده: **${result.configsAdded}**\n🔌 پروکسی‌های جدید: **${result.proxiesAdded}**\n📄 فایل‌های جدید: **${result.filesAdded}**\n\nتست خودکار پینگ پورت‌ها در پس‌زمینه آغاز گردید.`,
+          text: `✅ **استخراج منابع با موفقیت انجام شد!**\n\n🟢 کانفیگ‌ها و پروکسی‌های جدید استخراج و ذخیره شدند: **${count} عدد**\n\nتست خودکار پینگ پورت‌ها در پس‌زمینه آغاز گردید.`,
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
@@ -7664,7 +7721,10 @@ async function handleBotUpdate(update: any) {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به پنل مدیریت', callback_data: 'admin_menu' }]] }
         });
-        testAllConfigs().catch(() => {});
+        const batchIds = db.configs.slice(0, 100).map(c => c.id);
+        if (batchIds.length > 0) {
+          testConfigsBatch(batchIds);
+        }
         return;
       }
 
@@ -9332,6 +9392,44 @@ async function handleBotUpdate(update: any) {
       else if (messageText.includes('پرامپت') || messageText.includes('هوش مصنوعی')) callbackData = 'get_ai_prompts';
     }
 
+    if (callbackData === 'hide_reply_keyboard') {
+      if (callbackQueryId) await answerCallback('منوی زیر چت بسته شد');
+      const sponsorBtn = getSponsorChannelInlineButton();
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: `🔽 <b>منوی زیر چت با موفقیت بسته شد.</b>\n\nهر زمان مایل بودید منو دوباره در نوار پایین ظاهر شود، روی دکمه شیشه‌ای <b>«📋 باز کردن منوی زیر چت»</b> کلیک کنید یا دستور <code>/menu</code> یا <code>/start</code> را ارسال نمایید.`,
+        parse_mode: 'HTML',
+        reply_markup: {
+          remove_keyboard: true
+        }
+      });
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: `👇 <b>دسترسی سریع به امکانات ربات (دکمه‌های شیشه‌ای):</b>`,
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📋 باز کردن منوی زیر چت 🚀', callback_data: 'open_reply_menu' }],
+            [{ text: '🔥 دریافت یکجای ۵۰ کانفیگ ⭐', callback_data: 'v2ray_qty_50' }],
+            [{ text: '🔌 دریافت پروکسی تلگرام 🚀', callback_data: 'get_proxies' }],
+            ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : [])
+          ]
+        }
+      });
+      return;
+    }
+
+    if (callbackData === 'open_reply_menu' || messageText === '/menu') {
+      if (callbackQueryId) await answerCallback('منوی زیر چت فعال شد');
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: `📋 <b>منوی زیر کادر چت برای شما فعال گردید.</b>\nبرای استفاده، گزینه‌های زیر را لمس نمایید:`,
+        parse_mode: 'HTML',
+        reply_markup: getReplyKeyboard(userId, username)
+      });
+      return;
+    }
+
     if (messageText === '/start' || callbackData === 'back_to_main' || callbackData === 'start_refresh' || callbackData === 'start') {
       delete adminStates[chatId];
       if (userId) delete joinChecksCache[userId];
@@ -9415,10 +9513,16 @@ async function handleBotUpdate(update: any) {
         [
           { text: 'ℹ️ راهنمای اتصال آسان 📚', callback_data: 'get_help' },
           { text: '🔄 بروزرسانی ربات ⚡', callback_data: 'start_refresh' }
+        ],
+        [
+          { text: '🔽 بستن منوی پایین چت', callback_data: 'hide_reply_keyboard' }
         ]
       );
 
-      if (requiredChannels.length > 0 && requiredChannels[0]?.username) {
+      const sponsorBtn = getSponsorChannelInlineButton();
+      if (sponsorBtn) {
+        startInlineKeyboard.push([{ text: sponsorBtn.text, url: sponsorBtn.url }]);
+      } else if (requiredChannels.length > 0 && requiredChannels[0]?.username) {
         const url = requiredChannels[0].inviteLink || `https://t.me/${requiredChannels[0].username.replace('@', '')}`;
         startInlineKeyboard.push([{ text: '⭐ کانال رسمی پشتیبانی و اخبار', url }]);
       }
@@ -9452,12 +9556,16 @@ async function handleBotUpdate(update: any) {
         `• روی دکمه پروکسی کلیک کرده و گزینه‌ **Connect Proxy** را بزنید.\n\n` +
         `💡 *برای دریافت کانفیگ‌های تازه، از منوی اصلی اقدام کنید.*`;
 
+      const sponsorBtn = getSponsorChannelInlineButton();
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
         text: helpText,
         parse_mode: 'Markdown',
         reply_markup: {
-          inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]]
+          inline_keyboard: [
+            ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : []),
+            [{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]
+          ]
         }
       });
       return;
@@ -9470,13 +9578,19 @@ async function handleBotUpdate(update: any) {
       seedCuratedTechItems();
       const allTech = db.techItems || [];
       const filtered = allTech.filter(t => t.category === (isNews ? 'news' : 'trick'));
+      const sponsorBtn = getSponsorChannelInlineButton();
       
       if (filtered.length === 0) {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
           text: `⚠️ **هیچ ${isNews ? 'خبری' : 'ترفندی'} در حال حاضر موجود نیست!**\nلطفاً بعداً تلاش کنید.`,
           parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]] }
+          reply_markup: {
+            inline_keyboard: [
+              ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : []),
+              [{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]
+            ]
+          }
         });
         return;
       }
@@ -9493,7 +9607,12 @@ async function handleBotUpdate(update: any) {
         chat_id: chatId,
         text: msgText,
         parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]] }
+        reply_markup: {
+          inline_keyboard: [
+            ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : []),
+            [{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]
+          ]
+        }
       });
       return;
     }
@@ -9686,6 +9805,7 @@ async function handleBotUpdate(update: any) {
       const workingConfigsCount = db.configs.filter(c => c.status === 'working').length;
       const workingProxiesCount = (db.proxies || []).filter(p => p.status === 'working').length;
       const totalConfigs = db.configs.length;
+      const sponsorBtn = getSponsorChannelInlineButton();
 
       const netText = `📊 **گزارش لحظه‌ای وضعیت شبکه و تست نت ایران:**\n\n` +
         `🟢 **کانفیگ‌های فعال V2Ray:** ${workingConfigsCount} از ${totalConfigs} کل\n` +
@@ -9698,7 +9818,10 @@ async function handleBotUpdate(update: any) {
         text: netText,
         parse_mode: 'Markdown',
         reply_markup: {
-          inline_keyboard: [[{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]]
+          inline_keyboard: [
+            ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : []),
+            [{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }]
+          ]
         }
       });
       return;
@@ -9851,10 +9974,11 @@ async function handleBotUpdate(update: any) {
 
         // Split into chunks of 15 configs so each fits nicely inside a expandable quote
         const CHUNK_SIZE = 15;
+        const totalChunks = Math.ceil(selected.length / CHUNK_SIZE);
         for (let i = 0; i < selected.length; i += CHUNK_SIZE) {
           const chunk = selected.slice(i, i + CHUNK_SIZE);
           const chunkNum = Math.floor(i / CHUNK_SIZE) + 1;
-          const totalChunks = Math.ceil(selected.length / CHUNK_SIZE);
+          const isLast = chunkNum === totalChunks;
 
           const combinedBranded = chunk
             .map(conf => applyBrandingToConfig(conf.raw, db.settings.branding))
@@ -9864,10 +9988,21 @@ async function handleBotUpdate(update: any) {
           chunkMsg += `<blockquote expandable><code>${escapeHtml(combinedBranded)}</code></blockquote>\n\n`;
           chunkMsg += `📍 جهت کپی یکجای این بخش روی کادر فوق لمس کنید و در برنامه Import from clipboard نمائید.`;
 
+          const chunkKeyboard = isLast ? {
+            inline_keyboard: [
+              ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : []),
+              [
+                { text: '🔄 دریافت مجدد پک ۵۰ تایی', callback_data: 'v2ray_qty_50' },
+                { text: '🔙 منوی اصلی', callback_data: 'back_to_main' }
+              ]
+            ]
+          } : undefined;
+
           await callTelegramApi('sendMessage', {
             chat_id: chatId,
             text: chunkMsg,
-            parse_mode: 'HTML'
+            parse_mode: 'HTML',
+            reply_markup: chunkKeyboard
           });
           await new Promise(r => setTimeout(r, 100));
         }
@@ -9916,7 +10051,11 @@ async function handleBotUpdate(update: any) {
       const inlineKeyboard = {
         inline_keyboard: [
           ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : []),
-          ...feedbackRows
+          ...feedbackRows,
+          [
+            { text: '🔄 دریافت کانفیگ‌های جدید', callback_data: `v2ray_qty_${qty}` },
+            { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main' }
+          ]
         ]
       };
 
@@ -10840,7 +10979,7 @@ async function startExpressServer() {
 
     const name = db.sources[index].name;
     db.sources.splice(index, 1);
-    saveDatabase();
+    saveDatabase(true);
     addLog('warn', `منبع حذف گردید: ${name}`);
     res.json({ success: true });
   });
@@ -10923,7 +11062,7 @@ async function startExpressServer() {
 
     const title = db.forceJoinChannels[idx].title;
     db.forceJoinChannels.splice(idx, 1);
-    saveDatabase();
+    saveDatabase(true);
     addLog('warn', `کانال عضویت اجباری حذف شد: ${title}`);
     res.json({ success: true });
   });
@@ -11501,8 +11640,8 @@ async function startExpressServer() {
 
   // API: Get Fun News Items
   app.get('/api/fun-news', (req, res) => {
-    if (!db.funNewsItems || db.funNewsItems.length === 0) {
-      db.funNewsItems = [...DEFAULT_FUN_NEWS_ITEMS];
+    if (!Array.isArray(db.funNewsItems)) {
+      db.funNewsItems = [];
     }
     res.json(db.funNewsItems || []);
   });
@@ -11635,7 +11774,7 @@ async function startExpressServer() {
         return res.status(404).json({ success: false, message: 'مطلب یافت نشد.' });
       }
       db.funNewsItems.splice(idx, 1);
-      saveDatabase();
+      saveDatabase(true);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
@@ -11644,8 +11783,8 @@ async function startExpressServer() {
 
   // API: Get Fun Sources
   app.get('/api/fun-sources', (req, res) => {
-    if (!db.funSources || db.funSources.length === 0) {
-      db.funSources = [...DEFAULT_FUN_SOURCES];
+    if (!Array.isArray(db.funSources)) {
+      db.funSources = [];
     }
     res.json(db.funSources || []);
   });
@@ -11689,7 +11828,7 @@ async function startExpressServer() {
       };
 
       db.funSources.push(newSource);
-      saveDatabase();
+      saveDatabase(true);
       addLog('success', `کانال منبع فان و اخبار افزوده شد: ${newSource.name} (${newSource.urlOrHandle})`);
       res.json({ success: true, source: newSource });
     } catch (err: any) {
@@ -11711,7 +11850,7 @@ async function startExpressServer() {
       if (name) source.name = name.trim();
       if (category) source.category = category === 'news' ? 'news' : 'fun';
 
-      saveDatabase();
+      saveDatabase(true);
       res.json({ success: true, source });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
@@ -11726,8 +11865,10 @@ async function startExpressServer() {
       if (idx === -1) {
         return res.status(404).json({ success: false, message: 'منبع یافت نشد.' });
       }
+      const removed = db.funSources[idx];
       db.funSources.splice(idx, 1);
-      saveDatabase();
+      saveDatabase(true);
+      addLog('warn', `کانال منبع فان و اخبار حذف گردید: ${removed.name} (${removed.urlOrHandle})`);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });

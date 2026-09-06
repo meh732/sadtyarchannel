@@ -1,0 +1,52 @@
+{
+  "log": {
+    "loglevel": "none"
+  },
+  "inbounds": [
+    {
+      "port": 17010,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "104.16.186.41",
+            "port": 443,
+            "users": [
+              {
+                "id": "102e5f34-1913-4dd3-a1f2-f831d891a490",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "cr7.traneh.dpdns.org",
+          "allowInsecure": true
+        },
+        "wsSettings": {
+          "path": "/sinavm-sinavm/?ed=2560",
+          "headers": {
+            "Host": "cr7.traneh.dpdns.org"
+          }
+        }
+      }
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    }
+  ]
+}

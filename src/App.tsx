@@ -1798,9 +1798,11 @@ export default function App() {
   const loadPresetSources = async () => {
     setActionLoading('load_presets');
     const presets = [
-      { name: 'کانال بزرگ ویتوری فری', type: 'telegram' as const, urlOrHandle: '@v2ray_outline' },
-      { name: 'کانال پروکسی‌های ویتوری', type: 'telegram' as const, urlOrHandle: '@v2ray_free_conf' },
-      { name: 'مخزن رسمی کانفیگ میکس', type: 'github' as const, urlOrHandle: 'https://raw.githubusercontent.com/yebekhe/TVC/main/v2ray/mix' }
+      { name: 'کانال فعال V2Ray Alpha', type: 'telegram' as const, urlOrHandle: '@v2ray_alpha' },
+      { name: 'کانال پروکسی و کانفیگ VPN Ocean', type: 'telegram' as const, urlOrHandle: '@vpn_ocean' },
+      { name: 'کانال پروکسی‌های تلگرام MTProto', type: 'telegram' as const, urlOrHandle: '@ProxyMTProto' },
+      { name: 'مخزن رسمی تجمیعی MahdiBland Sub', type: 'sub' as const, urlOrHandle: 'https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt' },
+      { name: 'مخزن جامع کانفیگ‌های BarryFar', type: 'sub' as const, urlOrHandle: 'https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_Sub.txt' }
     ];
 
     try {
@@ -3415,7 +3417,7 @@ export default function App() {
                           <input
                             type="text"
                             required
-                            placeholder={newSource.type === 'telegram' ? '@v2ray_outline' : 'https://raw.githubusercontent.com/...'}
+                            placeholder={newSource.type === 'telegram' ? '@v2ray_alpha' : 'https://raw.githubusercontent.com/...'}
                             value={newSource.urlOrHandle}
                             onChange={(e) => setNewSource(prev => ({ ...prev, urlOrHandle: e.target.value }))}
                             className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm text-left focus:border-indigo-500 focus:outline-none"
