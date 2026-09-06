@@ -4378,10 +4378,45 @@ function formatTechItemForTelegram(item: TechItem, showBadge = true): string {
 }
 
 /**
+ * Helper: Downloads remote media (photo/video/gif) to a Blob buffer with browser headers
+ * so Telegram API receives the binary data directly rather than failing on remote URL scrapers.
+ */
+async function downloadMediaToBlob(url: string, timeoutMs = 12000): Promise<{ blob: Blob; filename: string; contentType: string } | null> {
+  if (!url || !/^https?:\/\//i.test(url)) return null;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'image/*,video/*,*/*',
+        'Referer': 'https://t.me/'
+      },
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    if (!res.ok) return null;
+    const arrayBuffer = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    if (buffer.length === 0 || buffer.length > 50 * 1024 * 1024) return null;
+
+    const contentType = res.headers.get('content-type') || 'application/octet-stream';
+    let ext = 'jpg';
+    if (contentType.includes('video') || url.includes('.mp4')) ext = 'mp4';
+    else if (contentType.includes('gif') || url.includes('.gif')) ext = 'gif';
+    else if (contentType.includes('png') || url.includes('.png')) ext = 'png';
+    else if (contentType.includes('webp') || url.includes('.webp')) ext = 'webp';
+
+    const blob = new Blob([buffer], { type: contentType });
+    return { blob, filename: `media_${Date.now()}.${ext}`, contentType };
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
  * Unified Telegram Media Post Sender:
  * Automatically dispatches Videos (sendVideo), Animations/GIFs (sendAnimation),
  * Photos (sendPhoto), or Text (sendMessage) with automatic HTML caption length
  * protection (1024 chars for media, 3900 for text) and multi-stage fallback.
+ * Employs direct buffer download + FormData upload to bypass CDN hotlink protections.
  */
 async function sendTelegramPostWithMedia(params: {
   chatId: string | number;
@@ -4402,6 +4437,29 @@ async function sendTelegramPostWithMedia(params: {
     const method = isAnim ? 'sendAnimation' : 'sendVideo';
     const payloadKey = isAnim ? 'animation' : 'video';
 
+    // Step 1a: Attempt direct binary buffer download and upload via FormData
+    try {
+      const mediaData = await downloadMediaToBlob(videoUrl, 15000);
+      if (mediaData) {
+        const formData = new FormData();
+        formData.append('chat_id', String(chatId));
+        formData.append(payloadKey, mediaData.blob, mediaData.filename);
+        formData.append('caption', caption);
+        formData.append('parse_mode', 'HTML');
+        if (replyMarkup) {
+          formData.append('reply_markup', typeof replyMarkup === 'string' ? replyMarkup : JSON.stringify(replyMarkup));
+        }
+        if (silent) formData.append('disable_notification', 'true');
+        if (!isAnim) formData.append('supports_streaming', 'true');
+
+        const result = await callTelegramApi(method, formData);
+        return { success: true, messageId: result?.message_id };
+      }
+    } catch (buffErr: any) {
+      console.warn(`Buffer video upload failed (${buffErr?.message || buffErr}), attempting URL fallback...`);
+    }
+
+    // Step 1b: Fallback to remote URL JSON payload
     try {
       const result = await callTelegramApi(method, {
         chat_id: chatId,
@@ -4414,12 +4472,34 @@ async function sendTelegramPostWithMedia(params: {
       });
       return { success: true, messageId: result?.message_id };
     } catch (videoErr: any) {
-      addLog('warn', `ارسال ویدیوی پست به ${chatId} با خطا مواجه شد (${videoErr?.message || videoErr})، در حال تلاش برای ارسال با عکس/متن...`);
+      addLog('warn', `ارسال ویدیوی پست به ${chatId} با خطا مواجه شد (${videoErr?.message || videoErr})، در حال تلاش برای ارسال با تصویر/متن...`);
     }
   }
 
-  // 2. Try sending photo if imageUrl is available (or if video failed and image exists)
+  // 2. Try sending photo if imageUrl is available
   if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
+    // Step 2a: Attempt direct binary buffer download and upload via FormData
+    try {
+      const mediaData = await downloadMediaToBlob(imageUrl, 12000);
+      if (mediaData) {
+        const formData = new FormData();
+        formData.append('chat_id', String(chatId));
+        formData.append('photo', mediaData.blob, mediaData.filename);
+        formData.append('caption', caption);
+        formData.append('parse_mode', 'HTML');
+        if (replyMarkup) {
+          formData.append('reply_markup', typeof replyMarkup === 'string' ? replyMarkup : JSON.stringify(replyMarkup));
+        }
+        if (silent) formData.append('disable_notification', 'true');
+
+        const result = await callTelegramApi('sendPhoto', formData);
+        return { success: true, messageId: result?.message_id };
+      }
+    } catch (buffErr: any) {
+      console.warn(`Buffer photo upload failed (${buffErr?.message || buffErr}), attempting URL fallback...`);
+    }
+
+    // Step 2b: Fallback to remote URL JSON payload
     try {
       const result = await callTelegramApi('sendPhoto', {
         chat_id: chatId,
@@ -4582,33 +4662,28 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
 
     if (configLimit > 0) {
       // 1. Unposted working configs
-      const unpostedWorking = db.configs.filter(c => c.status === 'working' && !c[targetChannelKey]);
+      let unpostedWorking = db.configs.filter(c => c.status === 'working' && !c[targetChannelKey]);
       // 2. Unposted untested configs
-      const unpostedUntested = db.configs.filter(c => c.status === 'untested' && !c[targetChannelKey]);
-      const allUnposted = [...unpostedWorking, ...unpostedUntested];
+      let unpostedUntested = db.configs.filter(c => c.status === 'untested' && !c[targetChannelKey]);
+      let allUnposted = [...unpostedWorking, ...unpostedUntested];
 
-      if (allUnposted.length >= configLimit) {
-        // We have enough fresh unposted configs! Pick from them
+      // If available unposted configs are low, scrape fresh configs immediately from all sources
+      if (allUnposted.length < configLimit) {
+        addLog('info', `موجودی کانفیگ‌های جدید و منتشرنشده برای کانال ${channelTargetNum} اندک است (${allUnposted.length} عدد). در حال استخراج و دریافت کانفیگ‌های تازه از ساب‌ها و منابع...`);
+        try {
+          await triggerBulkScrape();
+        } catch (scrapeErr) {
+          console.error('Auto scrape on low unposted configs error:', scrapeErr);
+        }
+        unpostedWorking = db.configs.filter(c => c.status === 'working' && !c[targetChannelKey]);
+        unpostedUntested = db.configs.filter(c => c.status === 'untested' && !c[targetChannelKey]);
+        allUnposted = [...unpostedWorking, ...unpostedUntested];
+      }
+
+      if (allUnposted.length > 0) {
+        // STRICT DUPLICATE PREVENTION: Pick ONLY fresh unposted configs (NEVER pick previously posted items)
         const shuffled = [...allUnposted].sort(() => 0.5 - Math.random());
-        selectedConfigs = shuffled.slice(0, configLimit);
-      } else {
-        // Take all available unposted
-        selectedConfigs = [...allUnposted];
-        const needed = configLimit - selectedConfigs.length;
-
-        // For the remainder, pick configs sorted by oldest lastPostedAt (least recently posted)
-        const alreadyChosenIds = new Set(selectedConfigs.map(c => c.id));
-        const pool = db.configs.filter(c => !alreadyChosenIds.has(c.id) && (c.status === 'working' || c.status === 'untested'));
-        pool.sort((a, b) => {
-          const aCount = a.postCount || 0;
-          const bCount = b.postCount || 0;
-          if (aCount !== bCount) return aCount - bCount;
-          const aTime = a.lastPostedAt ? new Date(a.lastPostedAt).getTime() : 0;
-          const bTime = b.lastPostedAt ? new Date(b.lastPostedAt).getTime() : 0;
-          return aTime - bTime;
-        });
-
-        selectedConfigs = [...selectedConfigs, ...pool.slice(0, needed)];
+        selectedConfigs = shuffled.slice(0, Math.min(configLimit, shuffled.length));
       }
     }
 
@@ -4624,28 +4699,15 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       const unpostedUntestedProxies = allProxies.filter(p => p.status === 'untested' && !p[targetChannelKey]);
       const allUnpostedProxies = [...unpostedWorkingProxies, ...unpostedUntestedProxies];
 
-      if (allUnpostedProxies.length >= proxyLimit) {
+      if (allUnpostedProxies.length > 0) {
+        // STRICT DUPLICATE PREVENTION: Pick ONLY fresh unposted proxies
         const shuffled = [...allUnpostedProxies].sort(() => 0.5 - Math.random());
-        selectedProxies = shuffled.slice(0, proxyLimit);
-      } else {
-        selectedProxies = [...allUnpostedProxies];
-        const needed = proxyLimit - selectedProxies.length;
-        const alreadyChosenIds = new Set(selectedProxies.map(p => p.id));
-        const pool = allProxies.filter(p => !alreadyChosenIds.has(p.id) && (p.status === 'working' || p.status === 'untested'));
-        pool.sort((a, b) => {
-          const aCount = a.postCount || 0;
-          const bCount = b.postCount || 0;
-          if (aCount !== bCount) return aCount - bCount;
-          const aTime = a.lastPostedAt ? new Date(a.lastPostedAt).getTime() : 0;
-          const bTime = b.lastPostedAt ? new Date(b.lastPostedAt).getTime() : 0;
-          return aTime - bTime;
-        });
-        selectedProxies = [...selectedProxies, ...pool.slice(0, needed)];
+        selectedProxies = shuffled.slice(0, Math.min(proxyLimit, shuffled.length));
       }
     }
 
     if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
-      addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} انجام نشد: هیچ کانفیگ یا پروکسی برای ارسال یافت نشد.`);
+      addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} انجام نشد: هیچ کانفیگ یا پروکسی جدید و منتشرنشده‌ای یافت نشد (جهت رعایت اکید قانون عدم ارسال تکراری، ارسال متوقف گردید).`);
       return false;
     }
 
@@ -12224,7 +12286,7 @@ async function startExpressServer() {
     }
   });
 
-  // API: Delete Fun Source
+  // API: Delete Fun Source and its scraped items
   app.delete('/api/fun-sources/:id', (req, res) => {
     try {
       const { id } = req.params;
@@ -12233,10 +12295,27 @@ async function startExpressServer() {
         return res.status(404).json({ success: false, message: 'منبع یافت نشد.' });
       }
       const removed = db.funSources[idx];
+      const removedHandle = (removed.urlOrHandle || '').replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim();
+
+      // Remove the source from list
       db.funSources.splice(idx, 1);
+
+      // Also clean up all items harvested from this removed channel
+      if (Array.isArray(db.funNewsItems) && removedHandle) {
+        const initialCount = db.funNewsItems.length;
+        db.funNewsItems = db.funNewsItems.filter(item => {
+          const itemHandle = (item.sourceChannel || '').replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim();
+          return itemHandle !== removedHandle;
+        });
+        const deletedPostsCount = initialCount - db.funNewsItems.length;
+        if (deletedPostsCount > 0) {
+          addLog('info', `${deletedPostsCount} مطلب استخراج‌شده مربوط به کانال حذف‌شده (${removed.name}) پاکسازی گردید.`);
+        }
+      }
+
       saveDatabase(true);
       addLog('warn', `کانال منبع فان و اخبار حذف گردید: ${removed.name} (${removed.urlOrHandle})`);
-      res.json({ success: true });
+      res.json({ success: true, removedSource: removed, remainingCount: db.funSources.length });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }

@@ -1537,16 +1537,21 @@ export default function App() {
   };
 
   const handleDeleteFunSource = async (id: string) => {
-    if (!confirm('آیا از حذف این کانال تلگرام منبع مطمئن هستید؟')) return;
+    setActionLoading(`delete_fun_source_${id}`);
     try {
       const res = await fetch(`/api/fun-sources/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) {
         setFunSources(prev => prev.filter(s => s.id !== id));
-        showToast('کانال منبع با موفقیت حذف شد.', 'success');
+        showToast('کانال منبع و مطالب مرتبط با آن با موفقیت حذف گردید.', 'success');
+        fetchData(true);
+      } else {
+        showToast(data.message || 'خطا در حذف کانال منبع', 'error');
       }
-    } catch (err) {
-      showToast('خطا در حذف کانال منبع', 'error');
+    } catch (err: any) {
+      showToast(err?.message || 'خطا در حذف کانال منبع', 'error');
+    } finally {
+      setActionLoading(null);
     }
   };
 
