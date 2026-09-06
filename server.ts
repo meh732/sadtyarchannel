@@ -42,8 +42,12 @@ import {
   AiPromptCategory,
   FunNewsItem,
   FunNewsSource,
-  SecondaryChannelSettings
+  SecondaryChannelSettings,
+  DigitalToolItem,
+  DigitalToolCategory,
+  PostedPromptRecord
 } from './src/types';
+import { DEFAULT_DIGITAL_TOOLS, EXTENDED_AI_PROMPTS } from './src/digitalToolsData';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const DB_FILE = path.join(process.cwd(), 'data_store.json');
@@ -122,6 +126,18 @@ export interface NpvFileItem {
   createdAt: string;
 }
 
+export interface ChannelPostHistoryItem {
+  id: string;
+  channelTarget: 1 | 2;
+  channelHandle: string;
+  category: 'configs' | 'news' | 'tricks' | 'prompts' | 'fun' | 'tech' | 'digital_tools';
+  postedAt: string; // ISO string
+  tehranDate: string; // YYYY-MM-DD
+  tehranHour: number; // 0 - 23
+  messageId?: number;
+  previewText?: string;
+}
+
 interface DatabaseSchema {
   settings: SystemSettings;
   sources: SourceItem[];
@@ -132,10 +148,13 @@ interface DatabaseSchema {
   users: BotUser[];
   logs: BotLog[];
   postedMessages?: ChannelPost[];
+  channelPostHistory?: ChannelPostHistoryItem[];
   techItems?: TechItem[];
   aiPrompts?: AiPrompt[];
   funNewsItems?: FunNewsItem[];
   funSources?: FunNewsSource[];
+  digitalTools?: DigitalToolItem[];
+  postedPromptHistory?: PostedPromptRecord[];
 }
 
 // --- Pre-populated default sources ---
@@ -224,15 +243,17 @@ const DEFAULT_SOURCES: SourceItem[] = [
 ];
 
 const DEFAULT_AI_PROMPTS: AiPrompt[] = [
+  // 1. Pixar & 3D Disney Character Styles
   {
-    id: 'prompt-1',
-    title: 'پرتره مدلینگ فشن استودیویی سونی آلفا (Midjourney v6)',
+    id: 'prompt-pixar-1',
+    title: 'تبدیل عکس چهره به کاراکتر انیمیشنی ۳ بعدی پیکسار',
     category: 'image',
-    styleCategory: 'photography',
-    description: 'پرتره کلوزآپ فوق‌العاده باکیفیت و هایپررئالیستیک با شبیه‌سازی دقیق سنسور فول‌فریم Sony A7III و نورپردازی حرفه‌ای استودیو مد.',
-    promptText: 'close-up of a stunning fashion model, ultra-realistic, portrait, shot on a Sony A7III, 85mm lens, f/1.4, cinematic studio lighting, high quality --ar 35:64 --stylize 250 --v 6.0',
+    styleCategory: 'pixar',
+    description: 'ترند محبوب برای تبدیل چهره واقعی به کاراکتر انیمیشنی دوست‌داشتنی سبک پیکسار با چشمان درخشان و بافت خمیری لطیف.',
+    promptText: '3D Pixar Disney style animated character of a person, expressive sparkling eyes, soft cinematic rim lighting, warm joyful colors, smooth claymation render, octane render, Unreal Engine 5, 8k --ar 9:16 --v 6.0',
     imageUrl: 'https://cdn.prompthero.com/9qbfr7mlnt8sn7yp01pw02z7ez1r-midjourney-6-close-up-of-a-stunning-fashion-model-ultra-realistic-portrait-shot-on-a-sony-a7iii-high-quality-ar-3564-stylize.png',
-    tags: ['میدجرنی', 'عکاسی_مدلینگ', 'سونی_آلفا', 'فوتورئال'],
+    tipsForPersonalPhoto: 'یک عکس سلفی یا پرتره با لبخند و نور ملایم از چهره خود انتخاب کنید.',
+    tags: ['پیکسار', 'دیزنی', 'انیمیشن_۳بعدی', 'تبدیل_چهره'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
@@ -241,14 +262,15 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     postedAt: null
   },
   {
-    id: 'prompt-2',
-    title: 'پرتره دختر با تم دوربین پولاروید نوستالژیک (Midjourney v6)',
+    id: 'prompt-pixar-2',
+    title: 'کودک خردسال با لباس فضانوردی سبک انیمیشن پیکسار',
     category: 'image',
-    styleCategory: 'vintage',
-    description: 'عکاسی چهره با رنگ‌های ملایم و نوستالژیک دوربین آنالوگ پولاروید، شبیه‌سازی بافت دانه‌بندی فیلم (Grain) و بوکه جذاب.',
-    promptText: 'Japanese girl, 18-21 years old, brown hair, high-quality photo portrait, shot on a Polaroid camera, natural lighting, subtle film grain, double eyelid --ar 9:16 --v 6.0',
+    styleCategory: 'pixar',
+    description: 'کاراکتر فانتزی کودک در لباس فضانوردی درخشان با بازتاب کهکشان و سیاره‌ها در کلاه ایمنی و طراحی بامزه دیزنی.',
+    promptText: 'cute toddler astronaut floating in space, Pixar 3D animation style, oversized astronaut helmet reflecting colorful nebulae, chubby cheeks, wonder in eyes, cinematic volumetric lighting, 8k --ar 1:1 --v 6.0',
     imageUrl: 'https://cdn.prompthero.com/xjsos7jl5jltflxms50aa37a4bw5-midjourney-6-japanese-girl-18-21-years-old-brown-hair-high-quality-photo-portrait-shot-on-a-polaroid-camera-double-eyelid-ar.png',
-    tags: ['پولاروید', 'پرتره_آنالوگ', 'میدجرنی', 'نوستالژی'],
+    tipsForPersonalPhoto: 'عکس کودک یا پرتره نوزاد را به عنوان رفرنس چهره ارسال فرمایید.',
+    tags: ['پیکسار', 'کودک', 'فضانورد', 'فانتزی'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
@@ -257,30 +279,34 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     postedAt: null
   },
   {
-    id: 'prompt-3',
-    title: 'عکاسی فشن پرتره تضاد و سیلوئت نئونی (Midjourney v6)',
+    id: 'prompt-pixar-3',
+    title: 'سگ وفادار خانگی در دنیای جادویی انیمیشن دیزنی',
     category: 'image',
-    styleCategory: 'neon',
-    description: 'عکاسی مدرن با پس‌زمینه هات‌پینک (سرخابی پررنگ)، تضاد شدید نوری (High Contrast) و خطوط هندسی سیلوئت صورت.',
-    promptText: 'photography, portrait of contrast, profile silhouette of a woman, vibrant hot pink backdrop, visual depth, high fashion, sharp focus, 8k resolution --ar 3:4 --v 6.0',
+    styleCategory: 'pixar',
+    description: 'تبدیل عکس حیوان خانگی به شخصیت اصلی داستان‌های ماجراجویانه انیمیشنی با موهای پرپشت و چشمان زنده.',
+    promptText: 'adorable golden retriever dog looking curiously, Pixar animation style, highly detailed fur shader, soft studio light, warm golden hour sunbeams, Disney character render --ar 4:5 --v 6.0',
     imageUrl: 'https://cdn.prompthero.com/7nqvhyrmf607ngkesub1l7kxc9j3-midjourney-6-chroma-portrait.png',
-    tags: ['سیلوئت', 'های_فشن', 'نئونی', 'میدجرنی'],
-    importance: 'hot',
+    tipsForPersonalPhoto: 'عکس نزدیک و باکیفیت از حیوان خانگی یا پرتره چهره خودتان در کنار پت آپلود کنید.',
+    tags: ['پیکسار', 'پت', 'سگ', 'دیزنی_حیوانات'],
+    importance: 'normal',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
     postedToChannel1: false,
     postedToChannel2: false,
     postedAt: null
   },
+
+  // 2. Family, Kids & Parents Styles
   {
-    id: 'prompt-4',
-    title: 'عکاسی ادیتوریال فشن با دوربین هاسلبلاد (Midjourney v6)',
+    id: 'prompt-family-1',
+    title: 'پرتره گرم و صمیمی خانوادگی در کلبه چوبی پاییزی',
     category: 'image',
-    styleCategory: 'editorial',
-    description: 'شات بالاتنه ادیتوریال فشن مجلات بین‌المللی با دوربین قطع متوسط هاسلبلاد و رندر شگفت‌انگیز جزئیات لباس و چهره.',
-    promptText: 'fashion editorial photography, front shot, upper body, professional female model, shot with hasselblad, soft directional lighting, luxury styling --ar 9:16 --v 6.0',
+    styleCategory: 'family',
+    description: 'عکاسی احساسی خانوادگی کنار شومینه با نور ملایم شمع، بافت‌های بافتنی گرم و لبخندهای طبیعی و دلنشین.',
+    promptText: 'heartwarming family portrait, parents and children sitting together by a cozy stone fireplace in a wooden cabin, autumn afternoon glow, cinematic soft focus, authentic happy emotions, Hasselblad X2D 100C, 8k --ar 16:9 --v 6.0',
     imageUrl: 'https://cdn.prompthero.com/zgkq5uftglj1q0xkl07ycr2n839i-midjourney-6-model-portrait.png',
-    tags: ['هاسلبلاد', 'ادیتوریال', 'مد_و_فشن', 'میدجرنی'],
+    tipsForPersonalPhoto: 'یک عکس دسته‌جمعی خانوادگی با کادربندی افقی را برای ترکیب ارسال کنید.',
+    tags: ['خانوادگی', 'کلبه_چوبی', 'پاییز', 'پرتره_احساسی'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
@@ -289,28 +315,15 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     postedAt: null
   },
   {
-    id: 'prompt-5',
-    title: 'کاراکتر سه‌بعدی دیزنی / پیکسار با رندر سینمایی (FLUX.1 / Midjourney)',
+    id: 'prompt-family-2',
+    title: 'پرتره مادر و فرزندی با تم فرشتگان و گل‌های بهاری',
     category: 'image',
-    styleCategory: '3d-animation',
-    description: 'ساخت کاراکتر فانتزی و دوست‌داشتنی سبک انیمیشن‌های برتر پیکسار با نورپردازی گرم، جزییات چشم‌نواز موها و متریال واقع‌گرایانه.',
-    promptText: 'cute stylized 3D character in Pixar animation style, big expressive eyes, soft warm rim lighting, highly detailed fur and clothing textures, octane render, Unreal Engine 5 cinematic --ar 1:1 --v 6.0',
-    tags: ['پیکسار', 'سه_بعدی', 'انیمیشن', 'کاراکتر'],
-    importance: 'hot',
-    createdAt: new Date().toISOString(),
-    postedToChannel: false,
-    postedToChannel1: false,
-    postedToChannel2: false,
-    postedAt: null
-  },
-  {
-    id: 'prompt-6',
-    title: 'طراحی لوگو مینیمال و نشان تجاری لوکس با خطوط طلایی',
-    category: 'image',
-    styleCategory: 'branding',
-    description: 'پرامپت تخصصی ساخت لوگو و آیکون اپلیکیشن مدرن، وکتور مینیمال با تایپوگرافی تمیز و پالت رنگی مشکی و طلایی متالیک.',
-    promptText: 'minimalist modern brand logo, geometric falcon emblem, clean sharp lines, gold metallic foil on matte black background, vector design, flat 2D graphic design, Behance trending --no realistic photo --v 6.0',
-    tags: ['لوگو', 'گرافیک', 'برندینگ', 'مینیمال'],
+    styleCategory: 'family',
+    description: 'عکاسی هنری در آتلیه با هاله‌ای از گل‌های پیونی و رز ملایم، نورپردازی بهشتی و بافت رویایی.',
+    promptText: 'fine art mother and baby portrait, ethereal pastel flower garland, heavenly soft halo lighting, gentle embrace, tender maternal love, painterly fine-art photography, 85mm f/1.2 lens, 8k --ar 4:5 --v 6.0',
+    imageUrl: 'https://cdn.prompthero.com/9qbfr7mlnt8sn7yp01pw02z7ez1r-midjourney-6-close-up-of-a-stunning-fashion-model-ultra-realistic-portrait-shot-on-a-sony-a7iii-high-quality-ar-3564-stylize.png',
+    tipsForPersonalPhoto: 'عکس آغوش مادر و فرزند با نگاه‌های آرام بهترین نتیجه را به همراه دارد.',
+    tags: ['مادر_و_کودک', 'بهاری', 'هنری', 'پرتره_بهشتی'],
     importance: 'normal',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
@@ -318,14 +331,18 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     postedToChannel2: false,
     postedAt: null
   },
+
+  // 3. Romantic Couple & Wedding Styles
   {
-    id: 'prompt-7',
-    title: 'عکاسی ماکرو سینمایی از چشم انسان با کهکشان کیهانی',
+    id: 'prompt-couple-1',
+    title: 'پرتره عاشقانه دونفره زیر باران پاریس با چتر شیشه‌ای',
     category: 'image',
-    styleCategory: 'sci-fi',
-    description: 'نمای نزدیک فوق‌العاده از عنبیه چشم که گویی کل کهکشان و ستارگان درون آن می‌درخشند با جزئیات میکروسکوپی و بازتاب نوری.',
-    promptText: 'extreme macro photography of human eye iris, glowing nebula and galaxy reflection inside the pupil, bioluminescent details, shot on Canon MP-E 65mm, hyper-detailed, 8k --ar 16:9 --v 6.0',
-    tags: ['ماکرو', 'کیهان', 'چشم', 'سینمایی'],
+    styleCategory: 'couple',
+    description: 'شات سینمایی رمانتیک در خیابان‌های سنگفرش شبانه با انعکاس نور چراغ‌های کلاسیک شهری و قطرات معلق باران.',
+    promptText: 'romantic cinematic couple portrait walking under a transparent umbrella on a rainy Paris cobblestone street, amber street lamp glow reflecting on wet pavement, loving eye contact, 35mm film still, masterpiece --ar 16:9 --v 6.0',
+    imageUrl: 'https://cdn.prompthero.com/7nqvhyrmf607ngkesub1l7kxc9j3-midjourney-6-chroma-portrait.png',
+    tipsForPersonalPhoto: 'یک عکس دونفره سلفی یا قدی با همسرتان آپلود کنید.',
+    tags: ['عاشقانه', 'دونفره', 'باران_پاریس', 'سینمایی'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
@@ -334,28 +351,15 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     postedAt: null
   },
   {
-    id: 'prompt-8',
-    title: 'طراحی معماری ویلای مدرن بتنی و شیشه‌ای در دل جنگل بارانی',
+    id: 'prompt-couple-2',
+    title: 'عکاسی نامزدی و فرمالیته ساحلی در ساعت طلایی غروب',
     category: 'image',
-    styleCategory: 'architecture',
-    description: 'رندر معماری مدرن ویلای لوکس با استخر بی‌انتها (Infinity Pool)، ترکیب متریال بتن اکسپوز، چوب ترمووود و گیاهان استوایی.',
-    promptText: 'architectural digest photography, modern luxury villa made of glass and raw concrete, situated in a misty pine forest, infinity pool reflecting dusk sky, architectural lighting, photorealistic --ar 16:9 --v 6.0',
-    tags: ['معماری', 'طراحی_داخلی', 'ویلا', 'رندر'],
-    importance: 'normal',
-    createdAt: new Date().toISOString(),
-    postedToChannel: false,
-    postedToChannel1: false,
-    postedToChannel2: false,
-    postedAt: null
-  },
-  {
-    id: 'prompt-9',
-    title: 'پرامپت مهندسی چت‌جی‌پی‌تی برای تبدیل به برنامه‌نویس ارشد (Senior Full-Stack)',
-    category: 'chat',
-    styleCategory: 'coding',
-    description: 'پرامپت سیستمی برای تبدیل هوش مصنوعی به یک معمار ارشد نرم‌افزار جهت دیباگ کدهای پیچیده، بهینه‌سازی الگوریتم‌ها و نوشتن تست.',
-    promptText: 'Act as a Principal Software Architect with 15+ years experience. Analyze the following code for: 1) Performance bottlenecks, 2) Security vulnerabilities (OWASP Top 10), 3) Architectural anti-patterns. Provide refactored clean code with TypeScript types and unit tests.',
-    tags: ['کدنویسی', 'چت_جی_پی_تی', 'برنامه‌نویسی', 'پرامپت_متنی'],
+    styleCategory: 'couple',
+    description: 'شات ادیتوریال عروسی و نامزدی با باد ملایم ساحلی، موهای مواج در باد و نور گرم و درخشان افق دریا.',
+    promptText: 'editorial wedding couple photoshoot on a scenic coastal cliff at golden hour sunset, ocean breeze catching her flowing dress, romantic silhouette with warm rim backlight, shot on Leica SL2, 50mm Summilux --ar 9:16 --v 6.0',
+    imageUrl: 'https://cdn.prompthero.com/xjsos7jl5jltflxms50aa37a4bw5-midjourney-6-japanese-girl-18-21-years-old-brown-hair-high-quality-photo-portrait-shot-on-a-polaroid-camera-double-eyelid-ar.png',
+    tipsForPersonalPhoto: 'عکس دونفره در فضای باز با پس‌زمینه ساده بهترین هماهنگی را ایجاد می‌کند.',
+    tags: ['فرمالیته', 'عروسی', 'ساحل', 'ساعت_طلایی'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
@@ -363,14 +367,18 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     postedToChannel2: false,
     postedAt: null
   },
+
+  // 4. Cyberpunk & Sci-Fi Styles
   {
-    id: 'prompt-10',
-    title: 'طراحی صحنه سایبرپانک بارانی توکیو با ماشین‌های پرنده (Midjourney v6)',
+    id: 'prompt-cyberpunk-1',
+    title: 'پرتره سایبرپانک هکر مدرن با نورهای نئونی بارانی توکیو',
     category: 'image',
     styleCategory: 'cyberpunk',
-    description: 'فضای پر از نورهای نئونی بارانی در خیابان‌های آینده‌نگر توکیو با بازتاب روی آسفالت خیس و جو اتمسفریک سبک بلید رانر.',
-    promptText: 'cyberpunk Tokyo street at rainy midnight, neon sign reflections on wet asphalt, flying holographic vehicles, moody cinematic haze, volumetric lighting, shot on 35mm anamorphic lens, blade runner aesthetic --ar 16:9 --v 6.0',
-    tags: ['سایبرپانک', 'نئون', 'سینمایی', 'توکیو'],
+    description: 'شات سایبرپانک با ژاکت فناوری بالا (Techwear)، بازتاب‌های رنگی نئون بنفش و فیروزه‌ای روی صورت و نمایشگر هولوگرافیک.',
+    promptText: 'close-up portrait of a cyberpunk hacker in futuristic techwear jacket, rainy neo-Tokyo street backdrop, glowing cyan and magenta holographic HUD interface, moody atmosphere, blade runner vibe, 8k --ar 9:16 --v 6.0',
+    imageUrl: 'https://cdn.prompthero.com/7nqvhyrmf607ngkesub1l7kxc9j3-midjourney-6-chroma-portrait.png',
+    tipsForPersonalPhoto: 'یک عکس پرتره با نگاه جدی و نور با کنتراست بالا ارسال فرمایید.',
+    tags: ['سایبرپانک', 'نئون', 'هکر', 'آینده_نگر'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
@@ -379,13 +387,15 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     postedAt: null
   },
   {
-    id: 'prompt-11',
-    title: 'پرامپت استراتژیست بازاریابی و فروش محتوایی اینستاگرام (ChatGPT / Claude)',
-    category: 'chat',
-    styleCategory: 'marketing',
-    description: 'پرامپت ساخت تقویم محتوایی ۳۰ روزه ویرال با قلاب‌های روانشناسی (Hook)، متن کپشن ترغیب‌کننده و کال تو اکشن (CTA) قوی.',
-    promptText: 'Act as an elite Social Media Growth Strategist. Create a 30-day viral content calendar for [Topic/Niche]. For each day provide: 1) Irresistible 3-second hook, 2) Core value delivery script, 3) High-converting CTA, 4) Visual storyboarding suggestions.',
-    tags: ['اینستاگرام', 'مارکتینگ', 'تولید_محتوا', 'چت_جی_پی_تی'],
+    id: 'prompt-cyberpunk-2',
+    title: 'پرتره رباتیک سایبورگ با اجزای فیبر کربن و طلا',
+    category: 'image',
+    styleCategory: 'cyberpunk',
+    description: 'ترکیب اعجاب‌انگیز بافت پوست انسان با قطعات الکترومکانیکی فیبر کربن و رگه‌های طلای مایع متالیک.',
+    promptText: 'haute-couture cyborg portrait, half human face blending seamlessly into polished obsidian carbon fiber and liquid gold circuitry, subtle bioluminescent LED accents, cinematic studio lighting, photorealistic --ar 4:5 --v 6.0',
+    imageUrl: 'https://cdn.prompthero.com/zgkq5uftglj1q0xkl07ycr2n839i-midjourney-6-model-portrait.png',
+    tipsForPersonalPhoto: 'پرتره مستقیم از روبرو با وضوح بالا برای بهترین تفکیک سایبورگ پیشنهاد می‌شود.',
+    tags: ['سایبورگ', 'فیبر_کربن', 'مدرن', 'علمی_تخیلی'],
     importance: 'normal',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
@@ -393,29 +403,18 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     postedToChannel2: false,
     postedAt: null
   },
+
+  // 5. Royal & Classical Oil Painting
   {
-    id: 'prompt-12',
-    title: 'عکاسی تبلیغاتی محصول عطر لوکس با اسپلش قطرات آب (Midjourney v6)',
+    id: 'prompt-royal-1',
+    title: 'پرتره نقاشی رنگ‌روغن پادشاهی رنسانس با شنل مخمل و تاج زرین',
     category: 'image',
-    styleCategory: 'product',
-    description: 'شات تبلیغاتی کامرشیال بطری عطر شیشه‌ای کریستال روی سنگ بازالت تیره با پاشش آب اسلوموشن و نورپردازی استودیو.',
-    promptText: 'commercial product photography of a luxury crystal perfume bottle standing on wet black basalt rock, dynamic water splash frozen in motion, studio rim lighting, luxury advertising, crystal clear reflections, 8k --ar 4:5 --v 6.0',
-    tags: ['عکاسی_محصول', 'تبلیغات', 'لوکس', 'اسپلش'],
-    importance: 'normal',
-    createdAt: new Date().toISOString(),
-    postedToChannel: false,
-    postedToChannel1: false,
-    postedToChannel2: false,
-    postedAt: null
-  },
-  {
-    id: 'prompt-13',
-    title: 'تصویرسازی فانتزی کوهستان جادویی در سبک انیمه استودیو جیبلی',
-    category: 'image',
-    styleCategory: 'anime',
-    description: 'نقاشی دست‌ساز اتمسفریک و خیال‌انگیز به سبک هایائو میازاکی با ابرهای پف‌دار، چمنزارهای سبز مواج و قلعه‌های باستانی شناور.',
-    promptText: 'Studio Ghibli style landscape painting, floating ancient castle on lush green hills, dramatic fluffy cumulus clouds, Hayao Miyazaki aesthetic, warm sunlight, watercolor texture, masterpiece --ar 16:9 --v 6.0',
-    tags: ['جیبلی', 'انیمه', 'تصویرسازی', 'طبیعت'],
+    styleCategory: 'royal',
+    description: 'پرتره اشرافی سبک نقاشان بزرگ قرن هفدهم با قلم‌موهای بافت‌دار، شنل مخمل سرخ، جواهرات سلطنتی و کنتراست رامبراند.',
+    promptText: 'magnificent royal renaissance oil painting portrait, wearing an ornate crimson velvet cape embroidered with golden filigree, antique jewel-encrusted crown, dramatic Rembrandt chiaroscuro lighting, textured canvas oil paint impasto --ar 3:4 --v 6.0',
+    imageUrl: 'https://cdn.prompthero.com/9qbfr7mlnt8sn7yp01pw02z7ez1r-midjourney-6-close-up-of-a-stunning-fashion-model-ultra-realistic-portrait-shot-on-a-sony-a7iii-high-quality-ar-3564-stylize.png',
+    tipsForPersonalPhoto: 'عکس رسمی با کت، پیراهن یقه دار یا استایل مجلسی بهترین جلوه را به تصویر می‌دهد.',
+    tags: ['سلطنتی', 'رنگ_روغن', 'رنسانس', 'رامبراند'],
     importance: 'hot',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
@@ -424,28 +423,15 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     postedAt: null
   },
   {
-    id: 'prompt-14',
-    title: 'پرامپت دستیار تولید مقاله سئو شده و بهینه برای گوگل (Rank #1 SEO Specialist)',
-    category: 'chat',
-    styleCategory: 'seo',
-    description: 'پرامپت جامع برای نگارش مقالات فوق تخصصی سئو با رعایت تگ‌های H2/H3، چگالی کلمات کلیدی، ساخت جدول، سوالات متداول (FAQ) و اسکیما.',
-    promptText: 'Act as a top-tier SEO Copywriter. Write an in-depth 2000-word comprehensive guide on [Keyword]. Include: 1) Meta Title & Description, 2) Search Intent breakdown, 3) Structured H2/H3 outline with semantic LSI keywords, 4) Comparison tables, 5) FAQ section with Schema markup readiness.',
-    tags: ['سئو', 'تولید_محتوا', 'چت_جی_پی_تی', 'رنک_گوگل'],
-    importance: 'normal',
-    createdAt: new Date().toISOString(),
-    postedToChannel: false,
-    postedToChannel1: false,
-    postedToChannel2: false,
-    postedAt: null
-  },
-  {
-    id: 'prompt-15',
-    title: 'عکاسی حیات وحش کلوزآپ شاهین شکاری با لنز تله ۶۰۰ میلی‌متر',
+    id: 'prompt-royal-2',
+    title: 'پرتره ملکه ویکتوریایی با گردنبند زمرد و الماس در قصر اشرافی',
     category: 'image',
-    styleCategory: 'wildlife',
-    description: 'شکار لحظه‌ای فرود شاهین شکاری با پرهای فوق‌العاده واضح، چشمان خیره‌کننده و پس‌زمینه محو نرم (Creamy Bokeh).',
-    promptText: 'national geographic wildlife photography, peregrine falcon diving down, razor-sharp feather details, piercing amber eyes, shot on Sony FE 600mm f/4 GM OSS, high shutter speed, beautiful golden hour bokeh --ar 16:9 --v 6.0',
-    tags: ['حیات_وحش', 'نشنال_جئوگرافیک', 'شاهین', 'تله_فوتو'],
+    styleCategory: 'royal',
+    description: 'شکوه و جلال درباری با لباس تور گیپور دوزی شده دست‌ساز، تالار آینه‌های سلطنتی و نور ملایم چلچراغ‌های کریستالی.',
+    promptText: 'Victorian aristocrat noblewoman portrait, standing in a grand palace ballroom with crystal chandeliers, wearing an emerald green silk ballgown with intricate lace, emerald tiara, oil on canvas masterpiece --ar 4:5 --v 6.0',
+    imageUrl: 'https://cdn.prompthero.com/zgkq5uftglj1q0xkl07ycr2n839i-midjourney-6-model-portrait.png',
+    tipsForPersonalPhoto: 'پرتره با نگاه مستقیم و موهای آراسته ایده‌آل است.',
+    tags: ['ویکتوریایی', 'ملکه', 'زمرد', 'قصر'],
     importance: 'normal',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
@@ -453,21 +439,79 @@ const DEFAULT_AI_PROMPTS: AiPrompt[] = [
     postedToChannel2: false,
     postedAt: null
   },
+
+  // 6. Artistic, Anime & Studio Ghibli
   {
-    id: 'prompt-16',
-    title: 'پرامپت تدوین استراتژی کسب‌وکار و تحلیل ماتریس SWOT و رقبا',
-    category: 'chat',
-    styleCategory: 'business',
-    description: 'پرامپت مشاور استراتژیک برای تحلیل جامع مدل کسب‌وکار، نقاط قوت/ضعف، فرصت‌ها/تهدیدها و خلق ارزش پیشنهادی یکتا (UVP).',
-    promptText: 'Act as a McKinsey Senior Business Consultant. Conduct a rigorous strategic analysis for [Business Idea/Company]. Deliver: 1) Deep SWOT Matrix, 2) Competitor Moat breakdown, 3) Unique Value Proposition, 4) Monetization roadmap with risk mitigation.',
-    tags: ['بیزنس', 'استراتژی', 'کسب_و_کار', 'چت_جی_پی_تی'],
+    id: 'prompt-artistic-1',
+    title: 'نقاشی آبرنگی رویایی در دنیای جادویی انیمه استودیو جیبلی',
+    category: 'image',
+    styleCategory: 'artistic',
+    description: 'ترکیب چهره در سبک تصویرسازی نوستالژیک هایائو میازاکی، دشت‌های سرسبز، گل‌های وحشی و آسمان آبی با ابرهای پف‌دار.',
+    promptText: 'Studio Ghibli aesthetic anime portrait, surrounded by blowing wild meadow flowers, dramatic fluffy cumulus clouds in brilliant cyan sky, Hayao Miyazaki hand-painted watercolor art style, warm nostalgic sunshine, 8k --ar 16:9 --v 6.0',
+    imageUrl: 'https://cdn.prompthero.com/xjsos7jl5jltflxms50aa37a4bw5-midjourney-6-japanese-girl-18-21-years-old-brown-hair-high-quality-photo-portrait-shot-on-a-polaroid-camera-double-eyelid-ar.png',
+    tipsForPersonalPhoto: 'سلفی با لبخند طبیعی در فضای روشن روز بهترین هارمونی را ایجاد خواهد کرد.',
+    tags: ['جیبلی', 'انیمه', 'آبرنگ', 'میازاکی'],
+    importance: 'hot',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-artistic-2',
+    title: 'پرتره امپرسیونیستی سبک شب پرستاره وینسنت ون‌گوگ',
+    category: 'image',
+    styleCategory: 'artistic',
+    description: 'ضربه قلم‌موهای ضخیم مواج، مارپیچ‌های چرخان زرد و آبی کبالت سبک نقاشی مشهور ون‌گوگ روی چهره.',
+    promptText: 'Vincent van Gogh Starry Night oil painting portrait, swirling vibrant cobalt blue and cadmium yellow impasto brush strokes, expressive textured oil paint, starry night sky backdrop, post-impressionist masterpiece --ar 1:1 --v 6.0',
+    imageUrl: 'https://cdn.prompthero.com/7nqvhyrmf607ngkesub1l7kxc9j3-midjourney-6-chroma-portrait.png',
+    tipsForPersonalPhoto: 'عکس پرتره با وضوح بالا تا خطوط امپرسیونیستی روی صورت جلوه‌ای هنری پیدا کنند.',
+    tags: ['ونگوگ', 'امپرسیونیسم', 'شب_پرستاره', 'رنگ_روغن'],
     importance: 'normal',
     createdAt: new Date().toISOString(),
     postedToChannel: false,
     postedToChannel1: false,
     postedToChannel2: false,
     postedAt: null
-  }
+  },
+
+  // 7. Studio Fashion & Modeling
+  {
+    id: 'prompt-fashion-1',
+    title: 'عکاسی مجله ووگ با دوربین مدیوم فرمت هاسلبلاد و نور سافت',
+    category: 'image',
+    styleCategory: 'fashion',
+    description: 'شات فشن ادیتوریال مجلات بین‌المللی با رزولوشن میکروسکوپی، بافت طبیعی پوست، استایل مینیمال و نورپردازی حرفه‌ای استودیو.',
+    promptText: 'high-fashion Vogue cover portrait, professional studio model, shot on Hasselblad H6D-100c, 100mm f/2.2 lens, ultra-sharp skin texture, soft diffused beauty dish lighting, elegant minimalist styling --ar 3:4 --v 6.0',
+    imageUrl: 'https://cdn.prompthero.com/9qbfr7mlnt8sn7yp01pw02z7ez1r-midjourney-6-close-up-of-a-stunning-fashion-model-ultra-realistic-portrait-shot-on-a-sony-a7iii-high-quality-ar-3564-stylize.png',
+    tipsForPersonalPhoto: 'سلفی یا عکس پرتره با زمینه تک‌رنگ و نور مستقیم برای بهترین رندر مجله‌ای.',
+    tags: ['ووگ', 'مدلینگ', 'هاسلبلاد', 'فشن_استودیو'],
+    importance: 'hot',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  {
+    id: 'prompt-fashion-2',
+    title: 'پرتره کلاسیک با دوربین پولاروید دهه ۹۰ و دانه‌بندی گرین نوستالژیک',
+    category: 'image',
+    styleCategory: 'fashion',
+    description: 'حس نوستالژی فیلم‌های آنالوگ با رنگ‌های پاستلی گرم، خطای اپتیکی وینتیج و فوکوس نرم دوربین‌های فوری پولاروید.',
+    promptText: '90s vintage Polaroid photo portrait, natural window lighting, candid expression, authentic film grain texture, faded pastel colors, double exposure aura, nostalgic retro aesthetic --ar 9:16 --v 6.0',
+    imageUrl: 'https://cdn.prompthero.com/xjsos7jl5jltflxms50aa37a4bw5-midjourney-6-japanese-girl-18-21-years-old-brown-hair-high-quality-photo-portrait-shot-on-a-polaroid-camera-double-eyelid-ar.png',
+    tipsForPersonalPhoto: 'یک عکس خودمانی و صمیمی بدون فیلتر مصنوعی جهت شبیه‌سازی پولاروید.',
+    tags: ['پولاروید', 'وینتیج', 'دهه۹۰', 'عکاسی_آنالوگ'],
+    importance: 'hot',
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedToChannel1: false,
+    postedToChannel2: false,
+    postedAt: null
+  },
+  ...EXTENDED_AI_PROMPTS
 ];
 
 const DEFAULT_KNOWN_APP_URL = 'https://ais-dev-3wfduwtghl6fqrseyhtp5l-217900666396.europe-west2.run.app';
@@ -581,9 +625,16 @@ const DEFAULT_CHANNEL2_SETTINGS: SecondaryChannelSettings = {
   targetChannel: '',
   adText: 'کانال دوم ما: @MyChannel2',
   silentMode: true,
-  antiFloodDelayMinutes: 3,
+  antiFloodDelayMinutes: 5,
   lastAnyPostAt: null,
   lastPostedAt: null,
+
+  // Smart Channel Growth, Traffic & Anti-Churn Controls
+  maxDailyPosts: 6, // Maximum 6 posts per day to prevent spam
+  minPostSpacingMinutes: 120, // At least 2 hours between ANY post in Channel 2
+  smartGoldenHours: true, // Prioritize peak Iranian hours (12:30-14:30, 18:00-20:30, 21:30-23:45)
+  sleepHoursProtection: true, // Halt auto-posts during sleeping hours (00:30 - 08:30 Tehran time)
+  singlePostMode: true, // Enforce strictly 1 telegram message per post
 
   // Dedicated Glass / Inline Button for Channel 2
   inlineButtonEnabled: true,
@@ -623,7 +674,14 @@ const DEFAULT_CHANNEL2_SETTINGS: SecondaryChannelSettings = {
   aiPromptsIntervalHours: 6,
   aiPromptsIntervalMinutes: 360,
   aiPromptsCount: 1,
-  lastAiPromptsPostedAt: null
+  lastAiPromptsPostedAt: null,
+
+  digitalToolsEnabled: false,
+  digitalToolsIntervalHours: 6,
+  digitalToolsIntervalMinutes: 360,
+  digitalToolsCount: 1,
+  digitalToolsCategories: ['ai_tools', 'cool_websites', 'mobile_hacks', 'cyber_security', 'must_apps'],
+  lastDigitalToolsPostedAt: null
 };
 
 const DEFAULT_AUTO_POST: AutoPostSettings = {
@@ -635,8 +693,15 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   includeTechImportanceBadge: true,
   autoPurgeOldTechDays: 7,
   lastPostedAt: null,
-  antiFloodDelayMinutes: 3,
+  antiFloodDelayMinutes: 5,
   lastAnyPostAt: null,
+
+  // Smart Channel Growth, Traffic & Anti-Churn Controls
+  maxDailyPosts: 4, // Maximum 4 posts per day for Channel 1 (Tech & Configs)
+  minPostSpacingMinutes: 180, // Minimum 3 hours between ANY post in Channel 1
+  smartGoldenHours: true, // Prioritize peak Iranian hours
+  sleepHoursProtection: true, // Halt auto-posts during sleeping hours (00:30 - 08:30 Tehran time)
+  singlePostMode: true, // Strictly 1 telegram message per drop (no duplicate files/messages at the same minute)
 
   // 1. Configs & Proxies Schedule
   configsEnabled: true,
@@ -650,8 +715,8 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
 
   // 2. Tech News Schedule
   techNewsEnabled: false,
-  techNewsIntervalHours: 4,
-  techNewsIntervalMinutes: 240,
+  techNewsIntervalHours: 6,
+  techNewsIntervalMinutes: 360,
   techNewsCount: 2,
   lastTechNewsPostedAt: null,
 
@@ -671,10 +736,18 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
 
   // 5. Fun & General News Schedule (Channel 1)
   funNewsEnabled: false,
-  funNewsIntervalHours: 3,
-  funNewsIntervalMinutes: 180,
+  funNewsIntervalHours: 4,
+  funNewsIntervalMinutes: 240,
   funNewsCount: 1,
   lastFunNewsPostedAt: null,
+
+  // 6. Future-Proof Digital Tools & AI Toolbox (Channel 1 Independence from Filter/Proxy)
+  digitalToolsEnabled: true,
+  digitalToolsIntervalHours: 4,
+  digitalToolsIntervalMinutes: 240,
+  digitalToolsCount: 1,
+  digitalToolsCategories: ['ai_tools', 'cool_websites', 'mobile_hacks', 'cyber_security', 'must_apps'],
+  lastDigitalToolsPostedAt: null,
 
   // Dedicated Glass / Inline Button for Channel 1
   inlineButtonEnabled: true,
@@ -793,6 +866,28 @@ function loadDatabase() {
       ? loadedDataStore.aiPrompts
       : (Array.isArray(loadedSettings?.aiPrompts) ? loadedSettings.aiPrompts : DEFAULT_AI_PROMPTS);
 
+    // Merge new extended prompts if they don't exist yet
+    for (const extP of EXTENDED_AI_PROMPTS) {
+      if (!finalAiPrompts.some(p => p.id === extP.id || p.title === extP.title)) {
+        finalAiPrompts.push({ ...extP });
+      }
+    }
+
+    const finalDigitalTools = Array.isArray(loadedDataStore?.digitalTools) && loadedDataStore.digitalTools.length > 0
+      ? loadedDataStore.digitalTools
+      : [...DEFAULT_DIGITAL_TOOLS];
+
+    // Merge any missing default digital tools
+    for (const dt of DEFAULT_DIGITAL_TOOLS) {
+      if (!finalDigitalTools.some(t => t.id === dt.id || t.title === dt.title)) {
+        finalDigitalTools.push({ ...dt });
+      }
+    }
+
+    const finalPostedPromptHistory = Array.isArray(loadedDataStore?.postedPromptHistory)
+      ? loadedDataStore.postedPromptHistory
+      : [];
+
     const finalFunSources = Array.isArray(loadedSettings?.funSources)
       ? loadedSettings.funSources
       : (Array.isArray(loadedDataStore?.funSources) ? loadedDataStore.funSources : DEFAULT_FUN_SOURCES);
@@ -801,8 +896,64 @@ function loadDatabase() {
       ? loadedDataStore.funNewsItems
       : DEFAULT_FUN_NEWS_ITEMS;
 
+    const finalPostHistory = Array.isArray(loadedDataStore?.channelPostHistory)
+      ? loadedDataStore.channelPostHistory
+      : (Array.isArray(loadedSettings?.channelPostHistory) ? loadedSettings.channelPostHistory : []);
+
     if (!finalSettings.autoPost.channel2) {
       finalSettings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
+    }
+
+    // Ensure Channel 1 growth & anti-flood guard settings
+    if (typeof finalSettings.autoPost.maxDailyPosts === 'undefined' || finalSettings.autoPost.maxDailyPosts <= 0) {
+      finalSettings.autoPost.maxDailyPosts = 4;
+    }
+    if (typeof finalSettings.autoPost.minPostSpacingMinutes === 'undefined' || finalSettings.autoPost.minPostSpacingMinutes < 60) {
+      finalSettings.autoPost.minPostSpacingMinutes = 180;
+    }
+    if (typeof finalSettings.autoPost.smartGoldenHours === 'undefined') {
+      finalSettings.autoPost.smartGoldenHours = true;
+    }
+    if (typeof finalSettings.autoPost.sleepHoursProtection === 'undefined') {
+      finalSettings.autoPost.sleepHoursProtection = true;
+    }
+    if (typeof finalSettings.autoPost.singlePostMode === 'undefined') {
+      finalSettings.autoPost.singlePostMode = true;
+    }
+    if (typeof finalSettings.autoPost.digitalToolsEnabled === 'undefined') {
+      finalSettings.autoPost.digitalToolsEnabled = true;
+    }
+    if (typeof finalSettings.autoPost.digitalToolsCount === 'undefined') {
+      finalSettings.autoPost.digitalToolsCount = 1;
+    }
+    if (typeof finalSettings.autoPost.digitalToolsIntervalHours === 'undefined') {
+      finalSettings.autoPost.digitalToolsIntervalHours = 4;
+    }
+    if (typeof finalSettings.autoPost.digitalToolsIntervalMinutes === 'undefined') {
+      finalSettings.autoPost.digitalToolsIntervalMinutes = 240;
+    }
+
+    // Ensure Channel 2 growth & anti-flood guard settings
+    if (typeof finalSettings.autoPost.channel2.maxDailyPosts === 'undefined' || finalSettings.autoPost.channel2.maxDailyPosts <= 0) {
+      finalSettings.autoPost.channel2.maxDailyPosts = 6;
+    }
+    if (typeof finalSettings.autoPost.channel2.minPostSpacingMinutes === 'undefined' || finalSettings.autoPost.channel2.minPostSpacingMinutes < 60) {
+      finalSettings.autoPost.channel2.minPostSpacingMinutes = 120;
+    }
+    if (typeof finalSettings.autoPost.channel2.smartGoldenHours === 'undefined') {
+      finalSettings.autoPost.channel2.smartGoldenHours = true;
+    }
+    if (typeof finalSettings.autoPost.channel2.sleepHoursProtection === 'undefined') {
+      finalSettings.autoPost.channel2.sleepHoursProtection = true;
+    }
+    if (typeof finalSettings.autoPost.channel2.singlePostMode === 'undefined') {
+      finalSettings.autoPost.channel2.singlePostMode = true;
+    }
+    if (typeof finalSettings.autoPost.channel2.digitalToolsEnabled === 'undefined') {
+      finalSettings.autoPost.channel2.digitalToolsEnabled = false;
+    }
+    if (typeof finalSettings.autoPost.channel2.digitalToolsCount === 'undefined') {
+      finalSettings.autoPost.channel2.digitalToolsCount = 1;
     }
 
     db = {
@@ -815,10 +966,13 @@ function loadDatabase() {
       users: finalUsers,
       logs: finalLogs,
       postedMessages: finalPosted,
+      channelPostHistory: finalPostHistory,
       techItems: finalTechItems,
       aiPrompts: finalAiPrompts,
       funNewsItems: finalFunNewsItems,
-      funSources: finalFunSources
+      funSources: finalFunSources,
+      digitalTools: finalDigitalTools,
+      postedPromptHistory: finalPostedPromptHistory
     };
 
     // Migration: Update any stale or dead sources to modern active verified sources
@@ -911,7 +1065,9 @@ function saveDatabase(immediate = false) {
         logs: db.logs,
         postedMessages: db.postedMessages,
         aiPrompts: db.aiPrompts || [],
-        funNewsItems: db.funNewsItems || []
+        funNewsItems: db.funNewsItems || [],
+        digitalTools: db.digitalTools || [],
+        postedPromptHistory: db.postedPromptHistory || []
       };
       writeJsonAtomic(DB_FILE, storeData);
     } catch (err) {
@@ -995,6 +1151,9 @@ function getGeminiClient(): GoogleGenAI | null {
   return geminiClient;
 }
 
+// Global queue of recently served prompts to guarantee zero immediate repetitions
+const recentlyServedPromptIds: string[] = [];
+
 // --- Live Real-Time AI Prompt Extractor (Photo-styling & Face Combination) ---
 async function fetchLiveTrendingAiPromptFromInternet(categoryKey?: string, chatId?: number): Promise<{
   id: string;
@@ -1007,82 +1166,72 @@ async function fetchLiveTrendingAiPromptFromInternet(categoryKey?: string, chatI
   tags: string[];
   tipsForPersonalPhoto?: string;
 }> {
-  const allLocal = db.aiPrompts || [];
+  // Ensure default curated prompts are present if database is low or empty
+  if (!db.aiPrompts || db.aiPrompts.length < DEFAULT_AI_PROMPTS.length) {
+    const existingIds = new Set((db.aiPrompts || []).map(p => p.id));
+    const missingDefaults = DEFAULT_AI_PROMPTS.filter(p => !existingIds.has(p.id));
+    db.aiPrompts = [...(db.aiPrompts || []), ...missingDefaults];
+    saveDatabase();
+  }
+
+  const allPrompts = db.aiPrompts;
   let user = chatId ? db.users.find(u => u.chatId === chatId) : null;
-  const seenIds = new Set(user?.seenPrompts || []);
+  const userSeenIds = new Set(user?.seenPrompts || []);
+  const recentQueueSet = new Set(recentlyServedPromptIds.slice(-20));
 
-  let candidates = allLocal.filter(p => !p.postedToChannel);
-  
+  // 1. Filter by category if requested
+  let pool = allPrompts;
   if (categoryKey && categoryKey !== 'random') {
-    let specificCandidates = candidates.filter(p => p.styleCategory === categoryKey || p.tags.includes(categoryKey));
-    if (specificCandidates.length === 0) {
-      specificCandidates = allLocal.filter(p => p.styleCategory === categoryKey || p.tags.includes(categoryKey));
-    }
-    if (specificCandidates.length > 0) candidates = specificCandidates;
-  }
-  
-  if (candidates.length === 0 && allLocal.length > 0) {
-    candidates = allLocal;
+    const matched = allPrompts.filter(p => p.styleCategory === categoryKey || p.tags.some(t => t.toLowerCase().includes(categoryKey.toLowerCase())));
+    if (matched.length > 0) pool = matched;
   }
 
-  // Filter out seen prompts
-  let unseenCandidates = candidates.filter(p => !seenIds.has(p.id));
-  
-  // If all candidates in this category are seen, clear seenPrompts for this user to restart cycle
-  if (unseenCandidates.length === 0 && candidates.length > 0) {
+  // 2. Filter out globally recent items and user-seen items
+  let candidates = pool.filter(p => !userSeenIds.has(p.id) && !recentQueueSet.has(p.id));
+
+  // If filtered too aggressively, relax user seen filter but keep recent queue filter
+  if (candidates.length === 0) {
+    candidates = pool.filter(p => !recentQueueSet.has(p.id));
+  }
+
+  // If still empty (e.g., category has very few items), use entire category pool
+  if (candidates.length === 0) {
+    candidates = pool;
     if (user) {
       user.seenPrompts = [];
       saveDatabase();
     }
-    unseenCandidates = candidates;
   }
 
-  const finalCandidates = unseenCandidates.length > 0 ? unseenCandidates : candidates;
+  // Pick a candidate (prefer random within the non-recently served candidates)
+  const selectedPrompt = candidates[Math.floor(Math.random() * candidates.length)] || pool[0] || DEFAULT_AI_PROMPTS[0];
 
-  if (finalCandidates.length > 0) {
-    const p = finalCandidates[Math.floor(Math.random() * finalCandidates.length)];
-    
-    // Save to seen history
-    if (user) {
-      if (!user.seenPrompts) user.seenPrompts = [];
-      if (!user.seenPrompts.includes(p.id)) {
-        user.seenPrompts.push(p.id);
-        saveDatabase();
-      }
-    }
-
-    return {
-      id: p.id,
-      title: p.title,
-      category: p.category as any,
-      styleCategory: p.styleCategory || categoryKey,
-      description: p.description,
-      promptText: p.promptText,
-      imageUrl: p.imageUrl,
-      tags: p.tags,
-      tipsForPersonalPhoto: p.tipsForPersonalPhoto || 'برای این پرامپت، یک عکس سلفی واضح از چهره خود آپلود کنید.'
-    };
+  // Track to recently served queue
+  recentlyServedPromptIds.push(selectedPrompt.id);
+  if (recentlyServedPromptIds.length > 50) {
+    recentlyServedPromptIds.shift();
   }
 
-  const fallbackId = 'prompt-fallback-pixar';
+  // Track to user's personal seen history
   if (user) {
     if (!user.seenPrompts) user.seenPrompts = [];
-    if (!user.seenPrompts.includes(fallbackId)) {
-      user.seenPrompts.push(fallbackId);
+    if (!user.seenPrompts.includes(selectedPrompt.id)) {
+      user.seenPrompts.push(selectedPrompt.id);
+      if (user.seenPrompts.length > 100) user.seenPrompts.shift();
       saveDatabase();
     }
   }
 
   return {
-    id: fallbackId,
-    title: 'تبدیل عکس چهره به کاراکتر انیمیشنی ۳ بعدی پیکسار',
-    category: 'image',
-    styleCategory: 'pixar',
-    description: 'یکی از پرطرفدارترین ترندهای وایرال در PromptHero و ردیت برای تبدیل چهره واقعی به کاراکتر بانمک پیکسار.',
-    promptText: '3D Pixar Disney style animated character of [upload your photo], cute expressive eyes, soft studio lighting, vibrant warm colors, smooth clay render, octane render, 8k --ar 9:16 --cw 20',
-    tipsForPersonalPhoto: 'از یک عکس پرتره یا سلفی تکی با نور طبیعی و نگاه مستقیم به دوربین استفاده کنید.',
-    imageUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=800&auto=format&fit=crop&q=60',
-    tags: ['پیکسار', 'تبدیل_عکس_شخصی', 'دیزنی', 'انیمیشن_۳بعدی']
+    id: selectedPrompt.id,
+    title: selectedPrompt.title,
+    category: (selectedPrompt.category as any) || 'image',
+    styleCategory: selectedPrompt.styleCategory || categoryKey,
+    description: selectedPrompt.description,
+    promptText: selectedPrompt.promptText,
+    imageUrl: selectedPrompt.imageUrl,
+    tags: selectedPrompt.tags,
+    tipsForPersonalPhoto: selectedPrompt.tipsForPersonalPhoto || 'از یک عکس پرتره واضح با نور طبیعی استفاده کنید.'
   };
 }
 
@@ -4531,6 +4680,278 @@ async function sendTelegramPostWithMedia(params: {
   }
 }
 
+// ==========================================================
+// INTELLIGENT CHANNEL TRAFFIC GUARD & GROWTH ENGINE
+// ==========================================================
+function getTehranTimeInfo(date = new Date()) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Tehran',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+    const parts = formatter.formatToParts(date);
+    const getP = (t: string) => parts.find(p => p.type === t)?.value || '00';
+    const year = getP('year');
+    const month = getP('month');
+    const day = getP('day');
+    const hour = parseInt(getP('hour'), 10);
+    const minute = parseInt(getP('minute'), 10);
+    // Sleep hours in Iran: 00:30 to 08:30
+    const isSleepHours = (hour === 0 && minute >= 30) || (hour >= 1 && hour < 8) || (hour === 8 && minute < 30);
+    // Golden engagement hours in Iran (Noon lunch, Evening commute, Night prime-time):
+    const isGoldenHour = (hour >= 12 && hour <= 14) || (hour >= 17 && hour <= 20) || (hour >= 21 && hour <= 23);
+    return {
+      dateStr: `${year}-${month}-${day}`,
+      hour,
+      minute,
+      timeStr: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+      isSleepHours,
+      isGoldenHour
+    };
+  } catch (err) {
+    const utcMs = date.getTime() + (date.getTimezoneOffset() * 60000);
+    const tehranDate = new Date(utcMs + (3.5 * 3600000));
+    const year = tehranDate.getUTCFullYear();
+    const month = String(tehranDate.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(tehranDate.getUTCDate()).padStart(2, '0');
+    const hour = tehranDate.getUTCHours();
+    const minute = tehranDate.getUTCMinutes();
+    const isSleepHours = (hour === 0 && minute >= 30) || (hour >= 1 && hour < 8) || (hour === 8 && minute < 30);
+    const isGoldenHour = (hour >= 12 && hour <= 14) || (hour >= 17 && hour <= 20) || (hour >= 21 && hour <= 23);
+    return {
+      dateStr: `${year}-${month}-${day}`,
+      hour,
+      minute,
+      timeStr: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+      isSleepHours,
+      isGoldenHour
+    };
+  }
+}
+
+interface TelegramChannelCache {
+  title?: string;
+  memberCount?: number;
+  lastChecked: number;
+}
+const channelStatsCache: Record<string, TelegramChannelCache> = {};
+
+async function fetchTelegramChannelStats(channelHandle: string): Promise<{ title?: string; memberCount?: number }> {
+  if (!channelHandle || !db.settings.botToken) return {};
+  const cleanHandle = channelHandle.startsWith('@') ? channelHandle : `@${channelHandle.replace('@', '')}`;
+  const now = Date.now();
+  if (channelStatsCache[cleanHandle] && (now - channelStatsCache[cleanHandle].lastChecked) < 5 * 60 * 1000) {
+    return {
+      title: channelStatsCache[cleanHandle].title,
+      memberCount: channelStatsCache[cleanHandle].memberCount
+    };
+  }
+
+  let title: string | undefined;
+  let memberCount: number | undefined;
+
+  try {
+    const chatRes = await callTelegramApi('getChat', { chat_id: cleanHandle });
+    if (chatRes && chatRes.title) {
+      title = chatRes.title;
+    }
+  } catch (e) {}
+
+  try {
+    const countRes = await callTelegramApi('getChatMemberCount', { chat_id: cleanHandle });
+    if (typeof countRes === 'number') {
+      memberCount = countRes;
+    }
+  } catch (e) {}
+
+  channelStatsCache[cleanHandle] = {
+    title,
+    memberCount,
+    lastChecked: now
+  };
+
+  return { title, memberCount };
+}
+
+function recordChannelPostEvent(
+  channelNum: 1 | 2, 
+  channelHandle: string, 
+  category: 'configs' | 'news' | 'tricks' | 'prompts' | 'fun' | 'tech' | 'digital_tools', 
+  messageId?: number,
+  previewText?: string
+) {
+  if (!db.channelPostHistory) db.channelPostHistory = [];
+  const now = new Date();
+  const tehran = getTehranTimeInfo(now);
+  db.channelPostHistory.push({
+    id: generateId(),
+    channelTarget: channelNum,
+    channelHandle: channelHandle.startsWith('@') ? channelHandle : `@${channelHandle.replace('@', '')}`,
+    category,
+    postedAt: now.toISOString(),
+    tehranDate: tehran.dateStr,
+    tehranHour: tehran.hour,
+    messageId,
+    previewText
+  });
+  if (db.channelPostHistory.length > 300) {
+    db.channelPostHistory = db.channelPostHistory.slice(-300);
+  }
+}
+
+async function evaluateChannelPostingAllowance(channelNum: 1 | 2, bypassTimeChecks = false) {
+  const isCh2 = channelNum === 2;
+  const settings = isCh2 ? (db.settings.autoPost?.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
+
+  if (!settings || !settings.enabled) {
+    return {
+      allowed: false,
+      reason: `ارسال خودکار برای کانال ${channelNum} در پنل غیرفعال است.`,
+      statusLevel: 'paused' as const,
+      postsToday: 0,
+      maxDailyPosts: settings?.maxDailyPosts || (isCh2 ? 6 : 4),
+      minutesSinceLastPost: 9999,
+      inCooldown: false,
+      cooldownRemainingMinutes: 0,
+      isSleepHours: false,
+      isGoldenHour: false,
+      channelHandle: settings?.targetChannel || ''
+    };
+  }
+
+  const targetChannel = settings.targetChannel?.trim();
+  if (!targetChannel) {
+    return {
+      allowed: false,
+      reason: `آیدی کانال ${channelNum} مشخص نشده است.`,
+      statusLevel: 'blocked' as const,
+      postsToday: 0,
+      maxDailyPosts: settings.maxDailyPosts || (isCh2 ? 6 : 4),
+      minutesSinceLastPost: 9999,
+      inCooldown: false,
+      cooldownRemainingMinutes: 0,
+      isSleepHours: false,
+      isGoldenHour: false,
+      channelHandle: ''
+    };
+  }
+
+  const tehran = getTehranTimeInfo();
+  const maxDaily = settings.maxDailyPosts || (isCh2 ? 6 : 4);
+  const minSpacingMin = settings.minPostSpacingMinutes || (isCh2 ? 120 : 180);
+
+  // 1. Calculate posts today in Tehran date
+  if (!db.channelPostHistory) db.channelPostHistory = [];
+  const postsToday = db.channelPostHistory.filter(h => h.channelTarget === channelNum && h.tehranDate === tehran.dateStr).length;
+
+  // 2. Calculate time since last post
+  const lastPostIso = settings.lastAnyPostAt || settings.lastPostedAt;
+  const minutesSinceLastPost = lastPostIso ? Math.floor((Date.now() - new Date(lastPostIso).getTime()) / 60000) : 9999;
+  const inCooldown = minutesSinceLastPost < minSpacingMin;
+  const cooldownRemainingMinutes = inCooldown ? Math.max(1, minSpacingMin - minutesSinceLastPost) : 0;
+
+  // Fetch live stats (cached)
+  const liveStats = await fetchTelegramChannelStats(targetChannel);
+
+  // Check: Bypass allowed for manual triggers from admin
+  if (bypassTimeChecks) {
+    return {
+      allowed: true,
+      reason: 'ارسال دستی با تایید مدیر سیستم انجام شد.',
+      statusLevel: 'optimal' as const,
+      postsToday,
+      maxDailyPosts: maxDaily,
+      minutesSinceLastPost,
+      inCooldown: false,
+      cooldownRemainingMinutes: 0,
+      isSleepHours: tehran.isSleepHours,
+      isGoldenHour: tehran.isGoldenHour,
+      memberCount: liveStats.memberCount,
+      title: liveStats.title,
+      channelHandle: targetChannel
+    };
+  }
+
+  // 3. Sleep Hours Check
+  if (settings.sleepHoursProtection !== false && tehran.isSleepHours) {
+    return {
+      allowed: false,
+      reason: `ساعات استراحت و سکوت شبانه تلگرام (۰۰:۳۰ الی ۰۸:۳۰ به وقت تهران) - زمان فعلی: ${tehran.timeStr}. جهت جلوگیری از ریزش ممبرها، ارسال خودکار متوقف است.`,
+      statusLevel: 'paused' as const,
+      postsToday,
+      maxDailyPosts: maxDaily,
+      minutesSinceLastPost,
+      inCooldown,
+      cooldownRemainingMinutes,
+      isSleepHours: true,
+      isGoldenHour: false,
+      memberCount: liveStats.memberCount,
+      title: liveStats.title,
+      channelHandle: targetChannel
+    };
+  }
+
+  // 4. Daily Cap Check
+  if (postsToday >= maxDaily) {
+    return {
+      allowed: false,
+      reason: `سقف مجاز پست‌های امروز (${postsToday} از ${maxDaily} پست) تکمیل شده است. کانال نباید بیش از حد بمباران شود تا ویوها حفظ شوند و ممبرها لفت ندهند.`,
+      statusLevel: 'blocked' as const,
+      postsToday,
+      maxDailyPosts: maxDaily,
+      minutesSinceLastPost,
+      inCooldown,
+      cooldownRemainingMinutes,
+      isSleepHours: tehran.isSleepHours,
+      isGoldenHour: tehran.isGoldenHour,
+      memberCount: liveStats.memberCount,
+      title: liveStats.title,
+      channelHandle: targetChannel
+    };
+  }
+
+  // 5. Minimum Spacing / Cooldown Check
+  if (inCooldown) {
+    return {
+      allowed: false,
+      reason: `فاصله ایمن بین دو پست رعایت نشده است. آخرین پست ${minutesSinceLastPost} دقیقه پیش ارسال شده و ${cooldownRemainingMinutes} دقیقه از فاصله ${minSpacingMin} دقیقه‌ای باقی مانده است.`,
+      statusLevel: 'warning' as const,
+      postsToday,
+      maxDailyPosts: maxDaily,
+      minutesSinceLastPost,
+      inCooldown: true,
+      cooldownRemainingMinutes,
+      isSleepHours: tehran.isSleepHours,
+      isGoldenHour: tehran.isGoldenHour,
+      memberCount: liveStats.memberCount,
+      title: liveStats.title,
+      channelHandle: targetChannel
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: `کانال آماده دریافت پست بعدی است (${postsToday}/${maxDaily} پست امروز). زمان فعلی تهران: ${tehran.timeStr}${tehran.isGoldenHour ? ' (ساعت طلایی جذب ویو)' : ''}`,
+    statusLevel: 'optimal' as const,
+    postsToday,
+    maxDailyPosts: maxDaily,
+    minutesSinceLastPost,
+    inCooldown: false,
+    cooldownRemainingMinutes: 0,
+    isSleepHours: tehran.isSleepHours,
+    isGoldenHour: tehran.isGoldenHour,
+    memberCount: liveStats.memberCount,
+    title: liveStats.title,
+    channelHandle: targetChannel
+  };
+}
+
 // Standalone Tech Post Dispatcher (General)
 async function executeStandaloneTechPost(targetChannel: string, items: TechItem[]): Promise<boolean> {
   if (!items || items.length === 0) return false;
@@ -4793,6 +5214,8 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       text += `\n📁 <i>فایل متنی شامل تمام ${selectedConfigs.length} کانفیگ نیز ضمیمه شد.</i>\n`;
     }
 
+    text += `\n❤️ <i>با فوروارد کردن این پست برای دوستانتان، از ما حمایت کنید.</i>\n`;
+
     if (channelBranding) {
       text += `\n🆔 ${escapeHtml(channelBranding)}`;
     }
@@ -4836,8 +5259,10 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       disable_notification: !!settings.silentMode
     });
 
-    // If config pack has large count, upload full .txt pack file
-    if (needsFullPackFile && fullPackConfigsContent) {
+    recordChannelPostEvent(channelTargetNum, channelHandle, 'configs', sentMsg?.message_id);
+
+    // If singlePostMode is explicitly disabled AND config pack has large count, upload full .txt pack file
+    if (settings.singlePostMode === false && needsFullPackFile && fullPackConfigsContent) {
       try {
         const formData = new FormData();
         formData.append('chat_id', channelHandle);
@@ -4865,8 +5290,8 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       }
     }
 
-    // Try to post an NPV/OVPN file alongside if enabled
-    if (settings.postFiles && db.npvFiles && db.npvFiles.length > 0) {
+    // Try to post an NPV/OVPN file alongside only if singlePostMode is disabled and postFiles is enabled
+    if (settings.singlePostMode === false && settings.postFiles && db.npvFiles && db.npvFiles.length > 0) {
       const npvFile = db.npvFiles[Math.floor(Math.random() * Math.min(db.npvFiles.length, 10))];
       if (npvFile) {
         try {
@@ -5113,6 +5538,7 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
       db.settings.autoPost.lastPostedAt = nowIso;
       db.settings.autoPost.lastAnyPostAt = nowIso;
     }
+    recordChannelPostEvent(channelTargetNum, targetChannel, 'news');
     saveDatabase();
 
     addLog('success', `پست اخبار روز تکنولوژی (${selectedNews.length} خبر) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال گردید.`);
@@ -5248,6 +5674,7 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
       db.settings.autoPost.lastPostedAt = nowIso;
       db.settings.autoPost.lastAnyPostAt = nowIso;
     }
+    recordChannelPostEvent(channelTargetNum, targetChannel, 'tricks');
     saveDatabase();
 
     addLog('success', `پست ترفندها و رازهای موبایل (${selectedTricks.length} ترفند) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال گردید.`);
@@ -5259,8 +5686,65 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
 }
 
 // ----------------------------------------------------
-// 4. DEDICATED EXECUTOR: AI PROMPTS HUB AUTO-POST
+// 4. DEDICATED EXECUTOR: AI PROMPTS HUB AUTO-POST (WITH ANTI-DUPLICATE GUARD)
 // ----------------------------------------------------
+function normalizePromptFingerprint(text: string): string {
+  if (!text) return '';
+  return text
+    .toLowerCase()
+    .replace(/[^\w\u0600-\u06FF]/g, '')
+    .slice(0, 80);
+}
+
+function isPromptAlreadyPostedToChannel(prompt: AiPrompt, channelNum: 1 | 2): boolean {
+  // 1. Check direct object flags
+  if (channelNum === 2 && prompt.postedToChannel2) return true;
+  if (channelNum === 1 && prompt.postedToChannel1) return true;
+
+  // 2. Check persistent posted history by ID or text fingerprint
+  if (!db.postedPromptHistory) db.postedPromptHistory = [];
+  const pFp = normalizePromptFingerprint(prompt.promptText);
+  const tFp = normalizePromptFingerprint(prompt.title);
+
+  for (const hist of db.postedPromptHistory) {
+    if (hist.channelTarget === channelNum) {
+      if (hist.promptId === prompt.id) return true;
+      if (hist.promptNormalized && pFp && hist.promptNormalized === pFp) return true;
+      if (hist.titleNormalized && tFp && hist.titleNormalized === tFp) return true;
+    }
+  }
+
+  // 3. Check recent channel post history previews
+  if (Array.isArray(db.channelPostHistory)) {
+    for (const ch of db.channelPostHistory) {
+      if (ch.channelTarget === channelNum && ch.category === 'prompts') {
+        const previewNorm = normalizePromptFingerprint(ch.previewText || '');
+        if (previewNorm && tFp && (previewNorm.includes(tFp.slice(0, 30)) || tFp.includes(previewNorm.slice(0, 30)))) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+function recordPromptPostSuccess(prompt: AiPrompt, channelNum: 1 | 2) {
+  if (!db.postedPromptHistory) db.postedPromptHistory = [];
+  const nowIso = new Date().toISOString();
+  db.postedPromptHistory.unshift({
+    id: `p-hist-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    promptId: prompt.id,
+    titleNormalized: normalizePromptFingerprint(prompt.title),
+    promptNormalized: normalizePromptFingerprint(prompt.promptText),
+    channelTarget: channelNum,
+    postedAt: nowIso
+  });
+  if (db.postedPromptHistory.length > 500) {
+    db.postedPromptHistory = db.postedPromptHistory.slice(0, 500);
+  }
+}
+
 function formatAiPromptForTelegram(prompt: AiPrompt): string {
   let badgeEmoji = '🔮';
   let badgeTitle = 'پرامپت هوش مصنوعی';
@@ -5321,9 +5805,8 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
     const count = settings.aiPromptsCount && settings.aiPromptsCount > 0 ? settings.aiPromptsCount : 1;
     const allPrompts = db.aiPrompts || [];
 
-    // Filter prompts that have NEVER been posted to this specific channel
-    const targetChannelKey = isCh2 ? 'postedToChannel2' : 'postedToChannel1';
-    const eligiblePrompts = allPrompts.filter(p => !p[targetChannelKey]);
+    // Filter prompts that have NEVER been posted to this specific channel using strict deduplication
+    const eligiblePrompts = allPrompts.filter(p => !isPromptAlreadyPostedToChannel(p, channelTargetNum));
 
     if (eligiblePrompts.length === 0) {
       addLog('warn', `تمامی پرامپت‌های هوش مصنوعی موجود قبلاً به کانال ${channelTargetNum} ارسال شده‌اند. جهت پیشگیری قاطع از ارسال تکراری، ارسال متوقف گردید.`);
@@ -5415,6 +5898,7 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
         dbRef.postedAt = nowIso;
         dbRef.postCount = (dbRef.postCount || 0) + 1;
       }
+      recordPromptPostSuccess(it, channelTargetNum);
     }
     if (isCh2) {
       if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
@@ -5426,12 +5910,218 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
       db.settings.autoPost.lastPostedAt = nowIso;
       db.settings.autoPost.lastAnyPostAt = nowIso;
     }
+    recordChannelPostEvent(channelTargetNum, targetChannel, 'prompts');
     saveDatabase();
 
     addLog('success', `پست پرامپت‌های طلایی هوش مصنوعی (${selectedPrompts.length} پرامپت) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال گردید.`);
     return true;
   } catch (err: any) {
     addLog('error', `خطا در ارسال پرامپت‌های هوش مصنوعی به کانال ${channelTargetNum}: ${err.message || err}`);
+    return false;
+  }
+}
+
+// ----------------------------------------------------
+// 5. DEDICATED EXECUTOR: DIGITAL TOOLS & FUTURE-PROOF TECH HUB AUTO-POST
+// (استراتژی رشد کانال ۱ و عدم وابستگی به پروکسی و فیلترینگ)
+// ----------------------------------------------------
+function formatDigitalToolForTelegram(item: DigitalToolItem): string {
+  let badgeEmoji = '🛠️';
+  let catTitle = 'جعبه ابزار دیجیتال و کاربردی';
+  if (item.category === 'ai_tools') {
+    badgeEmoji = '🤖';
+    catTitle = 'ابزار هوش مصنوعی کاربردی';
+  } else if (item.category === 'cool_websites') {
+    badgeEmoji = '🌐';
+    catTitle = 'سایت‌های شگفت‌انگیز و ناب اینترنت';
+  } else if (item.category === 'mobile_hacks') {
+    badgeEmoji = '💡';
+    catTitle = 'ترفندهای طلایی موبایل و سیستم‌عامل';
+  } else if (item.category === 'cyber_security') {
+    badgeEmoji = '🔐';
+    catTitle = 'امنیت سایبری و راهنمای ضد هک';
+  } else if (item.category === 'must_apps') {
+    badgeEmoji = '📱';
+    catTitle = 'اپلیکیشن‌های شاهکار و ضروری';
+  }
+
+  let text = '';
+  text += `${badgeEmoji} <b>« ${catTitle} »</b>\n`;
+  text += `📌 <b>${escapeHtml(item.title)}</b>\n\n`;
+
+  if (item.summary) {
+    text += `<blockquote>${escapeHtml(item.summary)}</blockquote>\n\n`;
+  }
+
+  if (item.howToUse) {
+    text += `📝 <b>راهنما و ترفند استفاده:</b>\n<i>${escapeHtml(item.howToUse)}</i>\n\n`;
+  }
+
+  if (item.tags && item.tags.length > 0) {
+    const formattedTags = item.tags
+      .slice(0, 5)
+      .map(t => `#${t.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '')}`)
+      .join(' ');
+    text += `🏷 <i>${formattedTags}</i>\n`;
+  }
+
+  return text;
+}
+
+async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetChannel?: string): Promise<boolean> {
+  const isCh2 = channelTargetNum === 2;
+  const settings = isCh2 ? (db.settings.autoPost.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
+  const targetChannel = customTargetChannel || settings?.targetChannel;
+  if (!targetChannel) {
+    addLog('warn', `ارسال ابزارها و ترفندهای دیجیتال به کانال ${channelTargetNum} انجام نشد: کانال مقصد تنظیم نشده است.`);
+    return false;
+  }
+  if (!db.settings.botToken) {
+    addLog('warn', 'ارسال ابزارها و ترفندهای دیجیتال انجام نشد: توکن ربات فعال نیست.');
+    return false;
+  }
+
+  try {
+    addLog('info', `در حال آماده‌سازی و ارسال ابزارها و ترفندهای کاربردی به کانال ${channelTargetNum} (${targetChannel})...`);
+
+    if (!db.digitalTools || db.digitalTools.length === 0) {
+      db.digitalTools = [...DEFAULT_DIGITAL_TOOLS];
+      saveDatabase();
+    }
+
+    const count = settings.digitalToolsCount && settings.digitalToolsCount > 0 ? settings.digitalToolsCount : 1;
+    const allTools = db.digitalTools || [];
+
+    // Filter tools based on enabled categories (if configured)
+    const allowedCategories = settings.digitalToolsCategories && settings.digitalToolsCategories.length > 0
+      ? settings.digitalToolsCategories
+      : ['ai_tools', 'cool_websites', 'mobile_hacks', 'cyber_security', 'must_apps'];
+
+    const targetChannelKey = isCh2 ? 'postedToChannel2' : 'postedToChannel1';
+
+    let eligibleTools = allTools.filter(t => {
+      const matchCat = allowedCategories.includes(t.category);
+      const notPosted = !t[targetChannelKey];
+      return matchCat && notPosted;
+    });
+
+    if (eligibleTools.length === 0) {
+      // If all tools in selected categories were posted, reset posted flag for oldest posted tools to maintain rotation
+      addLog('info', `تمامی ابزارهای دسته‌بندی انتخابی به کانال ${channelTargetNum} ارسال شده‌اند. بازنشانی هوشمند نوبتی برای محتوای مفید...`);
+      for (const t of allTools) {
+        if (allowedCategories.includes(t.category)) {
+          if (isCh2) t.postedToChannel2 = false;
+          else t.postedToChannel1 = false;
+        }
+      }
+      eligibleTools = allTools.filter(t => allowedCategories.includes(t.category));
+    }
+
+    if (eligibleTools.length === 0) {
+      addLog('warn', `هیچ ابزار دیجیتالی در دسته‌بندی‌های انتخابی یافت نشد.`);
+      return false;
+    }
+
+    // Sort: essential/trending first, then newest
+    eligibleTools.sort((a, b) => {
+      const score = (item: DigitalToolItem) => {
+        if (item.importance === 'essential') return 3;
+        if (item.importance === 'trending') return 2;
+        return 1;
+      };
+      if (score(b) !== score(a)) return score(b) - score(a);
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    const selectedTools = eligibleTools.slice(0, count);
+
+    let text = `🚀 <b>محتوای کاربردی و جعبه‌ابزار دیجیتال:</b>\n\n`;
+
+    for (let i = 0; i < selectedTools.length; i++) {
+      const it = selectedTools[i];
+      text += formatDigitalToolForTelegram(it);
+      if (i < selectedTools.length - 1) text += `\n───────────────\n\n`;
+    }
+
+    let channelBranding = '';
+    if (isCh2) {
+      let rawCh2Ad = (settings.adText || '').trim();
+      const ch1Handle = (db.settings.autoPost?.targetChannel || '').replace(/^@/, '').toLowerCase().trim();
+      const ch1Branding = (db.settings.branding || '').toLowerCase().trim();
+      if (ch1Handle && rawCh2Ad.toLowerCase().includes(ch1Handle)) rawCh2Ad = '';
+      if (ch1Branding && rawCh2Ad.toLowerCase().includes(ch1Branding)) rawCh2Ad = '';
+      channelBranding = rawCh2Ad;
+    } else {
+      channelBranding = settings.adText || db.settings.branding || '';
+    }
+
+    if (channelBranding) {
+      text += `\n🆔 ${escapeHtml(channelBranding)}`;
+    }
+
+    const inlineButtons: any[] = [];
+    
+    // Add direct access button if tool has linkUrl
+    const toolWithLink = selectedTools.find(t => !!t.linkUrl);
+    if (toolWithLink && toolWithLink.linkUrl) {
+      inlineButtons.push([{
+        text: toolWithLink.buttonLabel || '🌐 ورود به سایت / دریافت ابزار',
+        url: toolWithLink.linkUrl
+      }]);
+    }
+
+    const channelBtn = getChannelInlineButton(channelTargetNum, targetChannel);
+    if (channelBtn) {
+      inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
+    }
+
+    const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
+
+    const postResult = await sendTelegramPostWithMedia({
+      chatId: channelHandle,
+      text,
+      replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+      silent: !!settings.silentMode
+    });
+
+    if (!postResult.success) {
+      return false;
+    }
+
+    const nowIso = new Date().toISOString();
+    for (const it of selectedTools) {
+      const dbRef = db.digitalTools?.find(t => t.id === it.id);
+      if (dbRef) {
+        if (isCh2) {
+          dbRef.postedToChannel2 = true;
+          dbRef.lastPostedAtCh2 = nowIso;
+        } else {
+          dbRef.postedToChannel1 = true;
+          dbRef.lastPostedAtCh1 = nowIso;
+        }
+        dbRef.postedAt = nowIso;
+        dbRef.postCount = (dbRef.postCount || 0) + 1;
+      }
+    }
+
+    if (isCh2) {
+      if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
+      db.settings.autoPost.channel2.lastDigitalToolsPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastAnyPostAt = nowIso;
+    } else {
+      db.settings.autoPost.lastDigitalToolsPostedAt = nowIso;
+      db.settings.autoPost.lastPostedAt = nowIso;
+      db.settings.autoPost.lastAnyPostAt = nowIso;
+    }
+
+    recordChannelPostEvent(channelTargetNum, targetChannel, 'digital_tools', undefined, selectedTools[0]?.title);
+    saveDatabase();
+
+    addLog('success', `پست جعبه‌ابزار دیجیتال و محتوای کاربردی (${selectedTools.length} مورد) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال شد.`);
+    return true;
+  } catch (err: any) {
+    addLog('error', `خطا در ارسال ابزارهای دیجیتال به کانال ${channelTargetNum}: ${err.message || err}`);
     return false;
   }
 }
@@ -5785,6 +6475,9 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       db.settings.autoPost.lastAnyPostAt = nowIso;
       db.settings.autoPost.lastPostedAt = nowIso;
     }
+    if (anySuccess) {
+      recordChannelPostEvent(channelTargetNum, channelHandle, 'fun');
+    }
     saveDatabase();
 
     if (anySuccess) {
@@ -6009,7 +6702,7 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
 }
 
 // Master Auto-Post Dispatcher
-async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'prompts' | 'fun' = 'all', channelTarget: 1 | 2 = 1): Promise<boolean> {
+async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'prompts' | 'fun' | 'tools' = 'all', channelTarget: 1 | 2 = 1): Promise<boolean> {
   const isCh2 = channelTarget === 2;
   const settings = isCh2 ? (db.settings.autoPost.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
 
@@ -6037,6 +6730,9 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'pr
   if (mode === 'fun') {
     return await executeFunNewsAutoPost(channelTarget, settings.targetChannel);
   }
+  if (mode === 'tools') {
+    return await executeDigitalToolsAutoPost(channelTarget, settings.targetChannel);
+  }
 
   // mode === 'all'
   let anySuccess = false;
@@ -6058,6 +6754,10 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'pr
   }
   if (settings.funNewsEnabled === true && (settings.funNewsCount || 0) > 0) {
     const res = await executeFunNewsAutoPost(channelTarget, settings.targetChannel);
+    if (res) anySuccess = true;
+  }
+  if (settings.digitalToolsEnabled !== false && (settings.digitalToolsCount || 0) > 0) {
+    const res = await executeDigitalToolsAutoPost(channelTarget, settings.targetChannel);
     if (res) anySuccess = true;
   }
 
@@ -6090,165 +6790,262 @@ function setupAutoPostInterval() {
 }
 
 async function checkAndTriggerAutoPost() {
-  const ap = db.settings.autoPost;
-  const ap2 = db.settings.autoPost?.channel2;
   const now = Date.now();
 
   // ==========================================
   // 1. CHECK CHANNEL 1 SCHEDULE (Independent)
   // ==========================================
-  if (ap && ap.enabled && ap.targetChannel && db.settings.botToken) {
-    const antiFloodMinutes = typeof ap.antiFloodDelayMinutes === 'number' ? ap.antiFloodDelayMinutes : 3;
-    const antiFloodDelayMs = antiFloodMinutes * 60 * 1000;
-    const timeSinceAny = ap.lastAnyPostAt ? (now - new Date(ap.lastAnyPostAt).getTime()) : Infinity;
+  const ch1Allowance = await evaluateChannelPostingAllowance(1);
+  if (ch1Allowance.allowed) {
+    const ap = db.settings.autoPost;
+    const tehran = getTehranTimeInfo();
 
-    // Only allow post if minimum anti-flood spacing between any Channel 1 posts has passed
-    if (timeSinceAny >= antiFloodDelayMs) {
-      let ch1Triggered = false;
+    interface PostCandidate {
+      category: 'configs' | 'tricks' | 'news' | 'prompts' | 'fun' | 'tools';
+      isDue: boolean;
+      timeSinceDueMs: number;
+      goldenPriority: number;
+      run: () => Promise<boolean>;
+    }
 
-      // 1. Configs & Proxies Schedule Check
-      const configsActive = ap.configsEnabled !== false && ((ap.configCount || 0) > 0 || (ap.proxyCount || 0) > 0);
-      if (!ch1Triggered && configsActive) {
-        const configMinutes = Number(ap.configIntervalMinutes) || (Number(ap.configIntervalHours) ? Number(ap.configIntervalHours) * 60 : (Number(ap.postIntervalHours) ? Number(ap.postIntervalHours) * 60 : 240));
-        const configIntervalMs = Math.max(1, configMinutes) * 60 * 1000;
-        const lastConfigTime = ap.lastConfigsPostedAt || ap.lastPostedAt;
-        const timeSinceLastConfig = lastConfigTime ? (now - new Date(lastConfigTime).getTime()) : Infinity;
-        if (timeSinceLastConfig >= configIntervalMs) {
-          await executeConfigsAutoPost(1, ap.targetChannel);
-          ch1Triggered = true;
-        }
+    const candidates: PostCandidate[] = [];
+
+    // 1. Configs & Proxies Schedule Check
+    if (ap.configsEnabled !== false && ((ap.configCount || 0) > 0 || (ap.proxyCount || 0) > 0)) {
+      const configMinutes = Number(ap.configIntervalMinutes) || (Number(ap.configIntervalHours) ? Number(ap.configIntervalHours) * 60 : (Number(ap.postIntervalHours) ? Number(ap.postIntervalHours) * 60 : 240));
+      const intervalMs = Math.max(30, configMinutes) * 60 * 1000;
+      const lastTime = ap.lastConfigsPostedAt || ap.lastPostedAt;
+      const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
+      if (elapsed >= intervalMs) {
+        const p = (tehran.hour >= 12 && tehran.hour <= 14) || (tehran.hour >= 20 && tehran.hour <= 23) ? 10 : 5;
+        candidates.push({
+          category: 'configs',
+          isDue: true,
+          timeSinceDueMs: elapsed - intervalMs,
+          goldenPriority: p,
+          run: () => executeConfigsAutoPost(1, ap.targetChannel)
+        });
       }
+    }
 
-      // 2. Tech News Schedule Check
-      const newsActive = ap.techNewsEnabled !== false && (ap.techNewsCount || 0) > 0;
-      if (!ch1Triggered && newsActive) {
-        const newsMinutes = Number(ap.techNewsIntervalMinutes) || (Number(ap.techNewsIntervalHours) ? Number(ap.techNewsIntervalHours) * 60 : 240);
-        const newsIntervalMs = Math.max(1, newsMinutes) * 60 * 1000;
-        const lastNewsTime = ap.lastTechNewsPostedAt;
-        const timeSinceLastNews = lastNewsTime ? (now - new Date(lastNewsTime).getTime()) : Infinity;
-        if (timeSinceLastNews >= newsIntervalMs) {
-          await executeTechNewsAutoPost(1, ap.targetChannel);
-          ch1Triggered = true;
-        }
+    // 2. Tech News Schedule Check
+    if (ap.techNewsEnabled !== false && (ap.techNewsCount || 0) > 0) {
+      const newsMinutes = Number(ap.techNewsIntervalMinutes) || (Number(ap.techNewsIntervalHours) ? Number(ap.techNewsIntervalHours) * 60 : 240);
+      const intervalMs = Math.max(30, newsMinutes) * 60 * 1000;
+      const lastTime = ap.lastTechNewsPostedAt;
+      const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
+      if (elapsed >= intervalMs) {
+        candidates.push({
+          category: 'news',
+          isDue: true,
+          timeSinceDueMs: elapsed - intervalMs,
+          goldenPriority: 4,
+          run: () => executeTechNewsAutoPost(1, ap.targetChannel)
+        });
       }
+    }
 
-      // 3. Tech Tricks & Secrets Schedule Check
-      const tricksActive = ap.techTricksEnabled !== false && (ap.techTricksCount || 0) > 0;
-      if (!ch1Triggered && tricksActive) {
-        const tricksMinutes = Number(ap.techTricksIntervalMinutes) || (Number(ap.techTricksIntervalHours) ? Number(ap.techTricksIntervalHours) * 60 : 360);
-        const tricksIntervalMs = Math.max(1, tricksMinutes) * 60 * 1000;
-        const lastTricksTime = ap.lastTechTricksPostedAt;
-        const timeSinceLastTricks = lastTricksTime ? (now - new Date(lastTricksTime).getTime()) : Infinity;
-        if (timeSinceLastTricks >= tricksIntervalMs) {
-          await executeTechTricksAutoPost(1, ap.targetChannel);
-          ch1Triggered = true;
-        }
+    // 3. Tech Tricks & Secrets Schedule Check
+    if (ap.techTricksEnabled !== false && (ap.techTricksCount || 0) > 0) {
+      const tricksMinutes = Number(ap.techTricksIntervalMinutes) || (Number(ap.techTricksIntervalHours) ? Number(ap.techTricksIntervalHours) * 60 : 360);
+      const intervalMs = Math.max(30, tricksMinutes) * 60 * 1000;
+      const lastTime = ap.lastTechTricksPostedAt;
+      const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
+      if (elapsed >= intervalMs) {
+        const p = (tehran.hour >= 15 && tehran.hour <= 20) ? 9 : 6;
+        candidates.push({
+          category: 'tricks',
+          isDue: true,
+          timeSinceDueMs: elapsed - intervalMs,
+          goldenPriority: p,
+          run: () => executeTechTricksAutoPost(1, ap.targetChannel)
+        });
       }
+    }
 
-      // 4. AI Prompts Schedule Check
-      const promptsActive = ap.aiPromptsEnabled !== false && (ap.aiPromptsCount || 0) > 0;
-      if (!ch1Triggered && promptsActive) {
-        const promptsMinutes = Number(ap.aiPromptsIntervalMinutes) || (Number(ap.aiPromptsIntervalHours) ? Number(ap.aiPromptsIntervalHours) * 60 : 360);
-        const promptsIntervalMs = Math.max(1, promptsMinutes) * 60 * 1000;
-        const lastPromptsTime = ap.lastAiPromptsPostedAt;
-        const timeSinceLastPrompts = lastPromptsTime ? (now - new Date(lastPromptsTime).getTime()) : Infinity;
-        if (timeSinceLastPrompts >= promptsIntervalMs) {
-          await executeAiPromptsAutoPost(1, ap.targetChannel);
-          ch1Triggered = true;
-        }
+    // 4. AI Prompts Schedule Check
+    if (ap.aiPromptsEnabled !== false && (ap.aiPromptsCount || 0) > 0) {
+      const promptsMinutes = Number(ap.aiPromptsIntervalMinutes) || (Number(ap.aiPromptsIntervalHours) ? Number(ap.aiPromptsIntervalHours) * 60 : 360);
+      const intervalMs = Math.max(30, promptsMinutes) * 60 * 1000;
+      const lastTime = ap.lastAiPromptsPostedAt;
+      const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
+      if (elapsed >= intervalMs) {
+        const p = (tehran.hour >= 18 && tehran.hour <= 22) ? 8 : 4;
+        candidates.push({
+          category: 'prompts',
+          isDue: true,
+          timeSinceDueMs: elapsed - intervalMs,
+          goldenPriority: p,
+          run: () => executeAiPromptsAutoPost(1, ap.targetChannel)
+        });
       }
+    }
 
-      // 5. Fun & General News Schedule Check (Channel 1)
-      const funActive = ap.funNewsEnabled === true && (ap.funNewsCount || 0) > 0;
-      if (!ch1Triggered && funActive) {
-        const funMinutes = Number(ap.funNewsIntervalMinutes) || (Number(ap.funNewsIntervalHours) ? Number(ap.funNewsIntervalHours) * 60 : 180);
-        const funIntervalMs = Math.max(1, funMinutes) * 60 * 1000;
-        const lastFunTime = ap.lastFunNewsPostedAt;
-        const timeSinceLastFun = lastFunTime ? (now - new Date(lastFunTime).getTime()) : Infinity;
-        if (timeSinceLastFun >= funIntervalMs) {
-          await executeFunNewsAutoPost(1, ap.targetChannel);
-          ch1Triggered = true;
-        }
+    // 5. Fun & General News Schedule Check (Channel 1)
+    if (ap.funNewsEnabled === true && (ap.funNewsCount || 0) > 0) {
+      const funMinutes = Number(ap.funNewsIntervalMinutes) || (Number(ap.funNewsIntervalHours) ? Number(ap.funNewsIntervalHours) * 60 : 180);
+      const intervalMs = Math.max(30, funMinutes) * 60 * 1000;
+      const lastTime = ap.lastFunNewsPostedAt;
+      const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
+      if (elapsed >= intervalMs) {
+        candidates.push({
+          category: 'fun',
+          isDue: true,
+          timeSinceDueMs: elapsed - intervalMs,
+          goldenPriority: 3,
+          run: () => executeFunNewsAutoPost(1, ap.targetChannel)
+        });
       }
+    }
+
+    // 6. Digital Tools & Future-Proof Tech Schedule (Channel 1 Independence from Filter)
+    if (ap.digitalToolsEnabled !== false && (ap.digitalToolsCount || 0) > 0) {
+      const toolsMinutes = Number(ap.digitalToolsIntervalMinutes) || (Number(ap.digitalToolsIntervalHours) ? Number(ap.digitalToolsIntervalHours) * 60 : 240);
+      const intervalMs = Math.max(30, toolsMinutes) * 60 * 1000;
+      const lastTime = ap.lastDigitalToolsPostedAt;
+      const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
+      if (elapsed >= intervalMs) {
+        const p = (tehran.hour >= 16 && tehran.hour <= 22) ? 9 : 6;
+        candidates.push({
+          category: 'tools',
+          isDue: true,
+          timeSinceDueMs: elapsed - intervalMs,
+          goldenPriority: p,
+          run: () => executeDigitalToolsAutoPost(1, ap.targetChannel)
+        });
+      }
+    }
+
+    // If candidates are ready, pick the single highest priority / longest waiting one
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => {
+        if (ap.smartGoldenHours !== false && tehran.isGoldenHour && a.goldenPriority !== b.goldenPriority) {
+          return b.goldenPriority - a.goldenPriority;
+        }
+        return b.timeSinceDueMs - a.timeSinceDueMs;
+      });
+      await candidates[0].run();
     }
   }
 
   // ==========================================
-  // 2. CHECK CHANNEL 2 SCHEDULE (Completely Independent)
+  // 2. CHECK CHANNEL 2 SCHEDULE (Independent)
   // ==========================================
-  if (ap2 && ap2.enabled && ap2.targetChannel && db.settings.botToken) {
-    const antiFloodMinutes2 = typeof ap2.antiFloodDelayMinutes === 'number' ? ap2.antiFloodDelayMinutes : 3;
-    const antiFloodDelayMs2 = antiFloodMinutes2 * 60 * 1000;
-    const timeSinceAny2 = ap2.lastAnyPostAt ? (now - new Date(ap2.lastAnyPostAt).getTime()) : Infinity;
+  const ch2Allowance = await evaluateChannelPostingAllowance(2);
+  if (ch2Allowance.allowed) {
+    const ap2 = db.settings.autoPost.channel2;
+    const tehran = getTehranTimeInfo();
 
-    // Only allow post if minimum anti-flood spacing between any Channel 2 posts has passed
-    if (timeSinceAny2 >= antiFloodDelayMs2) {
-      let ch2Triggered = false;
+    interface PostCandidate2 {
+      category: string;
+      timeSinceDueMs: number;
+      priority: number;
+      run: () => Promise<boolean>;
+    }
+    const candidates2: PostCandidate2[] = [];
 
-      // 1. Fun & General News for Channel 2 (Primary role for Channel 2)
-      const funActive2 = ap2.funNewsEnabled !== false && (ap2.funNewsCount || 0) > 0;
-      if (!ch2Triggered && funActive2) {
-        const funMinutes2 = Number(ap2.funNewsIntervalMinutes) || (Number(ap2.funNewsIntervalHours) ? Number(ap2.funNewsIntervalHours) * 60 : 120);
-        const funIntervalMs2 = Math.max(1, funMinutes2) * 60 * 1000;
-        const lastFunTime2 = ap2.lastFunNewsPostedAt;
-        const timeSinceLastFun2 = lastFunTime2 ? (now - new Date(lastFunTime2).getTime()) : Infinity;
-        if (timeSinceLastFun2 >= funIntervalMs2) {
-          await executeFunNewsAutoPost(2, ap2.targetChannel);
-          ch2Triggered = true;
-        }
+    // 1. Fun & General News for Channel 2 (Primary role for Channel 2)
+    if (ap2.funNewsEnabled !== false && (ap2.funNewsCount || 0) > 0) {
+      const funMinutes2 = Number(ap2.funNewsIntervalMinutes) || (Number(ap2.funNewsIntervalHours) ? Number(ap2.funNewsIntervalHours) * 60 : 120);
+      const intervalMs2 = Math.max(30, funMinutes2) * 60 * 1000;
+      const lastTime2 = ap2.lastFunNewsPostedAt;
+      const elapsed2 = lastTime2 ? (now - new Date(lastTime2).getTime()) : Infinity;
+      if (elapsed2 >= intervalMs2) {
+        candidates2.push({
+          category: 'fun',
+          timeSinceDueMs: elapsed2 - intervalMs2,
+          priority: 10,
+          run: () => executeFunNewsAutoPost(2, ap2.targetChannel)
+        });
       }
+    }
 
-      // 2. Configs for Channel 2
-      const configsActive2 = ap2.configsEnabled === true && ((ap2.configCount || 0) > 0 || (ap2.proxyCount || 0) > 0);
-      if (!ch2Triggered && configsActive2) {
-        const configMinutes2 = Number(ap2.configIntervalMinutes) || (Number(ap2.configIntervalHours) ? Number(ap2.configIntervalHours) * 60 : 240);
-        const configIntervalMs2 = Math.max(1, configMinutes2) * 60 * 1000;
-        const lastConfigTime2 = ap2.lastConfigsPostedAt;
-        const timeSinceLastConfig2 = lastConfigTime2 ? (now - new Date(lastConfigTime2).getTime()) : Infinity;
-        if (timeSinceLastConfig2 >= configIntervalMs2) {
-          await executeConfigsAutoPost(2, ap2.targetChannel);
-          ch2Triggered = true;
-        }
+    // 2. Configs for Channel 2
+    if (ap2.configsEnabled === true && ((ap2.configCount || 0) > 0 || (ap2.proxyCount || 0) > 0)) {
+      const configMinutes2 = Number(ap2.configIntervalMinutes) || (Number(ap2.configIntervalHours) ? Number(ap2.configIntervalHours) * 60 : 240);
+      const intervalMs2 = Math.max(30, configMinutes2) * 60 * 1000;
+      const lastTime2 = ap2.lastConfigsPostedAt;
+      const elapsed2 = lastTime2 ? (now - new Date(lastTime2).getTime()) : Infinity;
+      if (elapsed2 >= intervalMs2) {
+        candidates2.push({
+          category: 'configs',
+          timeSinceDueMs: elapsed2 - intervalMs2,
+          priority: 5,
+          run: () => executeConfigsAutoPost(2, ap2.targetChannel)
+        });
       }
+    }
 
-      // 3. Tech News for Channel 2
-      const newsActive2 = ap2.techNewsEnabled === true && (ap2.techNewsCount || 0) > 0;
-      if (!ch2Triggered && newsActive2) {
-        const newsMinutes2 = Number(ap2.techNewsIntervalMinutes) || (Number(ap2.techNewsIntervalHours) ? Number(ap2.techNewsIntervalHours) * 60 : 240);
-        const newsIntervalMs2 = Math.max(1, newsMinutes2) * 60 * 1000;
-        const lastNewsTime2 = ap2.lastTechNewsPostedAt;
-        const timeSinceLastNews2 = lastNewsTime2 ? (now - new Date(lastNewsTime2).getTime()) : Infinity;
-        if (timeSinceLastNews2 >= newsIntervalMs2) {
-          await executeTechNewsAutoPost(2, ap2.targetChannel);
-          ch2Triggered = true;
-        }
+    // 3. Tech News for Channel 2
+    if (ap2.techNewsEnabled === true && (ap2.techNewsCount || 0) > 0) {
+      const newsMinutes2 = Number(ap2.techNewsIntervalMinutes) || (Number(ap2.techNewsIntervalHours) ? Number(ap2.techNewsIntervalHours) * 60 : 240);
+      const intervalMs2 = Math.max(30, newsMinutes2) * 60 * 1000;
+      const lastTime2 = ap2.lastTechNewsPostedAt;
+      const elapsed2 = lastTime2 ? (now - new Date(lastTime2).getTime()) : Infinity;
+      if (elapsed2 >= intervalMs2) {
+        candidates2.push({
+          category: 'news',
+          timeSinceDueMs: elapsed2 - intervalMs2,
+          priority: 4,
+          run: () => executeTechNewsAutoPost(2, ap2.targetChannel)
+        });
       }
+    }
 
-      // 4. Tech Tricks for Channel 2
-      const tricksActive2 = ap2.techTricksEnabled === true && (ap2.techTricksCount || 0) > 0;
-      if (!ch2Triggered && tricksActive2) {
-        const tricksMinutes2 = Number(ap2.techTricksIntervalMinutes) || (Number(ap2.techTricksIntervalHours) ? Number(ap2.techTricksIntervalHours) * 60 : 360);
-        const tricksIntervalMs2 = Math.max(1, tricksMinutes2) * 60 * 1000;
-        const lastTricksTime2 = ap2.lastTechTricksPostedAt;
-        const timeSinceLastTricks2 = lastTricksTime2 ? (now - new Date(lastTricksTime2).getTime()) : Infinity;
-        if (timeSinceLastTricks2 >= tricksIntervalMs2) {
-          await executeTechTricksAutoPost(2, ap2.targetChannel);
-          ch2Triggered = true;
-        }
+    // 4. Tech Tricks for Channel 2
+    if (ap2.techTricksEnabled === true && (ap2.techTricksCount || 0) > 0) {
+      const tricksMinutes2 = Number(ap2.techTricksIntervalMinutes) || (Number(ap2.techTricksIntervalHours) ? Number(ap2.techTricksIntervalHours) * 60 : 360);
+      const intervalMs2 = Math.max(30, tricksMinutes2) * 60 * 1000;
+      const lastTime2 = ap2.lastTechTricksPostedAt;
+      const elapsed2 = lastTime2 ? (now - new Date(lastTime2).getTime()) : Infinity;
+      if (elapsed2 >= intervalMs2) {
+        candidates2.push({
+          category: 'tricks',
+          timeSinceDueMs: elapsed2 - intervalMs2,
+          priority: 4,
+          run: () => executeTechTricksAutoPost(2, ap2.targetChannel)
+        });
       }
+    }
 
-      // 5. AI Prompts for Channel 2
-      const promptsActive2 = ap2.aiPromptsEnabled === true && (ap2.aiPromptsCount || 0) > 0;
-      if (!ch2Triggered && promptsActive2) {
-        const promptsMinutes2 = Number(ap2.aiPromptsIntervalMinutes) || (Number(ap2.aiPromptsIntervalHours) ? Number(ap2.aiPromptsIntervalHours) * 60 : 360);
-        const promptsIntervalMs2 = Math.max(1, promptsMinutes2) * 60 * 1000;
-        const lastPromptsTime2 = ap2.lastAiPromptsPostedAt;
-        const timeSinceLastPrompts2 = lastPromptsTime2 ? (now - new Date(lastPromptsTime2).getTime()) : Infinity;
-        if (timeSinceLastPrompts2 >= promptsIntervalMs2) {
-          await executeAiPromptsAutoPost(2, ap2.targetChannel);
-          ch2Triggered = true;
-        }
+    // 5. AI Prompts for Channel 2
+    if (ap2.aiPromptsEnabled === true && (ap2.aiPromptsCount || 0) > 0) {
+      const promptsMinutes2 = Number(ap2.aiPromptsIntervalMinutes) || (Number(ap2.aiPromptsIntervalHours) ? Number(ap2.aiPromptsIntervalHours) * 60 : 360);
+      const intervalMs2 = Math.max(30, promptsMinutes2) * 60 * 1000;
+      const lastTime2 = ap2.lastAiPromptsPostedAt;
+      const elapsed2 = lastTime2 ? (now - new Date(lastTime2).getTime()) : Infinity;
+      if (elapsed2 >= intervalMs2) {
+        candidates2.push({
+          category: 'prompts',
+          timeSinceDueMs: elapsed2 - intervalMs2,
+          priority: 4,
+          run: () => executeAiPromptsAutoPost(2, ap2.targetChannel)
+        });
       }
+    }
+
+    // 6. Digital Tools & AI Toolbox for Channel 2
+    if (ap2.digitalToolsEnabled === true && (ap2.digitalToolsCount || 0) > 0) {
+      const toolsMinutes2 = Number(ap2.digitalToolsIntervalMinutes) || (Number(ap2.digitalToolsIntervalHours) ? Number(ap2.digitalToolsIntervalHours) * 60 : 360);
+      const intervalMs2 = Math.max(30, toolsMinutes2) * 60 * 1000;
+      const lastTime2 = ap2.lastDigitalToolsPostedAt;
+      const elapsed2 = lastTime2 ? (now - new Date(lastTime2).getTime()) : Infinity;
+      if (elapsed2 >= intervalMs2) {
+        candidates2.push({
+          category: 'tools',
+          timeSinceDueMs: elapsed2 - intervalMs2,
+          priority: 5,
+          run: () => executeDigitalToolsAutoPost(2, ap2.targetChannel)
+        });
+      }
+    }
+
+    if (candidates2.length > 0) {
+      candidates2.sort((a, b) => {
+        if (a.priority !== b.priority) return b.priority - a.priority;
+        return b.timeSinceDueMs - a.timeSinceDueMs;
+      });
+      await candidates2[0].run();
     }
   }
 }
@@ -6843,27 +7640,71 @@ async function callTelegramApi(method: string, body: object | FormData): Promise
       } catch (_) {}
     }
 
-    // Fallback 2: If reply_markup was rejected (e.g. invalid keyboard format or button), retry without reply_markup
-    if (!isFormData && typeof body === 'object' && (body as any).reply_markup && (
-      errorDesc.includes("reply keyboard") || 
-      errorDesc.includes("BUTTON_TYPE_INVALID") || 
-      errorDesc.includes("can't parse") ||
-      errorDesc.includes("markup")
-    )) {
-      try {
-        const cleanBody = { ...(body as any) };
-        delete cleanBody.reply_markup;
-        const retryRes = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(cleanBody),
-          signal: AbortSignal.timeout(15000)
-        });
-        const retryData = await retryRes.json();
-        if (retryData.ok) return retryData.result;
-      } catch (_) {}
+    // Fallback 2: If reply_markup was rejected (e.g. invalid URL, unsupported button type or style property)
+    if (!isFormData && typeof body === 'object' && (body as any).reply_markup) {
+      const isMarkupError = 
+        errorDesc.includes("reply keyboard") || 
+        errorDesc.includes("BUTTON_") || 
+        errorDesc.includes("URL") ||
+        errorDesc.includes("can't parse") ||
+        errorDesc.includes("style") ||
+        errorDesc.includes("markup");
+
+      if (isMarkupError) {
+        console.warn(`[Telegram API] Markup error on ${method}: ${errorDesc}. Attempting intelligent repair...`);
+        // Step 2a: Try sanitizing keyboard (remove style attribute if rejected, validate URLs)
+        try {
+          const sanitizedBody = JSON.parse(JSON.stringify(body));
+          if (sanitizedBody.reply_markup?.keyboard) {
+            sanitizedBody.reply_markup.keyboard = sanitizedBody.reply_markup.keyboard.map((row: any[]) =>
+              row.map((btn: any) => {
+                const cBtn = { ...btn };
+                delete cBtn.style; // Remove style in case Telegram client/server rejects custom style
+                return cBtn;
+              })
+            );
+          }
+          if (sanitizedBody.reply_markup?.inline_keyboard) {
+            sanitizedBody.reply_markup.inline_keyboard = sanitizedBody.reply_markup.inline_keyboard.map((row: any[]) =>
+              row.filter((btn: any) => {
+                if (btn.url && !btn.url.startsWith('http://') && !btn.url.startsWith('https://')) return false;
+                if (btn.web_app && (!btn.web_app.url || !btn.web_app.url.startsWith('https://'))) return false;
+                return true;
+              }).map((btn: any) => {
+                const cBtn = { ...btn };
+                delete cBtn.style;
+                return cBtn;
+              })
+            ).filter((row: any[]) => row.length > 0);
+          }
+
+          const retryRes1 = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sanitizedBody),
+            signal: AbortSignal.timeout(15000)
+          });
+          const retryData1 = await retryRes1.json();
+          if (retryData1.ok) return retryData1.result;
+        } catch (_) {}
+
+        // Step 2b: Fallback to removing reply_markup completely so message delivery never fails
+        try {
+          const cleanBody = { ...(body as any) };
+          delete cleanBody.reply_markup;
+          const retryRes2 = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cleanBody),
+            signal: AbortSignal.timeout(15000)
+          });
+          const retryData2 = await retryRes2.json();
+          if (retryData2.ok) return retryData2.result;
+        } catch (_) {}
+      }
     }
 
+    console.error(`[Telegram API Error] Method: ${method} - Description: ${errorDesc}`);
     throw new Error(data.description || 'Unknown Telegram Error');
   }
   return data.result;
@@ -6882,8 +7723,16 @@ function checkIsAdmin(userId?: string | number, username?: string | null): boole
     .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
     .filter(Boolean);
 
-  const cleanUser = username ? username.replace(/^@/, '').toLowerCase().trim() : '';
+  let cleanUser = username ? username.replace(/^@/, '').toLowerCase().trim() : '';
   const strUserId = userId !== undefined ? String(userId).trim() : '';
+
+  // Auto-resolve username from database if not explicitly passed
+  if (!cleanUser && strUserId) {
+    const existing = db.users.find(u => String(u.chatId) === strUserId);
+    if (existing?.username) {
+      cleanUser = existing.username.replace(/^@/, '').toLowerCase().trim();
+    }
+  }
 
   for (const token of adminTokens) {
     if (strUserId && token === strUserId) return true;
@@ -6995,38 +7844,38 @@ function getReplyKeyboard(userId: string | number, username?: string | null) {
 
   const keyboard: any[][] = [
     [
-      { text: '🔥 دریافت یکجای ۵۰ کانفیگ ⭐' },
-      { text: '⚡️ دریافت یکجای ۱۵ کانفیگ' }
+      { text: '🔥 دریافت یکجای ۵۰ کانفیگ ⭐', style: 'success' },
+      { text: '⚡️ دریافت یکجای ۱۵ کانفیگ', style: 'success' }
     ],
     [
-      { text: '📥 دریافت کانفیگ ویتوری ⚡' }
+      { text: '⚡ دریافت کانفیگ ویتوری 📥', style: 'primary' }
     ],
     [
-      { text: '🌀 فایل .NPVT' },
-      { text: '🔑 فایل .OVPN' },
-      { text: '📄 فایل .TXT' }
+      { text: '🌀 فایل .NPVT', style: 'success' },
+      { text: '🔑 فایل .OVPN', style: 'success' },
+      { text: '📄 فایل .TXT', style: 'success' }
     ],
     [
-      { text: '🔌 دریافت پروکسی تلگرام 🚀' },
-      { text: '📊 وضعیت شبکه و پینگ نت 🟢' }
+      { text: '🚀 دریافت پروکسی تلگرام 🛰️', style: 'primary' },
+      { text: '📊 وضعیت شبکه و پینگ نت 🟢', style: 'primary' }
     ],
     [
-      { text: '💡 ترفندها 📱' },
-      { text: '📰 اخبار روز تکنولوژی 🌐' }
+      { text: '💡 ترفندها 📱', style: 'primary' },
+      { text: '📰 اخبار روز تکنولوژی 🌐', style: 'primary' }
     ],
     [
-      { text: '🎨 پرامپت‌های طلایی هوش مصنوعی ✨' }
+      { text: '🎨 پرامپت‌های طلایی هوش مصنوعی ✨', style: 'primary' }
     ],
     [
-      { text: 'ℹ️ راهنمای اتصال گام به گام 📚' },
-      { text: '❌ بستن منو' }
+      { text: 'ℹ️ راهنمای اتصال گام به گام 📚', style: 'primary' },
+      { text: '❌ بستن منو', style: 'danger' }
     ]
   ];
 
   if (isAdmin) {
     keyboard.push([
-      { text: '⚙️ ورود به پنل مدیریت در تلگرام 🔴' },
-      { text: '🔄 استخراج سریع کانفیگ‌ها ⚡' }
+      { text: '🔴 ورود به پنل مدیریت در تلگرام ⚙️', style: 'danger' },
+      { text: '⚡ استخراج سریع کانفیگ‌ها 🔄', style: 'success' }
     ]);
   }
 
@@ -7265,7 +8114,43 @@ async function handleBotUpdate(update: any) {
 
     // --- Map persistent custom keyboard buttons to standard commands/callbacks ---
     const lowerMsg = cleanMsg.toLowerCase();
-    if (lowerMsg.startsWith('/start') || cleanMsg === 'شروع' || cleanMsg === 'شروع مجدد' || cleanMsg === 'بروزرسانی' || cleanMsg === 'منوی اصلی' || cleanMsg === 'شروع دوباره' || cleanMsg === 'رفرش' || cleanMsg.includes('بروزرسانی و استارت')) {
+
+    // Auto-clear stuck admin states if clicking any menu navigation or standard button
+    if (
+      lowerMsg.startsWith('/') ||
+      cleanMsg === 'لغو' ||
+      cleanMsg === 'انصراف' ||
+      cleanMsg.includes('شروع') ||
+      cleanMsg.includes('استارت') ||
+      cleanMsg.includes('منو') ||
+      cleanMsg.includes('بستن') ||
+      cleanMsg.includes('کانفیگ') ||
+      cleanMsg.includes('پروکسی') ||
+      cleanMsg.includes('ترفند') ||
+      cleanMsg.includes('اخبار') ||
+      cleanMsg.includes('پرامپت') ||
+      cleanMsg.includes('هوش مصنوعی') ||
+      cleanMsg.includes('راهنما') ||
+      cleanMsg.includes('وضعیت') ||
+      cleanMsg.includes('مدیریت') ||
+      cleanMsg.includes('استخراج') ||
+      cleanMsg.includes('npvt') ||
+      cleanMsg.includes('ovpn') ||
+      cleanMsg.includes('txt')
+    ) {
+      delete adminStates[chatId];
+    }
+
+    if (
+      lowerMsg.startsWith('/start') ||
+      cleanMsg === 'شروع' ||
+      cleanMsg === 'شروع مجدد' ||
+      cleanMsg === 'بروزرسانی' ||
+      cleanMsg === 'منوی اصلی' ||
+      cleanMsg === 'شروع دوباره' ||
+      cleanMsg === 'رفرش' ||
+      cleanMsg.includes('بروزرسانی و استارت')
+    ) {
       messageText = '/start';
       delete adminStates[chatId];
       if (userId) delete joinChecksCache[userId];
@@ -7275,13 +8160,13 @@ async function handleBotUpdate(update: any) {
     } else if (cleanMsg.includes('باز کردن منو') || cleanMsg.includes('نمایش منو') || cleanMsg === 'منو' || lowerMsg === '/menu') {
       callbackData = 'open_reply_menu';
       messageText = '';
-    } else if (cleanMsg.includes('۵۰ کانفیگ') || cleanMsg.includes('پک ۵۰') || cleanMsg.includes('50 کانفیگ') || lowerMsg === '/50') {
+    } else if (cleanMsg.includes('۵۰') || cleanMsg.includes('50') || lowerMsg === '/50') {
       callbackData = 'v2ray_qty_50';
       messageText = '';
-    } else if (cleanMsg.includes('۱۵ کانفیگ') || cleanMsg.includes('پک ۱۵') || cleanMsg.includes('15 کانفیگ') || lowerMsg === '/15') {
+    } else if (cleanMsg.includes('۱۵') || cleanMsg.includes('15') || lowerMsg === '/15') {
       callbackData = 'v2ray_qty_15';
       messageText = '';
-    } else if (cleanMsg.includes('دریافت کانفیگ') || cleanMsg.includes('ویتوری') || lowerMsg.startsWith('/v2ray') || lowerMsg.startsWith('/config')) {
+    } else if (cleanMsg.includes('ویتوری') || (cleanMsg.includes('دریافت کانفیگ') && !cleanMsg.includes('استخراج')) || lowerMsg.startsWith('/v2ray') || lowerMsg.startsWith('/config')) {
       callbackData = 'get_v2ray_configs';
       messageText = '';
     } else if (cleanMsg.toUpperCase().includes('NPVT') || lowerMsg.startsWith('/npvt')) {
@@ -7290,7 +8175,7 @@ async function handleBotUpdate(update: any) {
     } else if (cleanMsg.toUpperCase().includes('OVPN') || lowerMsg.startsWith('/ovpn')) {
       callbackData = 'get_file_ovpn';
       messageText = '';
-    } else if (cleanMsg.toUpperCase().includes('TXT') || lowerMsg.startsWith('/txt')) {
+    } else if (cleanMsg.toUpperCase().includes('TXT') || cleanMsg.includes('متنی') || lowerMsg.startsWith('/txt')) {
       callbackData = 'get_file_txt';
       messageText = '';
     } else if (cleanMsg.includes('پروکسی') || lowerMsg.startsWith('/proxy') || lowerMsg.startsWith('/proxies')) {
@@ -7302,8 +8187,22 @@ async function handleBotUpdate(update: any) {
     } else if (cleanMsg.includes('راهنما') || cleanMsg.includes('کمک') || lowerMsg.startsWith('/help') || lowerMsg.startsWith('/guide')) {
       callbackData = 'get_help';
       messageText = '';
-    } else if (cleanMsg.includes('پنل مدیریت') || lowerMsg.startsWith('/admin')) {
+    } else if (cleanMsg.includes('ترفند') || lowerMsg.startsWith('/trick')) {
+      callbackData = 'get_tech_tricks';
+      messageText = '';
+    } else if (cleanMsg.includes('اخبار') || lowerMsg.startsWith('/news')) {
+      callbackData = 'get_tech_news';
+      messageText = '';
+    } else if (cleanMsg.includes('پرامپت') || cleanMsg.includes('هوش مصنوعی') || lowerMsg.startsWith('/prompt')) {
+      callbackData = 'get_ai_prompts';
+      messageText = '';
+    } else if (cleanMsg.includes('استخراج') || lowerMsg.startsWith('/scrape')) {
+      callbackData = 'admin_scrape_now';
+      messageText = '/scrape';
+      delete adminStates[chatId];
+    } else if (cleanMsg.includes('مدیریت') || lowerMsg.startsWith('/admin')) {
       messageText = '/admin';
+      callbackData = 'admin_menu';
       delete adminStates[chatId];
     } else if (lowerMsg.startsWith('/panel') || lowerMsg.startsWith('/webapp') || cleanMsg.includes('وب‌ویو') || cleanMsg.includes('وبویو') || cleanMsg.includes('پنل وب')) {
       messageText = '/panel';
@@ -10830,17 +11729,34 @@ function setupIntervals() {
   }, 15000);
 
   
-  // Auto refresh Tech News/Tricks content & purge old items every 6 hours
-  setInterval(() => {
-    refreshTechContentAndPurgeOld().catch(err => console.error('Tech auto-refresh error:', err));
-  }, 6 * 60 * 60 * 1000);
+  // --- Unified Hourly Content Update Engine (AI Prompts, Tech News, Fun/Memes, Configs) ---
+  async function runHourlyContentRefresh() {
+    addLog('info', '⏰ در حال اجرای بروزرسانی ساعتی محتوا: کانفیگ‌ها، اخبار روز تکنولوژی، مطالب فان و پرامپت‌های هوش مصنوعی...');
+    try {
+      // 1. Refresh AI Prompts from web & seed
+      await refreshAiPromptsAndPurgeOld().catch(err => console.error('AI Prompts hourly refresh error:', err));
+      
+      // 2. Refresh Tech News & Tricks from sources
+      await refreshTechContentAndPurgeOld().catch(err => console.error('Tech News hourly refresh error:', err));
+      
+      // 3. Extract fresh Fun & Entertainment content
+      await extractFunNewsFromSources().catch(err => console.error('Fun/News hourly refresh error:', err));
+      
+      // 4. Scrape & refresh Configs and Proxies
+      await triggerBulkScrape().catch(err => console.error('Configs hourly scrape error:', err));
 
-  // Auto refresh AI Prompts every 2 hours
-  setInterval(() => {
-    refreshAiPromptsAndPurgeOld().catch(err => console.error('AiPrompts auto-refresh error:', err));
-  }, 2 * 60 * 60 * 1000);
+      addLog('success', '✅ بروزرسانی ساعتی محتوا با موفقیت کامل انجام شد (پرامپت‌ها، اخبار، مطالب فان و کانفیگ‌ها بروز شدند).');
+    } catch (err: any) {
+      console.error('Unified hourly content refresh error:', err.message || err);
+    }
+  }
 
-  // Auto crawl Fun & News sources every 30 minutes to maintain fresh unposted items
+  // Auto refresh all content every 1 hour (60 minutes)
+  setInterval(() => {
+    runHourlyContentRefresh();
+  }, 60 * 60 * 1000);
+
+  // High-frequency crawl for Fun & News sources every 30 minutes
   setInterval(() => {
     extractFunNewsFromSources().catch(err => console.error('Fun/News auto-extract error:', err));
   }, 30 * 60 * 1000);
@@ -10848,13 +11764,11 @@ function setupIntervals() {
   // Set up auto post interval
   setupAutoPostInterval();
 
-  // Run initial checks shortly after startup
+  // Run initial checks and hourly refresh shortly after startup
   setTimeout(() => {
     monitorChannelPosts();
     checkAndTriggerBackup();
-    refreshTechContentAndPurgeOld().catch(() => {});
-    refreshAiPromptsAndPurgeOld().catch(() => {});
-    extractFunNewsFromSources().catch(() => {});
+    runHourlyContentRefresh();
   }, 5 * 1000);
 }
 
@@ -11657,9 +12571,19 @@ async function startExpressServer() {
         funNewsIntervalHours,
         funNewsIntervalMinutes,
         funNewsCount,
+        digitalToolsEnabled,
+        digitalToolsIntervalHours,
+        digitalToolsIntervalMinutes,
+        digitalToolsCount,
+        digitalToolsCategories,
         inlineButtonEnabled,
         inlineButtonText,
         inlineButtonUrl,
+        maxDailyPosts,
+        minPostSpacingMinutes,
+        smartGoldenHours,
+        sleepHoursProtection,
+        singlePostMode,
         channel2
       } = req.body;
       
@@ -11668,6 +12592,7 @@ async function startExpressServer() {
       const parsedTricksMinutes = Number(techTricksIntervalMinutes) || (Number(techTricksIntervalHours) ? Number(techTricksIntervalHours) * 60 : (db.settings.autoPost?.techTricksIntervalMinutes || 360));
       const parsedPromptsMinutes = Number(aiPromptsIntervalMinutes) || (Number(aiPromptsIntervalHours) ? Number(aiPromptsIntervalHours) * 60 : (db.settings.autoPost?.aiPromptsIntervalMinutes || 360));
       const parsedFunMinutes = Number(funNewsIntervalMinutes) || (Number(funNewsIntervalHours) ? Number(funNewsIntervalHours) * 60 : (db.settings.autoPost?.funNewsIntervalMinutes || 180));
+      const parsedToolsMinutes = Number(digitalToolsIntervalMinutes) || (Number(digitalToolsIntervalHours) ? Number(digitalToolsIntervalHours) * 60 : (db.settings.autoPost?.digitalToolsIntervalMinutes || 240));
 
       let updatedChannel2 = db.settings.autoPost?.channel2 || { ...DEFAULT_CHANNEL2_SETTINGS };
       if (channel2 && typeof channel2 === 'object') {
@@ -11676,6 +12601,7 @@ async function startExpressServer() {
         const c2TricksMin = Number(channel2.techTricksIntervalMinutes) || (Number(channel2.techTricksIntervalHours) ? Number(channel2.techTricksIntervalHours) * 60 : 360);
         const c2PromptsMin = Number(channel2.aiPromptsIntervalMinutes) || (Number(channel2.aiPromptsIntervalHours) ? Number(channel2.aiPromptsIntervalHours) * 60 : 360);
         const c2FunMin = Number(channel2.funNewsIntervalMinutes) || (Number(channel2.funNewsIntervalHours) ? Number(channel2.funNewsIntervalHours) * 60 : 120);
+        const c2ToolsMin = Number(channel2.digitalToolsIntervalMinutes) || (Number(channel2.digitalToolsIntervalHours) ? Number(channel2.digitalToolsIntervalHours) * 60 : 360);
 
         updatedChannel2 = {
           ...updatedChannel2,
@@ -11713,7 +12639,20 @@ async function startExpressServer() {
           funNewsEnabled: typeof channel2.funNewsEnabled !== 'undefined' ? !!channel2.funNewsEnabled : updatedChannel2.funNewsEnabled,
           funNewsCount: typeof channel2.funNewsCount !== 'undefined' ? Math.max(0, Number(channel2.funNewsCount)) : updatedChannel2.funNewsCount,
           funNewsIntervalMinutes: c2FunMin,
-          funNewsIntervalHours: Math.max(1, Math.round(c2FunMin / 60))
+          funNewsIntervalHours: Math.max(1, Math.round(c2FunMin / 60)),
+
+          digitalToolsEnabled: typeof channel2.digitalToolsEnabled !== 'undefined' ? !!channel2.digitalToolsEnabled : (updatedChannel2.digitalToolsEnabled ?? false),
+          digitalToolsCount: typeof channel2.digitalToolsCount !== 'undefined' ? Math.max(0, Number(channel2.digitalToolsCount)) : (updatedChannel2.digitalToolsCount || 1),
+          digitalToolsIntervalMinutes: c2ToolsMin,
+          digitalToolsIntervalHours: Math.max(1, Math.round(c2ToolsMin / 60)),
+          digitalToolsCategories: Array.isArray(channel2.digitalToolsCategories) ? channel2.digitalToolsCategories : updatedChannel2.digitalToolsCategories,
+
+          // Growth and Anti-Churn for Channel 2
+          maxDailyPosts: typeof channel2.maxDailyPosts !== 'undefined' ? Math.max(1, Number(channel2.maxDailyPosts)) : (updatedChannel2.maxDailyPosts || 6),
+          minPostSpacingMinutes: typeof channel2.minPostSpacingMinutes !== 'undefined' ? Math.max(15, Number(channel2.minPostSpacingMinutes)) : (updatedChannel2.minPostSpacingMinutes || 120),
+          smartGoldenHours: typeof channel2.smartGoldenHours !== 'undefined' ? !!channel2.smartGoldenHours : (updatedChannel2.smartGoldenHours ?? true),
+          sleepHoursProtection: typeof channel2.sleepHoursProtection !== 'undefined' ? !!channel2.sleepHoursProtection : (updatedChannel2.sleepHoursProtection ?? true),
+          singlePostMode: typeof channel2.singlePostMode !== 'undefined' ? !!channel2.singlePostMode : (updatedChannel2.singlePostMode ?? true)
         };
       }
 
@@ -11736,6 +12675,8 @@ async function startExpressServer() {
         techTricksCount: typeof techTricksCount !== 'undefined' && !isNaN(Number(techTricksCount)) ? Math.max(0, Number(techTricksCount)) : 2,
         aiPromptsCount: typeof aiPromptsCount !== 'undefined' && !isNaN(Number(aiPromptsCount)) ? Math.max(0, Number(aiPromptsCount)) : 1,
         funNewsCount: typeof funNewsCount !== 'undefined' && !isNaN(Number(funNewsCount)) ? Math.max(0, Number(funNewsCount)) : 1,
+        digitalToolsCount: typeof digitalToolsCount !== 'undefined' && !isNaN(Number(digitalToolsCount)) ? Math.max(0, Number(digitalToolsCount)) : 1,
+        digitalToolsCategories: Array.isArray(digitalToolsCategories) ? digitalToolsCategories : (db.settings.autoPost?.digitalToolsCategories || ['ai_tools', 'cool_websites', 'mobile_hacks', 'cyber_security', 'must_apps']),
         techPostMode: techPostMode || 'combined',
         autoPurgeOldTechDays: Number(autoPurgeOldTechDays) || 7,
         includeTechImportanceBadge: includeTechImportanceBadge !== false,
@@ -11769,17 +12710,90 @@ async function startExpressServer() {
         funNewsIntervalHours: Math.max(1, Math.round(parsedFunMinutes / 60)),
         lastFunNewsPostedAt: db.settings.autoPost?.lastFunNewsPostedAt || null,
 
+        digitalToolsEnabled: typeof digitalToolsEnabled !== 'undefined' ? !!digitalToolsEnabled : (db.settings.autoPost?.digitalToolsEnabled ?? true),
+        digitalToolsIntervalMinutes: parsedToolsMinutes,
+        digitalToolsIntervalHours: Math.max(1, Math.round(parsedToolsMinutes / 60)),
+        lastDigitalToolsPostedAt: db.settings.autoPost?.lastDigitalToolsPostedAt || null,
+
+        // Growth and Anti-Churn for Channel 1
+        maxDailyPosts: typeof maxDailyPosts !== 'undefined' ? Math.max(1, Number(maxDailyPosts)) : (db.settings.autoPost?.maxDailyPosts || 4),
+        minPostSpacingMinutes: typeof minPostSpacingMinutes !== 'undefined' ? Math.max(15, Number(minPostSpacingMinutes)) : (db.settings.autoPost?.minPostSpacingMinutes || 180),
+        smartGoldenHours: typeof smartGoldenHours !== 'undefined' ? !!smartGoldenHours : (db.settings.autoPost?.smartGoldenHours ?? true),
+        sleepHoursProtection: typeof sleepHoursProtection !== 'undefined' ? !!sleepHoursProtection : (db.settings.autoPost?.sleepHoursProtection ?? true),
+        singlePostMode: typeof singlePostMode !== 'undefined' ? !!singlePostMode : (db.settings.autoPost?.singlePostMode ?? true),
+
         channel2: updatedChannel2
       };
 
       saveDatabase();
-      addLog('success', 'تنظیمات کرون جاب و ارسال خودکار پست‌ها با موفقیت بروزرسانی شد.');
+      addLog('success', 'تنظیمات ارسال هوشمند و قوانین جلوگیری از ریزش ممبرها با موفقیت بروزرسانی شد.');
       
       // Update intervals/timers
       setupAutoPostInterval();
       
       res.json({ success: true, autoPost: db.settings.autoPost });
     } catch(err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Get Live Dual Channel Health & Growth Analytics
+  app.get('/api/autopost/channel-health', async (req, res) => {
+    try {
+      const tehran = getTehranTimeInfo();
+      const ch1Eval = await evaluateChannelPostingAllowance(1);
+      const ch2Eval = await evaluateChannelPostingAllowance(2);
+
+      const recentHistory = (db.channelPostHistory || []).slice(-25).reverse();
+
+      res.json({
+        success: true,
+        tehranTime: tehran,
+        channel1: {
+          channelNum: 1,
+          channelHandle: db.settings.autoPost?.targetChannel || '',
+          title: ch1Eval.title || 'کانال ۱ (کانفیگ و ترفند)',
+          memberCount: ch1Eval.memberCount,
+          postsToday: ch1Eval.postsToday,
+          maxDailyPosts: ch1Eval.maxDailyPosts,
+          minutesSinceLastPost: ch1Eval.minutesSinceLastPost,
+          minSpacingMinutes: db.settings.autoPost?.minPostSpacingMinutes || 180,
+          inCooldown: ch1Eval.inCooldown,
+          cooldownRemainingMinutes: ch1Eval.cooldownRemainingMinutes,
+          isSleepHours: ch1Eval.isSleepHours,
+          isGoldenHour: ch1Eval.isGoldenHour,
+          statusLevel: ch1Eval.statusLevel,
+          statusMessage: ch1Eval.reason,
+          growthTips: [
+            'سقف ۴ الی ۵ پست در روز مانع خروج اعضا (Unmute/Leave) می‌شود.',
+            'کانفیگ‌های اختصاصی را در ساعات ۱۲ تا ۱۴ یا ۲۱ تا ۲۳ بفرستید تا حداکثر فوروارد را دریافت کنید.',
+            'حالت تک‌پستی فعال است تا کانال شلوغ و گیج‌کننده نشود.'
+          ]
+        },
+        channel2: {
+          channelNum: 2,
+          channelHandle: db.settings.autoPost?.channel2?.targetChannel || '',
+          title: ch2Eval.title || 'کانال ۲ (فان، میم و اخبار)',
+          memberCount: ch2Eval.memberCount,
+          postsToday: ch2Eval.postsToday,
+          maxDailyPosts: ch2Eval.maxDailyPosts,
+          minutesSinceLastPost: ch2Eval.minutesSinceLastPost,
+          minSpacingMinutes: db.settings.autoPost?.channel2?.minPostSpacingMinutes || 120,
+          inCooldown: ch2Eval.inCooldown,
+          cooldownRemainingMinutes: ch2Eval.cooldownRemainingMinutes,
+          isSleepHours: ch2Eval.isSleepHours,
+          isGoldenHour: ch2Eval.isGoldenHour,
+          statusLevel: ch2Eval.statusLevel,
+          statusMessage: ch2Eval.reason,
+          growthTips: [
+            'محتوای فان نباید بی‌وقفه ارسال شود؛ حداقل فاصله ۲ ساعته باعث می‌شود اعضا پست قبلی را ببینند و فوروارد کنند.',
+            'پست‌های نیمه‌شب قطع شده تا اعلان‌های مکرر در خواب باعث لفت دادن ممبرها نشود.',
+            'استفاده از دکمه شیشه‌ای و برندینگ کانال در انتهای هر پست، بازدیدها را به کانال شما پیوند می‌زند.'
+          ]
+        },
+        recentHistory
+      });
+    } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
   });
@@ -12076,6 +13090,116 @@ async function startExpressServer() {
         res.status(400).json({ success: false, message: 'ارسال با خطا مواجه شد یا مطلبی برای ارسال یافت نشد.' });
       }
     } catch(err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Trigger Digital Tools Auto-Post manually
+  app.post('/api/bot/auto-post/trigger-digital-tools', async (req, res) => {
+    try {
+      const channelNum = req.body?.channelNum === 2 ? 2 : 1;
+      const isCh2 = channelNum === 2;
+      const ap = isCh2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
+      if (!ap?.targetChannel) {
+        return res.status(400).json({ success: false, message: `آیدی کانال مقصد شماره ${channelNum} در بخش «ارسال خودکار» تنظیم نشده است.` });
+      }
+      if (!db.settings.botToken) {
+        return res.status(400).json({ success: false, message: 'توکن ربات تلگرام در تنظیمات ثبت نشده یا غیرفعال است.' });
+      }
+      const success = await executeDigitalToolsAutoPost(channelNum, ap.targetChannel);
+      if (success) {
+        res.json({ success: true, message: `پست جعبه‌ابزار دیجیتال و کاربردی با موفقیت به کانال ${channelNum} (${ap.targetChannel}) ارسال گردید.` });
+      } else {
+        res.status(400).json({ success: false, message: 'ارسال با خطا مواجه شد یا ابزاری در دسته‌بندی انتخابی یافت نشد.' });
+      }
+    } catch(err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Get Digital Tools List
+  app.get('/api/digital-tools', (req, res) => {
+    if (!Array.isArray(db.digitalTools) || db.digitalTools.length === 0) {
+      db.digitalTools = [...DEFAULT_DIGITAL_TOOLS];
+      saveDatabase();
+    }
+    res.json(db.digitalTools || []);
+  });
+
+  // API: Add Custom Digital Tool
+  app.post('/api/digital-tools', (req, res) => {
+    try {
+      const { title, summary, category, importance, linkUrl, buttonLabel, howToUse, tags } = req.body;
+      if (!title || !summary) {
+        return res.status(400).json({ success: false, message: 'عنوان و معرفی ابزار الزامی است.' });
+      }
+      const validCategories: DigitalToolCategory[] = ['ai_tools', 'cool_websites', 'mobile_hacks', 'cyber_security', 'must_apps'];
+      const cat: DigitalToolCategory = validCategories.includes(category) ? category : 'ai_tools';
+
+      const newItem: DigitalToolItem = {
+        id: generateId(),
+        title: title.trim(),
+        summary: summary.trim(),
+        category: cat,
+        importance: importance === 'essential' || importance === 'trending' ? importance : 'normal',
+        linkUrl: linkUrl ? linkUrl.trim() : undefined,
+        buttonLabel: buttonLabel ? buttonLabel.trim() : undefined,
+        howToUse: howToUse ? howToUse.trim() : undefined,
+        tags: Array.isArray(tags) ? tags : ['کاربردی', 'تکنولوژی', 'ابزار_رایگان'],
+        createdAt: new Date().toISOString(),
+        postedToChannel1: false,
+        postedToChannel2: false,
+        postCount: 0
+      };
+
+      if (!db.digitalTools) db.digitalTools = [];
+      db.digitalTools.unshift(newItem);
+      saveDatabase();
+      addLog('success', `ابزار کاربردی جدید به بانک محتوا اضافه شد: ${newItem.title}`);
+      res.json({ success: true, item: newItem });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Edit Digital Tool
+  app.put('/api/digital-tools/:id', (req, res) => {
+    try {
+      const { id } = req.params;
+      const { title, summary, category, importance, linkUrl, buttonLabel, howToUse, tags } = req.body;
+      const item = (db.digitalTools || []).find(t => t.id === id);
+      if (!item) {
+        return res.status(404).json({ success: false, message: 'ابزار مورد نظر یافت نشد.' });
+      }
+
+      if (title) item.title = title.trim();
+      if (summary) item.summary = summary.trim();
+      if (category) item.category = category;
+      if (importance) item.importance = importance;
+      if (typeof linkUrl !== 'undefined') item.linkUrl = linkUrl ? linkUrl.trim() : undefined;
+      if (typeof buttonLabel !== 'undefined') item.buttonLabel = buttonLabel ? buttonLabel.trim() : undefined;
+      if (typeof howToUse !== 'undefined') item.howToUse = howToUse ? howToUse.trim() : undefined;
+      if (Array.isArray(tags)) item.tags = tags;
+
+      saveDatabase();
+      res.json({ success: true, item });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Delete Digital Tool
+  app.delete('/api/digital-tools/:id', (req, res) => {
+    try {
+      const { id } = req.params;
+      const idx = (db.digitalTools || []).findIndex(t => t.id === id);
+      if (idx === -1) {
+        return res.status(404).json({ success: false, message: 'ابزار یافت نشد.' });
+      }
+      db.digitalTools.splice(idx, 1);
+      saveDatabase();
+      res.json({ success: true });
+    } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
   });

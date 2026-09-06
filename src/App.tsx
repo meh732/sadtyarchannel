@@ -51,7 +51,8 @@ import {
   Image,
   Palette,
   Edit,
-  Smile
+  Smile,
+  Wrench
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -72,11 +73,14 @@ import {
   AiPrompt,
   AiPromptCategory,
   FunNewsItem,
-  FunNewsSource
+  FunNewsSource,
+  DigitalToolItem,
+  DigitalToolCategory
 } from './types';
 import { AutoPostView } from './components/AutoPostView';
 import { FunNewsView } from './components/FunNewsView';
 import { PromptsView } from './components/PromptsView';
+import { DigitalToolsView } from './components/DigitalToolsView';
 
 // Define custom window type extensions for Telegram WebApp
 declare global {
@@ -142,7 +146,7 @@ export default function App() {
   const [logoClickCount, setLogoClickCount] = useState<number>(0);
 
   // Navigation & View State
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'configs' | 'proxies' | 'vpn_files' | 'tech' | 'prompts' | 'fun_news' | 'join' | 'settings' | 'autopost' | 'broadcast' | 'public_panel'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'configs' | 'proxies' | 'vpn_files' | 'tech' | 'prompts' | 'fun_news' | 'digital_tools' | 'join' | 'settings' | 'autopost' | 'broadcast' | 'public_panel'>('dashboard');
   const [publicSubTab, setPublicSubTab] = useState<'configs' | 'proxies' | 'vpn_files' | 'tech' | 'prompts'>('configs');
   const [activeAutoPostChannelTab, setActiveAutoPostChannelTab] = useState<'channel1' | 'channel2'>('channel1');
   
@@ -167,6 +171,7 @@ export default function App() {
   const [techItems, setTechItems] = useState<TechItem[]>([]);
   const [aiPrompts, setAiPrompts] = useState<AiPrompt[]>([]);
   const [funNewsItems, setFunNewsItems] = useState<FunNewsItem[]>([]);
+  const [digitalTools, setDigitalTools] = useState<DigitalToolItem[]>([]);
   const [funSources, setFunSources] = useState<FunNewsSource[]>([]);
   const [funSearch, setFunSearch] = useState('');
   const [funCategoryFilter, setFunCategoryFilter] = useState<'all' | 'fun' | 'news'>('all');
@@ -459,7 +464,7 @@ export default function App() {
     try {
       if (!silent) {
         if (token) {
-          const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes, techRes, appUrlRes, promptsRes, funNewsRes, funSourcesRes] = await Promise.all([
+          const [statsRes, sourcesRes, fjRes, configsRes, proxiesRes, usersRes, logsRes, settingsRes, vpnRes, techRes, appUrlRes, promptsRes, funNewsRes, funSourcesRes, digitalToolsRes] = await Promise.all([
             fetch('/api/stats').then(r => r.json()).catch(() => ({})),
             fetch('/api/sources').then(r => r.json()).catch(() => []),
             fetch('/api/force-join').then(r => r.json()).catch(() => []),
@@ -473,7 +478,8 @@ export default function App() {
             fetch('/api/app-url').then(r => r.json()).catch(() => ({ url: window.location.origin })),
             fetch('/api/ai-prompts').then(r => r.json()).catch(() => []),
             fetch('/api/fun-news').then(r => r.json()).catch(() => []),
-            fetch('/api/fun-sources').then(r => r.json()).catch(() => [])
+            fetch('/api/fun-sources').then(r => r.json()).catch(() => []),
+            fetch('/api/digital-tools').then(r => r.json()).catch(() => [])
           ]);
 
           setStats(statsRes);
@@ -486,6 +492,7 @@ export default function App() {
           setAiPrompts(Array.isArray(promptsRes) ? promptsRes : []);
           setFunNewsItems(funNewsRes || []);
           setFunSources(funSourcesRes || []);
+          setDigitalTools(Array.isArray(digitalToolsRes) ? digitalToolsRes : []);
           setUsers(usersRes);
           setLogs(logsRes);
           setSettings(settingsRes);
@@ -557,6 +564,7 @@ export default function App() {
           const fetchUsersNeeded = activeTab === 'broadcast';
           const fetchPromptsNeeded = activeTab === 'prompts';
           const fetchFunNewsNeeded = activeTab === 'fun_news';
+          const fetchDigitalToolsNeeded = activeTab === 'digital_tools';
 
           if (fetchConfigsNeeded) promises.push(fetch('/api/configs?limit=500').then(r => r.json()).catch(() => []));
           if (fetchProxiesNeeded) promises.push(fetch('/api/proxies?limit=500').then(r => r.json()).catch(() => []));
@@ -568,6 +576,9 @@ export default function App() {
           if (fetchFunNewsNeeded) {
             promises.push(fetch('/api/fun-news').then(r => r.json()).catch(() => []));
             promises.push(fetch('/api/fun-sources').then(r => r.json()).catch(() => []));
+          }
+          if (fetchDigitalToolsNeeded) {
+            promises.push(fetch('/api/digital-tools').then(r => r.json()).catch(() => []));
           }
 
           const results = await Promise.all(promises);
@@ -585,6 +596,9 @@ export default function App() {
           if (fetchFunNewsNeeded) {
             setFunNewsItems(results[idx] || []); idx++;
             setFunSources(results[idx] || []); idx++;
+          }
+          if (fetchDigitalToolsNeeded) {
+            setDigitalTools(Array.isArray(results[idx]) ? results[idx] : []); idx++;
           }
         } else {
           // Silent poll for public users
@@ -1588,6 +1602,83 @@ export default function App() {
       }
     } catch (err) {
       showToast('خطا در حذف مطلب', 'error');
+    }
+  };
+
+  // --- Digital Tools (Evergreen Growth Content) Handlers ---
+  const handleTriggerDigitalToolsAutoPost = async (channelNum: number = 1) => {
+    setActionLoading(`trigger_digital_tools_${channelNum}`);
+    try {
+      await fetch('/api/settings/auto-post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(autoPostForm)
+      });
+
+      const res = await fetch('/api/bot/auto-post/trigger-digital-tools', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelNum })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || `مطلب جعبه‌ابزار دیجیتال با موفقیت به کانال ${channelNum} ارسال شد.`, 'success');
+      } else {
+        showToast(data.message || 'خطا در ارسال مطلب جعبه‌ابزار دیجیتال', 'error');
+      }
+    } catch (err) {
+      showToast('خطا در ارتباط با سرور تلگرام', 'error');
+    } finally {
+      setActionLoading(null);
+      fetchData(true);
+    }
+  };
+
+  const handleSaveDigitalTool = async (toolData: Partial<DigitalToolItem>): Promise<boolean> => {
+    setActionLoading('save_digital_tool');
+    try {
+      const isEditing = !!toolData.id;
+      const url = isEditing ? `/api/digital-tools/${toolData.id}` : '/api/digital-tools';
+      const method = isEditing ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(toolData)
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(isEditing ? 'ابزار دیجیتال با موفقیت ویرایش شد.' : 'ابزار دیجیتال جدید با موفقیت افزوده شد.', 'success');
+        fetchData(true);
+        return true;
+      } else {
+        showToast(data.message || 'خطا در ثبت ابزار دیجیتال', 'error');
+        return false;
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'خطا در برقراری ارتباط با سرور', 'error');
+      return false;
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteDigitalTool = async (id: string) => {
+    if (!confirm('آیا از حذف این ابزار از جعبه‌ابزار دیجیتال اطمینان دارید؟')) return;
+    setActionLoading(`delete_digital_tool_${id}`);
+    try {
+      const res = await fetch(`/api/digital-tools/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        setDigitalTools(prev => prev.filter(t => t.id !== id));
+        showToast('ابزار با موفقیت از لیست حذف شد.', 'success');
+      } else {
+        showToast(data.message || 'خطا در حذف ابزار', 'error');
+      }
+    } catch (err) {
+      showToast('خطا در حذف ابزار', 'error');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -2809,6 +2900,21 @@ export default function App() {
             <span>فان و اخبار عمومی</span>
             <span className="mr-auto bg-yellow-500/20 text-yellow-300 text-xs px-2 py-0.5 rounded-full">
               {funNewsItems.length} مطلب
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('digital_tools')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
+              activeTab === 'digital_tools'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+            }`}
+          >
+            <Wrench className="w-4 h-4 text-emerald-400" />
+            <span>جعبه‌ابزار دیجیتال</span>
+            <span className="mr-auto bg-emerald-500/20 text-emerald-300 text-xs px-2 py-0.5 rounded-full font-bold">
+              {digitalTools.length} ابزار
             </span>
           </button>
 
@@ -4622,6 +4728,7 @@ export default function App() {
                     handleTriggerTechTricksAutoPost={handleTriggerTechTricksAutoPost}
                     handleTriggerAiPromptsAutoPost={handleTriggerAiPromptsAutoPost}
                     handleTriggerFunNewsAutoPost={handleTriggerFunNewsAutoPost}
+                    handleTriggerDigitalToolsAutoPost={handleTriggerDigitalToolsAutoPost}
                   />
                 </motion.div>
               )}
@@ -4646,6 +4753,26 @@ export default function App() {
                     onDeleteSource={handleDeleteFunSource}
                     onSendItem={handleSendFunNewsItem}
                     onDeleteItem={handleDeleteFunNewsItem}
+                  />
+                </motion.div>
+              )}
+
+              {activeTab === 'digital_tools' && (
+                <motion.div
+                  key="digital_tools"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                >
+                  <DigitalToolsView
+                    tools={digitalTools}
+                    targetChannel1={autoPostForm.targetChannel}
+                    targetChannel2={autoPostForm.channel2?.targetChannel || ''}
+                    actionLoading={actionLoading}
+                    showToast={showToast}
+                    onSaveTool={handleSaveDigitalTool}
+                    onDeleteTool={handleDeleteDigitalTool}
+                    onTriggerSendTool={handleTriggerDigitalToolsAutoPost}
                   />
                 </motion.div>
               )}

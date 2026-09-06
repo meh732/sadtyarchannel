@@ -10,9 +10,14 @@ import {
   Palette, 
   Sparkles, 
   Check, 
-  RefreshCw 
+  RefreshCw,
+  TrendingUp,
+  Moon,
+  Clock,
+  Wrench
 } from 'lucide-react';
-import { AutoPostSettings, SecondaryChannelSettings } from '../types';
+import { AutoPostSettings, SecondaryChannelSettings, DigitalToolCategory } from '../types';
+import { ChannelHealthDashboard } from './ChannelHealthDashboard';
 
 interface AutoPostViewProps {
   autoPostForm: AutoPostSettings;
@@ -28,6 +33,7 @@ interface AutoPostViewProps {
   handleTriggerTechTricksAutoPost: (channelNum?: number) => Promise<void>;
   handleTriggerAiPromptsAutoPost: (channelNum?: number) => Promise<void>;
   handleTriggerFunNewsAutoPost: (channelNum?: number) => Promise<void>;
+  handleTriggerDigitalToolsAutoPost: (channelNum?: number) => Promise<void>;
 }
 
 export const AutoPostView: React.FC<AutoPostViewProps> = ({
@@ -44,6 +50,7 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
   handleTriggerTechTricksAutoPost,
   handleTriggerAiPromptsAutoPost,
   handleTriggerFunNewsAutoPost,
+  handleTriggerDigitalToolsAutoPost,
 }) => {
   const c2 = autoPostForm.channel2 || {
     enabled: false,
@@ -94,6 +101,12 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Live Channel Health & Anti-Churn Traffic Guard */}
+      <ChannelHealthDashboard 
+        onTriggerPost={(ch) => handleTriggerAutoPost(ch)}
+        actionLoading={actionLoading}
+      />
 
       {/* Segmented Switcher between Channel 1 and Channel 2 */}
       <div className="grid grid-cols-2 gap-3 p-1.5 bg-slate-200/80 rounded-2xl border border-slate-300/60 shadow-inner">
@@ -225,6 +238,110 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                     onClick={() => setAutoPostForm(prev => ({ ...prev, postFiles: !prev.postFiles }))}
                     className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
                       autoPostForm.postFiles ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Growth & Anti-Churn Guard for Channel 1 */}
+            <div className="bg-white border border-emerald-100 rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-emerald-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <TrendingUp className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <span>قوانین رشد هوشمند و جلوگیری از ریزش ممبرها (کانال اول)</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                        ترافیک ایمن
+                      </span>
+                    </h4>
+                    <p className="text-[10px] text-slate-500">جلوگیری از ارسال رگباری و آن‌فالو شدن کانال با زمان‌بندی هوشمند</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                    <span>سقف تعداد پست در روز</span>
+                    <span className="text-[10px] text-slate-400">پیشنهادی: ۴ پست</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="15"
+                    value={autoPostForm.maxDailyPosts ?? 4}
+                    onChange={(e) => setAutoPostForm(prev => ({ ...prev, maxDailyPosts: Math.max(1, Number(e.target.value)) }))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:border-emerald-500 focus:outline-none"
+                  />
+                  <p className="text-[10px] text-slate-400">بیش از این تعداد در یک روز ارسال نمی‌شود تا کانال شلوغ نشود.</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                    <span>حداقل فاصله زمانی بین دو پست (دقیقه)</span>
+                    <span className="text-[10px] text-slate-400">پیشنهادی: ۱۸۰ دقیقه (۳ ساعت)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="15"
+                    max="1440"
+                    value={autoPostForm.minPostSpacingMinutes ?? 180}
+                    onChange={(e) => setAutoPostForm(prev => ({ ...prev, minPostSpacingMinutes: Math.max(15, Number(e.target.value)) }))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:border-emerald-500 focus:outline-none"
+                  />
+                  <p className="text-[10px] text-slate-400">فاصله اجباری بین هر پست برای جلوگیری از بمباران پیام و اسپم.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/50">
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">سکوت شبانه (۰۰:۳۰ الی ۰۸:۳۰)</span>
+                    <span className="text-[10px] text-slate-500">عدم ارسال در ساعات خواب</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAutoPostForm(prev => ({ ...prev, sleepHoursProtection: prev.sleepHoursProtection === false ? true : false }))}
+                    className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                      autoPostForm.sleepHoursProtection !== false ? 'bg-emerald-600 justify-end' : 'bg-slate-200 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/50">
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">اولویت ساعات طلایی ویو</span>
+                    <span className="text-[10px] text-slate-500">ارسال در ۱۲-۱۴ و ۲۱-۲۳</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAutoPostForm(prev => ({ ...prev, smartGoldenHours: prev.smartGoldenHours === false ? true : false }))}
+                    className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                      autoPostForm.smartGoldenHours !== false ? 'bg-emerald-600 justify-end' : 'bg-slate-200 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/50">
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">حالت تک‌پستی تمیز</span>
+                    <span className="text-[10px] text-slate-500">ادغام متن در یک پیام زیبا</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAutoPostForm(prev => ({ ...prev, singlePostMode: prev.singlePostMode === false ? true : false }))}
+                    className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                      autoPostForm.singlePostMode !== false ? 'bg-emerald-600 justify-end' : 'bg-slate-200 justify-start'
                     }`}
                   >
                     <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
@@ -712,6 +829,126 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
               </div>
             </div>
 
+            {/* Category 6: Evergreen Digital Tools (Growth without VPN dependency) */}
+            <div className="bg-white border-2 border-emerald-300/80 rounded-2xl p-6 shadow-sm space-y-4 relative overflow-hidden">
+              <div className="flex items-center justify-between pb-3 border-b border-emerald-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shadow-inner">
+                    <Wrench className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-black text-slate-900 text-sm flex items-center gap-2">
+                      <span>۶. جعبه‌ابزار دیجیتال و محتوای کاربردی (عدم وابستگی به پروکسی و فیلترینگ)</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${autoPostForm.digitalToolsEnabled !== false ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                        {autoPostForm.digitalToolsEnabled !== false ? 'روشن و فعال' : 'خاموش'}
+                      </span>
+                    </h4>
+                    <p className="text-[10px] text-emerald-800/80 font-medium">معرفی سایت‌های فوق‌العاده اینترنت، ابزارهای رایگان هوش مصنوعی، ترفندهای کاربردی موبایل و ضد هک</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAutoPostForm(prev => ({ ...prev, digitalToolsEnabled: prev.digitalToolsEnabled === false }))}
+                  className={`w-12 h-6 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                    autoPostForm.digitalToolsEnabled !== false ? 'bg-emerald-600 justify-end' : 'bg-slate-200 justify-start'
+                  }`}
+                >
+                  <span className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                </button>
+              </div>
+
+              <div className="bg-emerald-50/60 p-3.5 rounded-xl border border-emerald-100 text-xs text-emerald-900 leading-relaxed">
+                💡 <strong>استراتژی رشد کانال ۱:</strong> انتشار منظم این پست‌ها باعث می‌شود کانال شما علاوه بر وی‌پی‌ان و کانفیگ، یک مرجع باارزش تکنولوژی باشد و در صورت گشایش یا تغییر وضعیت اینترنت، کاربران کانال شما را ترک نکنند.
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700">فاصله زمانی ارسال ابزارها</label>
+                  <select
+                    value={autoPostForm.digitalToolsIntervalMinutes || 240}
+                    onChange={(e) => setAutoPostForm(prev => ({ ...prev, digitalToolsIntervalMinutes: Number(e.target.value) }))}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-emerald-500 focus:outline-none cursor-pointer font-medium"
+                  >
+                    <option value="60">هر ۱ ساعت</option>
+                    <option value="120">هر ۲ ساعت</option>
+                    <option value="180">هر ۳ ساعت</option>
+                    <option value="240">هر ۴ ساعت (پیشنهادی)</option>
+                    <option value="360">هر ۶ ساعت</option>
+                    <option value="720">هر ۱۲ ساعت</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700">تعداد ابزار در هر نوبت انتشار</label>
+                  <select
+                    value={autoPostForm.digitalToolsCount || 1}
+                    onChange={(e) => setAutoPostForm(prev => ({ ...prev, digitalToolsCount: Number(e.target.value) }))}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs focus:border-emerald-500 focus:outline-none cursor-pointer font-medium"
+                  >
+                    <option value="1">۱ ابزار اختصاصی با توضیحات کامل (بهترین بازدهی)</option>
+                    <option value="2">۲ ابزار مرتبط</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Category Checkboxes */}
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <label className="text-xs font-bold text-slate-700 block">دسته‌بندی‌های فعال جهت چرخش خودکار:</label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {[
+                    { key: 'ai_tools', label: '🤖 هوش مصنوعی کاربردی' },
+                    { key: 'cool_websites', label: '🌐 سایت‌های شگفت‌انگیز' },
+                    { key: 'mobile_hacks', label: '📱 ترفندهای موبایل' },
+                    { key: 'cyber_security', label: '🛡️ امنیت سایبری و ضد هک' },
+                    { key: 'must_apps', label: '📦 اپلیکیشن‌های ضروری' }
+                  ].map(cat => {
+                    const currentCats = autoPostForm.digitalToolsCategories || ['ai_tools', 'cool_websites', 'mobile_hacks', 'cyber_security', 'must_apps'];
+                    const isChecked = currentCats.includes(cat.key as DigitalToolCategory);
+                    return (
+                      <label
+                        key={cat.key}
+                        className={`flex items-center gap-2 p-2 rounded-xl border text-xs cursor-pointer transition-all ${
+                          isChecked ? 'bg-emerald-50/80 border-emerald-300 text-emerald-900 font-bold' : 'bg-slate-50 border-slate-200 text-slate-500'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {
+                            let nextCats = [...currentCats];
+                            if (isChecked) {
+                              nextCats = nextCats.filter(c => c !== cat.key);
+                              if (nextCats.length === 0) nextCats = [cat.key as DigitalToolCategory];
+                            } else {
+                              nextCats.push(cat.key as DigitalToolCategory);
+                            }
+                            setAutoPostForm(prev => ({ ...prev, digitalToolsCategories: nextCats }));
+                          }}
+                          className="w-3.5 h-3.5 rounded text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span>{cat.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                <div className="text-[11px] text-slate-400">
+                  {autoPostForm.lastDigitalToolsPostedAt ? `آخرین ارسال: ${new Date(autoPostForm.lastDigitalToolsPostedAt).toLocaleString('fa-IR')}` : 'هنوز ارسالی ثبت نشده'}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleTriggerDigitalToolsAutoPost(1)}
+                  disabled={actionLoading === 'trigger_digital_tools_1' || !autoPostForm.targetChannel}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {actionLoading === 'trigger_digital_tools_1' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  <span>ارسال فوری تست جعبه‌ابزار به کانال ۱</span>
+                </button>
+              </div>
+            </div>
+
             {/* Presentation Settings */}
             <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
               <div className="flex items-center gap-2 text-slate-900 font-bold text-xs pb-2 border-b border-slate-100">
@@ -869,6 +1106,110 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                     <option value="3">۳ دقیقه</option>
                     <option value="5">۵ دقیقه</option>
                   </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Growth & Anti-Churn Guard for Channel 2 */}
+            <div className="bg-white border border-purple-100 rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-purple-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                    <TrendingUp className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <span>قوانین رشد و جلوگیری از ریزش ممبرها (کانال دوم - فان و اخبار)</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800">
+                        ترافیک ایمن
+                      </span>
+                    </h4>
+                    <p className="text-[10px] text-slate-500">حفظ تعادل بین سرگرمی و جلوگیری از خروج اعضا به دلیل اسپم</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                    <span>سقف تعداد پست در روز (کانال ۲)</span>
+                    <span className="text-[10px] text-slate-400">پیشنهادی: ۶ پست</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={c2.maxDailyPosts ?? 6}
+                    onChange={(e) => updateChannel2({ maxDailyPosts: Math.max(1, Number(e.target.value)) })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:border-purple-500 focus:outline-none"
+                  />
+                  <p className="text-[10px] text-slate-400">بیش از این تعداد در روز ارسال نمی‌شود تا ارزش هر پست حفظ شود.</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                    <span>حداقل فاصله زمانی بین دو پست (دقیقه)</span>
+                    <span className="text-[10px] text-slate-400">پیشنهادی: ۱۲۰ دقیقه (۲ ساعت)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="15"
+                    max="1440"
+                    value={c2.minPostSpacingMinutes ?? 120}
+                    onChange={(e) => updateChannel2({ minPostSpacingMinutes: Math.max(15, Number(e.target.value)) })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:border-purple-500 focus:outline-none"
+                  />
+                  <p className="text-[10px] text-slate-400">فاصله اجباری بین دو پست فان تا اعضا پست قبلی را ببینند و فوروارد کنند.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/50">
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">سکوت شبانه (۰۰:۳۰ الی ۰۸:۳۰)</span>
+                    <span className="text-[10px] text-slate-500">عدم ارسال در ساعات خواب</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateChannel2({ sleepHoursProtection: c2.sleepHoursProtection === false ? true : false })}
+                    className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                      c2.sleepHoursProtection !== false ? 'bg-purple-600 justify-end' : 'bg-slate-200 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/50">
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">اولویت ساعات طلایی ویو</span>
+                    <span className="text-[10px] text-slate-500">ارسال در ۱۲-۱۴ و ۲۱-۲۳</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateChannel2({ smartGoldenHours: c2.smartGoldenHours === false ? true : false })}
+                    className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                      c2.smartGoldenHours !== false ? 'bg-purple-600 justify-end' : 'bg-slate-200 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/50">
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">حالت تک‌پستی تمیز</span>
+                    <span className="text-[10px] text-slate-500">یک پست واحد و مرتب</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateChannel2({ singlePostMode: c2.singlePostMode === false ? true : false })}
+                    className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                      c2.singlePostMode !== false ? 'bg-purple-600 justify-end' : 'bg-slate-200 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                  </button>
                 </div>
               </div>
             </div>
@@ -1221,6 +1562,59 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                 >
                   <Send className="w-3 h-3" />
                   <span>تست ارسال پرامپت به کانال ۲</span>
+                </button>
+              </div>
+
+              {/* Digital Tools on Channel 2 */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <Wrench className="w-4 h-4 text-emerald-600" />
+                    <span className="font-bold text-xs text-slate-800">ارسال ابزارهای دیجیتال در کانال ۲</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateChannel2({ digitalToolsEnabled: !c2.digitalToolsEnabled })}
+                    className={`w-9 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                      c2.digitalToolsEnabled ? 'bg-emerald-600 justify-end' : 'bg-slate-200 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <label className="text-[10px] text-slate-500 block mb-1">فاصله زمانی</label>
+                    <select
+                      value={c2.digitalToolsIntervalMinutes || 360}
+                      onChange={(e) => updateChannel2({ digitalToolsIntervalMinutes: Number(e.target.value) })}
+                      className="w-full p-2 rounded-lg border border-slate-200 text-xs"
+                    >
+                      <option value="120">۲ ساعت</option>
+                      <option value="240">۴ ساعت</option>
+                      <option value="360">۶ ساعت</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 block mb-1">تعداد ابزار</label>
+                    <select
+                      value={c2.digitalToolsCount || 1}
+                      onChange={(e) => updateChannel2({ digitalToolsCount: Number(e.target.value) })}
+                      className="w-full p-2 rounded-lg border border-slate-200 text-xs"
+                    >
+                      <option value="1">۱ ابزار</option>
+                      <option value="2">۲ ابزار</option>
+                    </select>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleTriggerDigitalToolsAutoPost(2)}
+                  disabled={actionLoading === 'trigger_digital_tools_2' || !c2.targetChannel}
+                  className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                >
+                  <Send className="w-3 h-3" />
+                  <span>تست ارسال ابزار به کانال ۲</span>
                 </button>
               </div>
             </div>

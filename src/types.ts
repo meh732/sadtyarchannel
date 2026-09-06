@@ -79,6 +79,13 @@ export interface AutoPostSettings {
   antiFloodDelayMinutes?: number; // e.g. 3, 5, 10 minutes
   lastAnyPostAt?: string | null;
 
+  // Smart Channel Growth, Traffic & Anti-Churn Controls
+  maxDailyPosts?: number; // Maximum allowed posts per day in Channel 1 (Default: 4)
+  minPostSpacingMinutes?: number; // Minimum gap between ANY post in Channel 1 (Default: 180 min)
+  smartGoldenHours?: boolean; // Prioritize posting during peak engagement hours in Iran (12:30-14:30, 18:00-20:30, 21:30-23:45)
+  sleepHoursProtection?: boolean; // Silence and pause auto-posts during sleeping hours (00:30 - 08:30 Tehran time)
+  singlePostMode?: boolean; // Strictly post ONE single message per cycle (no separate files or duplicate texts at the same minute)
+
   // 1. Configs & Proxies Schedule
   configsEnabled?: boolean; // Toggle for configs auto-posting
   postIntervalHours: number; // e.g. 1, 2, 4, 8, 12, 24 (configs interval in hours)
@@ -117,6 +124,14 @@ export interface AutoPostSettings {
   funNewsCount?: number; // Number of fun/news items to post (1, 2, 3, etc.)
   lastFunNewsPostedAt?: string | null;
 
+  // 6. Future-Proof Digital Tools & AI Toolbox (Channel 1 Independence from Filter/Proxy)
+  digitalToolsEnabled?: boolean; // Master toggle for evergreen digital tools, AI websites, lifehacks & cyber safety
+  digitalToolsIntervalHours?: number;
+  digitalToolsIntervalMinutes?: number;
+  digitalToolsCount?: number; // 1 or 2 tools per post
+  digitalToolsCategories?: ('ai_tools' | 'cool_websites' | 'mobile_hacks' | 'cyber_security' | 'must_apps')[];
+  lastDigitalToolsPostedAt?: string | null;
+
   // Channel 1 Glass / Inline Button Configuration
   inlineButtonEnabled?: boolean; // Toggle for inline glass button at bottom of post
   inlineButtonText?: string; // Custom button label (e.g. "کانال رسمی ما 📢")
@@ -137,6 +152,13 @@ export interface SecondaryChannelSettings {
   antiFloodDelayMinutes?: number; // Anti-flood delay between posts in minutes
   lastAnyPostAt?: string | null;
   lastPostedAt?: string | null;
+
+  // Smart Channel Growth, Traffic & Anti-Churn Controls
+  maxDailyPosts?: number; // Maximum allowed posts per day in Channel 2 (Default: 6)
+  minPostSpacingMinutes?: number; // Minimum gap between ANY post in Channel 2 (Default: 120 min)
+  smartGoldenHours?: boolean; // Prioritize posting during peak engagement hours in Iran (12:30-14:30, 18:00-20:30, 21:30-23:45)
+  sleepHoursProtection?: boolean; // Silence and pause auto-posts during sleeping hours (00:30 - 08:30 Tehran time)
+  singlePostMode?: boolean; // Strictly post ONE single message per cycle (no separate files or duplicate texts at the same minute)
 
   // Channel 2 Dedicated Glass / Inline Button Configuration
   inlineButtonEnabled?: boolean; // Toggle for inline glass button on Channel 2
@@ -182,6 +204,40 @@ export interface SecondaryChannelSettings {
   funNewsIntervalMinutes?: number;
   funNewsCount?: number;
   lastFunNewsPostedAt?: string | null;
+
+  // 6. Future-Proof Digital Tools & AI Toolbox for Channel 2
+  digitalToolsEnabled?: boolean;
+  digitalToolsIntervalHours?: number;
+  digitalToolsIntervalMinutes?: number;
+  digitalToolsCount?: number;
+  digitalToolsCategories?: ('ai_tools' | 'cool_websites' | 'mobile_hacks' | 'cyber_security' | 'must_apps')[];
+  lastDigitalToolsPostedAt?: string | null;
+}
+
+export interface ChannelHealthStatus {
+  channelTarget: 1 | 2;
+  channelHandle: string;
+  title?: string;
+  memberCount?: number;
+  canPost: boolean;
+  postsToday: number;
+  maxDailyPosts: number;
+  lastPostAt: string | null;
+  minutesSinceLastPost: number;
+  inCooldown: boolean;
+  cooldownRemainingMinutes: number;
+  isSleepHours: boolean;
+  isGoldenHour: boolean;
+  currentTehranTime: string;
+  reason?: string;
+  statusLevel: 'optimal' | 'warning' | 'paused' | 'blocked';
+}
+
+export interface DualChannelGrowthStatus {
+  channel1: ChannelHealthStatus;
+  channel2: ChannelHealthStatus;
+  globalAntiFloodActive: boolean;
+  serverTimeTehran: string;
 }
 
 export interface FunNewsItem {
@@ -365,5 +421,38 @@ export interface DashboardStats {
   funItemsCount?: number;
   newsItemsCount?: number;
   funSourcesCount?: number;
+  // Digital Tools Stats
+  totalDigitalTools?: number;
 }
+
+export type DigitalToolCategory = 'ai_tools' | 'cool_websites' | 'mobile_hacks' | 'cyber_security' | 'must_apps';
+
+export interface DigitalToolItem {
+  id: string;
+  title: string;
+  summary: string;
+  howToUse?: string;
+  linkUrl?: string;
+  buttonLabel?: string;
+  category: DigitalToolCategory;
+  tags: string[];
+  importance: 'essential' | 'trending' | 'normal';
+  createdAt: string;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  lastPostedAtCh1?: string | null;
+  lastPostedAtCh2?: string | null;
+  postedAt?: string | null;
+  postCount?: number;
+}
+
+export interface PostedPromptRecord {
+  id: string;
+  promptId: string;
+  titleNormalized: string;
+  promptNormalized: string;
+  channelTarget: 1 | 2;
+  postedAt: string;
+}
+
 
