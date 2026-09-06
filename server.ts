@@ -421,21 +421,21 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   lastConfigsPostedAt: null,
 
   // 2. Tech News Schedule
-  techNewsEnabled: true,
+  techNewsEnabled: false,
   techNewsIntervalHours: 4,
   techNewsIntervalMinutes: 240,
   techNewsCount: 2,
   lastTechNewsPostedAt: null,
 
   // 3. Tech Tricks & Secrets Schedule
-  techTricksEnabled: true,
+  techTricksEnabled: false,
   techTricksIntervalHours: 6,
   techTricksIntervalMinutes: 360,
   techTricksCount: 2,
   lastTechTricksPostedAt: null,
 
   // 4. AI Prompts Schedule
-  aiPromptsEnabled: true,
+  aiPromptsEnabled: false,
   aiPromptsIntervalHours: 6,
   aiPromptsIntervalMinutes: 360,
   aiPromptsCount: 1,
@@ -4186,11 +4186,12 @@ function parseCustomIntervalText(text: string): number | null {
 // ----------------------------------------------------
 // 1. DEDICATED EXECUTOR: CONFIGS & PROXIES AUTO-POST
 // ----------------------------------------------------
-async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boolean> {
-  const settings = db.settings.autoPost;
+async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetChannel?: string): Promise<boolean> {
+  const isCh2 = channelTargetNum === 2;
+  const settings = isCh2 ? (db.settings.autoPost.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
   const targetChannel = customTargetChannel || settings?.targetChannel;
   if (!targetChannel) {
-    addLog('warn', 'ارسال کانفیگ‌ها انجام نشد: کانال مقصد تنظیم نشده است.');
+    addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} انجام نشد: کانال مقصد تنظیم نشده است.`);
     return false;
   }
   if (!db.settings.botToken) {
@@ -4199,7 +4200,7 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
   }
 
   try {
-    addLog('info', `در حال آماده‌سازی و ارسال پست کانفیگ‌ها و پروکسی‌ها به کانال ${targetChannel}...`);
+    addLog('info', `در حال آماده‌سازی و ارسال پست کانفیگ‌ها و پروکسی‌ها به کانال ${channelTargetNum} (${targetChannel})...`);
 
     // Get requested configs count
     const rawConfCount = typeof settings.configCount === 'number' ? settings.configCount : parseInt(String(settings.configCount), 10);
@@ -4234,8 +4235,20 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
     const selectedProxies = proxyLimit === 0 ? [] : shuffledProxies.slice(0, Math.min(proxyLimit, shuffledProxies.length));
 
     if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
-      addLog('warn', 'ارسال کانفیگ‌ها انجام نشد: هیچ کانفیگ یا پروکسی برای ارسال یافت نشد.');
+      addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} انجام نشد: هیچ کانفیگ یا پروکسی برای ارسال یافت نشد.`);
       return false;
+    }
+
+    let channelBranding = '';
+    if (isCh2) {
+      let rawCh2Ad = (settings.adText || '').trim();
+      const ch1Handle = (db.settings.autoPost?.targetChannel || '').replace(/^@/, '').toLowerCase().trim();
+      const ch1Branding = (db.settings.branding || '').toLowerCase().trim();
+      if (ch1Handle && rawCh2Ad.toLowerCase().includes(ch1Handle)) rawCh2Ad = '';
+      if (ch1Branding && rawCh2Ad.toLowerCase().includes(ch1Branding)) rawCh2Ad = '';
+      channelBranding = rawCh2Ad;
+    } else {
+      channelBranding = settings.adText || db.settings.branding || '';
     }
 
     let text = `⚡ <b>${escapeHtml(settings.customText || '💎 پک اختصاصی کانفیگ‌های پرسرعت و پروکسی‌های جدید')}</b>\n`;
@@ -4262,7 +4275,7 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
       }
 
       // Generate all branded configs
-      const allBrandedList = selectedConfigs.map(conf => applyBrandingToConfig(conf.raw, db.settings.branding));
+      const allBrandedList = selectedConfigs.map(conf => applyBrandingToConfig(conf.raw, channelBranding || db.settings.branding));
       fullPackConfigsContent = allBrandedList.join('\n');
 
       let inlineBatch = '';
@@ -4308,7 +4321,9 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
       text += `\n📁 <i>فایل متنی شامل تمام ${selectedConfigs.length} کانفیگ نیز ضمیمه شد.</i>\n`;
     }
 
-    text += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
+    if (channelBranding) {
+      text += `\n🆔 ${escapeHtml(channelBranding)}`;
+    }
 
     const inlineButtons: any[] = [];
     selectedProxies.forEach((p, idx) => {
@@ -4323,18 +4338,20 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
       }
     });
 
-    const sponsorBtn = getSponsorChannelInlineButton();
-    if (sponsorBtn) {
-      inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url }]);
+    const channelBtn = getChannelInlineButton(channelTargetNum, targetChannel);
+    if (channelBtn) {
+      inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
     }
 
-    const botUser = db.settings.botUsername;
-    const botUrl = botUser ? `https://t.me/${botUser.replace('@', '')}` : null;
-    if (botUrl) {
-      inlineButtons.push([{
-        text: '🤖 دریافت کانفیگ و پروکسی رایگان بیشتر',
-        url: botUrl
-      }]);
+    if (!isCh2) {
+      const botUser = db.settings.botUsername;
+      const botUrl = botUser ? `https://t.me/${botUser.replace('@', '')}` : null;
+      if (botUrl) {
+        inlineButtons.push([{
+          text: '🤖 دریافت کانفیگ و پروکسی رایگان بیشتر',
+          url: botUrl
+        }]);
+      }
     }
 
     const safeText = safeTelegramHtmlLength(text, 3900);
@@ -4356,13 +4373,14 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
         const blob = new Blob([fileBuffer], { type: 'text/plain;charset=utf-8' });
         
         let packFilename = `V2Ray_Pack_${selectedConfigs.length}_Configs.txt`;
-        if (db.settings.branding) {
-          const cleanBranding = db.settings.branding.replace('@', '').replace(/[^a-zA-Z0-9_-]/g, '');
+        const brandingTag = channelBranding || db.settings.branding;
+        if (brandingTag) {
+          const cleanBranding = brandingTag.replace('@', '').replace(/[^a-zA-Z0-9_-]/g, '');
           if (cleanBranding) packFilename = `V2Ray_${cleanBranding}_${selectedConfigs.length}_Configs.txt`;
         }
         
         formData.append('document', blob, packFilename);
-        formData.append('caption', `📦 <b>فایل کامل ${selectedConfigs.length} کانفیگ V2Ray</b>\n\n🆔 ${escapeHtml(db.settings.branding || '')}`);
+        formData.append('caption', `📦 <b>فایل کامل ${selectedConfigs.length} کانفیگ V2Ray</b>\n\n🆔 ${escapeHtml(brandingTag || '')}`);
         formData.append('parse_mode', 'HTML');
         if (settings.silentMode) formData.append('disable_notification', 'true');
 
@@ -4386,14 +4404,15 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
           const blob = new Blob([fileBuffer], { type: 'application/octet-stream' });
           
           let brandedFilename = npvFile.filename;
-          if (db.settings.branding) {
-            const cleanBranding = db.settings.branding.replace('@', '').replace(/[^a-zA-Z0-9_-]/g, '');
+          const brandingTag = channelBranding || db.settings.branding;
+          if (brandingTag) {
+            const cleanBranding = brandingTag.replace('@', '').replace(/[^a-zA-Z0-9_-]/g, '');
             brandedFilename = brandedFilename.replace(/\.(npv(t)?|ovpn)$/i, `_${cleanBranding}.$1`);
           }
           
           formData.append('document', blob, brandedFilename);
           const fileType = npvFile.filename.endsWith('.ovpn') ? 'OpenVPN' : 'NapsternetV';
-          const caption = `🌐 <b>فایل پیکربندی اختصاصی ${fileType}</b>\n\nجهت استفاده، این فایل را در نرم‌افزار ایمپورت کنید.\n\n🆔 ${escapeHtml(db.settings.branding || '')}`;
+          const caption = `🌐 <b>فایل پیکربندی اختصاصی ${fileType}</b>\n\nجهت استفاده، این فایل را در نرم‌افزار ایمپورت کنید.\n\n🆔 ${escapeHtml(brandingTag || '')}`;
           formData.append('caption', caption);
           formData.append('parse_mode', 'HTML');
           
@@ -4446,15 +4465,22 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
     });
 
     const nowIso = new Date().toISOString();
-    settings.lastConfigsPostedAt = nowIso;
-    settings.lastPostedAt = nowIso;
-    settings.lastAnyPostAt = nowIso;
+    if (isCh2) {
+      if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
+      db.settings.autoPost.channel2.lastConfigsPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastAnyPostAt = nowIso;
+    } else {
+      db.settings.autoPost.lastConfigsPostedAt = nowIso;
+      db.settings.autoPost.lastPostedAt = nowIso;
+      db.settings.autoPost.lastAnyPostAt = nowIso;
+    }
     saveDatabase();
     
-    addLog('success', `پست کانفیگ‌ها (${selectedConfigs.length} کانفیگ، ${selectedProxies.length} پروکسی) با موفقیت به کانال ${targetChannel} ارسال گردید.`);
+    addLog('success', `پست کانفیگ‌ها (${selectedConfigs.length} کانفیگ، ${selectedProxies.length} پروکسی) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال گردید.`);
     return true;
   } catch (err: any) {
-    addLog('error', `خطا در ارسال پست کانفیگ‌ها به کانال: ${err.message || err}`);
+    addLog('error', `خطا در ارسال پست کانفیگ‌ها به کانال ${channelTargetNum}: ${err.message || err}`);
     return false;
   }
 }
@@ -4462,20 +4488,21 @@ async function executeConfigsAutoPost(customTargetChannel?: string): Promise<boo
 // ----------------------------------------------------
 // 2. DEDICATED EXECUTOR: TECH & AI NEWS AUTO-POST
 // ----------------------------------------------------
-async function executeTechNewsAutoPost(customTargetChannel?: string): Promise<boolean> {
-  const settings = db.settings.autoPost;
+async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetChannel?: string): Promise<boolean> {
+  const isCh2 = channelTargetNum === 2;
+  const settings = isCh2 ? (db.settings.autoPost.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
   const targetChannel = customTargetChannel || settings?.targetChannel;
   if (!targetChannel) {
-    addLog('warn', 'ارسال اخبار روز انجام نشد: کانال مقصد تنظیم نشده است.');
+    addLog('warn', `ارسال اخبار به کانال ${channelTargetNum} انجام نشد: کانال مقصد تنظیم نشده است.`);
     return false;
   }
   if (!db.settings.botToken) {
-    addLog('warn', 'ارسال اخبار روز انجام نشد: توکن ربات فعال نیست.');
+    addLog('warn', 'ارسال اخبار انجام نشد: توکن ربات فعال نیست.');
     return false;
   }
 
   try {
-    addLog('info', `در حال آماده‌سازی و ارسال پست اخبار روز تکنولوژی به کانال ${targetChannel}...`);
+    addLog('info', `در حال آماده‌سازی و ارسال پست اخبار روز تکنولوژی به کانال ${channelTargetNum} (${targetChannel})...`);
 
     seedCuratedTechItems();
     const count = settings.techNewsCount && settings.techNewsCount > 0 ? settings.techNewsCount : 2;
@@ -4506,19 +4533,36 @@ async function executeTechNewsAutoPost(customTargetChannel?: string): Promise<bo
       if (i < selectedNews.length - 1) text += `\n───────────────\n\n`;
     }
 
-    text += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
+    let channelBranding = '';
+    if (isCh2) {
+      let rawCh2Ad = (settings.adText || '').trim();
+      const ch1Handle = (db.settings.autoPost?.targetChannel || '').replace(/^@/, '').toLowerCase().trim();
+      const ch1Branding = (db.settings.branding || '').toLowerCase().trim();
+      if (ch1Handle && rawCh2Ad.toLowerCase().includes(ch1Handle)) rawCh2Ad = '';
+      if (ch1Branding && rawCh2Ad.toLowerCase().includes(ch1Branding)) rawCh2Ad = '';
+      channelBranding = rawCh2Ad;
+    } else {
+      channelBranding = settings.adText || db.settings.branding || '';
+    }
+
+    if (channelBranding) {
+      text += `\n🆔 ${escapeHtml(channelBranding)}`;
+    }
 
     const inlineButtons: any[] = [];
-    const sponsorBtn = getSponsorChannelInlineButton();
-    if (sponsorBtn) {
-      inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url, style: 'primary' }]);
+    const channelBtn = getChannelInlineButton(channelTargetNum, targetChannel);
+    if (channelBtn) {
+      inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
     }
-    const botUser = db.settings.botUsername;
-    if (botUser) {
-      inlineButtons.push([{
-        text: '🤖 دسترسی به اخبار و کانفیگ‌های بیشتر',
-        url: `https://t.me/${botUser.replace('@', '')}`
-      }]);
+
+    if (!isCh2) {
+      const botUser = db.settings.botUsername;
+      if (botUser) {
+        inlineButtons.push([{
+          text: '🤖 دسترسی به اخبار و کانفیگ‌های بیشتر',
+          url: `https://t.me/${botUser.replace('@', '')}`
+        }]);
+      }
     }
 
     const safeText = safeTelegramHtmlLength(text, 3900);
@@ -4560,14 +4604,22 @@ async function executeTechNewsAutoPost(customTargetChannel?: string): Promise<bo
       it.postedToChannel = true;
       it.postedAt = nowIso;
     }
-    settings.lastTechNewsPostedAt = nowIso;
-    settings.lastAnyPostAt = nowIso;
+    if (isCh2) {
+      if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
+      db.settings.autoPost.channel2.lastTechNewsPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastAnyPostAt = nowIso;
+    } else {
+      db.settings.autoPost.lastTechNewsPostedAt = nowIso;
+      db.settings.autoPost.lastPostedAt = nowIso;
+      db.settings.autoPost.lastAnyPostAt = nowIso;
+    }
     saveDatabase();
 
-    addLog('success', `پست اخبار روز تکنولوژی (${selectedNews.length} خبر) با موفقیت به کانال ${targetChannel} ارسال گردید.`);
+    addLog('success', `پست اخبار روز تکنولوژی (${selectedNews.length} خبر) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال گردید.`);
     return true;
   } catch (err: any) {
-    addLog('error', `خطا در ارسال اخبار روز به کانال: ${err.message || err}`);
+    addLog('error', `خطا در ارسال اخبار روز به کانال ${channelTargetNum}: ${err.message || err}`);
     return false;
   }
 }
@@ -4575,11 +4627,12 @@ async function executeTechNewsAutoPost(customTargetChannel?: string): Promise<bo
 // ----------------------------------------------------
 // 3. DEDICATED EXECUTOR: TECH TRICKS & SECRETS AUTO-POST
 // ----------------------------------------------------
-async function executeTechTricksAutoPost(customTargetChannel?: string): Promise<boolean> {
-  const settings = db.settings.autoPost;
+async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTargetChannel?: string): Promise<boolean> {
+  const isCh2 = channelTargetNum === 2;
+  const settings = isCh2 ? (db.settings.autoPost.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
   const targetChannel = customTargetChannel || settings?.targetChannel;
   if (!targetChannel) {
-    addLog('warn', 'ارسال ترفندها انجام نشد: کانال مقصد تنظیم نشده است.');
+    addLog('warn', `ارسال ترفندها به کانال ${channelTargetNum} انجام نشد: کانال مقصد تنظیم نشده است.`);
     return false;
   }
   if (!db.settings.botToken) {
@@ -4588,7 +4641,7 @@ async function executeTechTricksAutoPost(customTargetChannel?: string): Promise<
   }
 
   try {
-    addLog('info', `در حال آماده‌سازی و ارسال پست رازها و ترفندهای موبایل به کانال ${targetChannel}...`);
+    addLog('info', `در حال آماده‌سازی و ارسال پست رازها و ترفندهای موبایل به کانال ${channelTargetNum} (${targetChannel})...`);
 
     seedCuratedTechItems();
     const count = settings.techTricksCount && settings.techTricksCount > 0 ? settings.techTricksCount : 2;
@@ -4619,35 +4672,52 @@ async function executeTechTricksAutoPost(customTargetChannel?: string): Promise<
       if (i < selectedTricks.length - 1) text += `\n───────────────\n\n`;
     }
 
-    text += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
+    let channelBranding = '';
+    if (isCh2) {
+      let rawCh2Ad = (settings.adText || '').trim();
+      const ch1Handle = (db.settings.autoPost?.targetChannel || '').replace(/^@/, '').toLowerCase().trim();
+      const ch1Branding = (db.settings.branding || '').toLowerCase().trim();
+      if (ch1Handle && rawCh2Ad.toLowerCase().includes(ch1Handle)) rawCh2Ad = '';
+      if (ch1Branding && rawCh2Ad.toLowerCase().includes(ch1Branding)) rawCh2Ad = '';
+      channelBranding = rawCh2Ad;
+    } else {
+      channelBranding = settings.adText || db.settings.branding || '';
+    }
+
+    if (channelBranding) {
+      text += `\n🆔 ${escapeHtml(channelBranding)}`;
+    }
 
     const inlineButtons: any[] = [];
-    const sponsorBtn = getSponsorChannelInlineButton();
-    if (sponsorBtn) {
-      inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url, style: 'primary' }]);
+    const channelBtn = getChannelInlineButton(channelTargetNum, targetChannel);
+    if (channelBtn) {
+      inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
     }
-    const botUser = db.settings.botUsername;
-    if (botUser) {
-      inlineButtons.push([{
-        text: '🤖 دسترسی به ترفندها و آموزش‌های بیشتر',
-        url: `https://t.me/${botUser.replace('@', '')}`
-      }]);
+
+    if (!isCh2) {
+      const botUser = db.settings.botUsername;
+      if (botUser) {
+        inlineButtons.push([{
+          text: '🤖 دسترسی به ترفندها و آموزش‌های بیشتر',
+          url: `https://t.me/${botUser.replace('@', '')}`
+        }]);
+      }
     }
 
     const safeText = safeTelegramHtmlLength(text, 3900);
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
     // Check if any selected trick item has an image to attach
-    const itemWithImage最佳 = selectedTricks.find(n => !!n.imageUrl);
+    const itemWithImage = selectedTricks.find(n => !!n.imageUrl);
     let sendSuccess = false;
 
-    if (itemWithImage最佳 && itemWithImage最佳.imageUrl) {
+    if (itemWithImage && itemWithImage.imageUrl) {
       try {
-        const photoCaption纯 = safeTelegramHtmlLength(text, 1024);
+        const photoCaption = safeTelegramHtmlLength(text, 1024);
         await callTelegramApi('sendPhoto', {
           chat_id: channelHandle,
-          photo: itemWithImage最佳.imageUrl,
-          caption: photoCaption纯,
+          photo: itemWithImage.imageUrl,
+          caption: photoCaption,
           parse_mode: 'HTML',
           reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
           disable_notification: !!settings.silentMode
@@ -4673,14 +4743,22 @@ async function executeTechTricksAutoPost(customTargetChannel?: string): Promise<
       it.postedToChannel = true;
       it.postedAt = nowIso;
     }
-    settings.lastTechTricksPostedAt = nowIso;
-    settings.lastAnyPostAt = nowIso;
+    if (isCh2) {
+      if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
+      db.settings.autoPost.channel2.lastTechTricksPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastAnyPostAt = nowIso;
+    } else {
+      db.settings.autoPost.lastTechTricksPostedAt = nowIso;
+      db.settings.autoPost.lastPostedAt = nowIso;
+      db.settings.autoPost.lastAnyPostAt = nowIso;
+    }
     saveDatabase();
 
-    addLog('success', `پست ترفندها و رازهای موبایل (${selectedTricks.length} ترفند) با موفقیت به کانال ${targetChannel} ارسال گردید.`);
+    addLog('success', `پست ترفندها و رازهای موبایل (${selectedTricks.length} ترفند) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال گردید.`);
     return true;
   } catch (err: any) {
-    addLog('error', `خطا در ارسال ترفندها به کانال: ${err.message || err}`);
+    addLog('error', `خطا در ارسال ترفندها به کانال ${channelTargetNum}: ${err.message || err}`);
     return false;
   }
 }
@@ -4724,11 +4802,12 @@ function formatAiPromptForTelegram(prompt: AiPrompt): string {
   return text;
 }
 
-async function executeAiPromptsAutoPost(customTargetChannel?: string): Promise<boolean> {
-  const settings = db.settings.autoPost;
+async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetChannel?: string): Promise<boolean> {
+  const isCh2 = channelTargetNum === 2;
+  const settings = isCh2 ? (db.settings.autoPost.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
   const targetChannel = customTargetChannel || settings?.targetChannel;
   if (!targetChannel) {
-    addLog('warn', 'ارسال پرامپت‌های هوش مصنوعی انجام نشد: کانال مقصد تنظیم نشده است.');
+    addLog('warn', `ارسال پرامپت‌های هوش مصنوعی به کانال ${channelTargetNum} انجام نشد: کانال مقصد تنظیم نشده است.`);
     return false;
   }
   if (!db.settings.botToken) {
@@ -4737,7 +4816,7 @@ async function executeAiPromptsAutoPost(customTargetChannel?: string): Promise<b
   }
 
   try {
-    addLog('info', `در حال آماده‌سازی و ارسال پست پرامپت‌های ترند هوش مصنوعی به کانال ${targetChannel}...`);
+    addLog('info', `در حال آماده‌سازی و ارسال پست پرامپت‌های ترند هوش مصنوعی به کانال ${channelTargetNum} (${targetChannel})...`);
 
     if (!db.aiPrompts || db.aiPrompts.length === 0) {
       db.aiPrompts = [...DEFAULT_AI_PROMPTS];
@@ -4774,19 +4853,36 @@ async function executeAiPromptsAutoPost(customTargetChannel?: string): Promise<b
       if (i < selectedPrompts.length - 1) text += `\n───────────────\n\n`;
     }
 
-    text += `\n🆔 ${escapeHtml(db.settings.branding || '')}`;
+    let channelBranding = '';
+    if (isCh2) {
+      let rawCh2Ad = (settings.adText || '').trim();
+      const ch1Handle = (db.settings.autoPost?.targetChannel || '').replace(/^@/, '').toLowerCase().trim();
+      const ch1Branding = (db.settings.branding || '').toLowerCase().trim();
+      if (ch1Handle && rawCh2Ad.toLowerCase().includes(ch1Handle)) rawCh2Ad = '';
+      if (ch1Branding && rawCh2Ad.toLowerCase().includes(ch1Branding)) rawCh2Ad = '';
+      channelBranding = rawCh2Ad;
+    } else {
+      channelBranding = settings.adText || db.settings.branding || '';
+    }
+
+    if (channelBranding) {
+      text += `\n🆔 ${escapeHtml(channelBranding)}`;
+    }
 
     const inlineButtons: any[] = [];
-    const sponsorBtn = getSponsorChannelInlineButton();
-    if (sponsorBtn) {
-      inlineButtons.push([{ text: sponsorBtn.text, url: sponsorBtn.url }]);
+    const channelBtn = getChannelInlineButton(channelTargetNum, targetChannel);
+    if (channelBtn) {
+      inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
     }
-    const botUser = db.settings.botUsername;
-    if (botUser) {
-      inlineButtons.push([{
-        text: '🤖 دریافت پرامپت‌های طلایی بیشتر',
-        url: `https://t.me/${botUser.replace('@', '')}`
-      }]);
+
+    if (!isCh2) {
+      const botUser = db.settings.botUsername;
+      if (botUser) {
+        inlineButtons.push([{
+          text: '🤖 دریافت پرامپت‌های طلایی بیشتر',
+          url: `https://t.me/${botUser.replace('@', '')}`
+        }]);
+      }
     }
 
     const safeText = safeTelegramHtmlLength(text, 3900);
@@ -4832,14 +4928,22 @@ async function executeAiPromptsAutoPost(customTargetChannel?: string): Promise<b
         dbRef.postedAt = nowIso;
       }
     }
-    settings.lastAiPromptsPostedAt = nowIso;
-    settings.lastAnyPostAt = nowIso;
+    if (isCh2) {
+      if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
+      db.settings.autoPost.channel2.lastAiPromptsPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastAnyPostAt = nowIso;
+    } else {
+      db.settings.autoPost.lastAiPromptsPostedAt = nowIso;
+      db.settings.autoPost.lastPostedAt = nowIso;
+      db.settings.autoPost.lastAnyPostAt = nowIso;
+    }
     saveDatabase();
 
-    addLog('success', `پست پرامپت‌های طلایی هوش مصنوعی (${selectedPrompts.length} پرامپت) با موفقیت به کانال ${targetChannel} ارسال گردید.`);
+    addLog('success', `پست پرامپت‌های طلایی هوش مصنوعی (${selectedPrompts.length} پرامپت) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال گردید.`);
     return true;
   } catch (err: any) {
-    addLog('error', `خطا در ارسال پرامپت‌های هوش مصنوعی به کانال: ${err.message || err}`);
+    addLog('error', `خطا در ارسال پرامپت‌های هوش مصنوعی به کانال ${channelTargetNum}: ${err.message || err}`);
     return false;
   }
 }
@@ -5416,7 +5520,7 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
 // Master Auto-Post Dispatcher
 async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'prompts' | 'fun' = 'all', channelTarget: 1 | 2 = 1): Promise<boolean> {
   const isCh2 = channelTarget === 2;
-  const settings = isCh2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
+  const settings = isCh2 ? (db.settings.autoPost.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
 
   if (!settings || !settings.enabled || !settings.targetChannel) {
     addLog('warn', `ارسال خودکار به کانال ${channelTarget} انجام نشد: غیرفعال است یا کانال هدف تنظیم نشده است.`);
@@ -5428,16 +5532,16 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'pr
   }
 
   if (mode === 'configs') {
-    return await executeConfigsAutoPost(settings.targetChannel);
+    return await executeConfigsAutoPost(channelTarget, settings.targetChannel);
   }
   if (mode === 'news') {
-    return await executeTechNewsAutoPost(settings.targetChannel);
+    return await executeTechNewsAutoPost(channelTarget, settings.targetChannel);
   }
   if (mode === 'tricks') {
-    return await executeTechTricksAutoPost(settings.targetChannel);
+    return await executeTechTricksAutoPost(channelTarget, settings.targetChannel);
   }
   if (mode === 'prompts') {
-    return await executeAiPromptsAutoPost(settings.targetChannel);
+    return await executeAiPromptsAutoPost(channelTarget, settings.targetChannel);
   }
   if (mode === 'fun') {
     return await executeFunNewsAutoPost(channelTarget, settings.targetChannel);
@@ -5446,19 +5550,19 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'pr
   // mode === 'all'
   let anySuccess = false;
   if (settings.configsEnabled !== false && ((settings.configCount || 0) > 0 || (settings.proxyCount || 0) > 0)) {
-    const res = await executeConfigsAutoPost(settings.targetChannel);
+    const res = await executeConfigsAutoPost(channelTarget, settings.targetChannel);
     if (res) anySuccess = true;
   }
   if (settings.techNewsEnabled !== false && (settings.techNewsCount || 0) > 0) {
-    const res = await executeTechNewsAutoPost(settings.targetChannel);
+    const res = await executeTechNewsAutoPost(channelTarget, settings.targetChannel);
     if (res) anySuccess = true;
   }
   if (settings.techTricksEnabled !== false && (settings.techTricksCount || 0) > 0) {
-    const res = await executeTechTricksAutoPost(settings.targetChannel);
+    const res = await executeTechTricksAutoPost(channelTarget, settings.targetChannel);
     if (res) anySuccess = true;
   }
   if (settings.aiPromptsEnabled !== false && (settings.aiPromptsCount || 0) > 0) {
-    const res = await executeAiPromptsAutoPost(settings.targetChannel);
+    const res = await executeAiPromptsAutoPost(channelTarget, settings.targetChannel);
     if (res) anySuccess = true;
   }
   if (settings.funNewsEnabled === true && (settings.funNewsCount || 0) > 0) {
@@ -5470,7 +5574,7 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'pr
     if (isCh2) {
       anySuccess = await executeFunNewsAutoPost(2, settings.targetChannel);
     } else {
-      anySuccess = await executeConfigsAutoPost(settings.targetChannel);
+      anySuccess = await executeConfigsAutoPost(1, settings.targetChannel);
     }
   }
 
@@ -5500,152 +5604,158 @@ async function checkAndTriggerAutoPost() {
   const now = Date.now();
 
   // ==========================================
-  // 1. CHECK CHANNEL 1 SCHEDULE
+  // 1. CHECK CHANNEL 1 SCHEDULE (Independent)
   // ==========================================
   if (ap && ap.enabled && ap.targetChannel && db.settings.botToken) {
     const antiFloodMinutes = typeof ap.antiFloodDelayMinutes === 'number' ? ap.antiFloodDelayMinutes : 3;
     const antiFloodDelayMs = antiFloodMinutes * 60 * 1000;
     const timeSinceAny = ap.lastAnyPostAt ? (now - new Date(ap.lastAnyPostAt).getTime()) : Infinity;
 
+    // Only allow post if minimum anti-flood spacing between any Channel 1 posts has passed
     if (timeSinceAny >= antiFloodDelayMs) {
+      let ch1Triggered = false;
+
       // 1. Configs & Proxies Schedule Check
       const configsActive = ap.configsEnabled !== false && ((ap.configCount || 0) > 0 || (ap.proxyCount || 0) > 0);
-      if (configsActive) {
-        const configMinutes = ap.configIntervalMinutes || (ap.configIntervalHours ? ap.configIntervalHours * 60 : (ap.postIntervalHours ? ap.postIntervalHours * 60 : 240));
-        const configIntervalMs = configMinutes * 60 * 1000;
+      if (!ch1Triggered && configsActive) {
+        const configMinutes = Number(ap.configIntervalMinutes) || (Number(ap.configIntervalHours) ? Number(ap.configIntervalHours) * 60 : (Number(ap.postIntervalHours) ? Number(ap.postIntervalHours) * 60 : 240));
+        const configIntervalMs = Math.max(1, configMinutes) * 60 * 1000;
         const lastConfigTime = ap.lastConfigsPostedAt || ap.lastPostedAt;
         const timeSinceLastConfig = lastConfigTime ? (now - new Date(lastConfigTime).getTime()) : Infinity;
         if (timeSinceLastConfig >= configIntervalMs) {
-          await executeConfigsAutoPost(ap.targetChannel);
-          return;
+          await executeConfigsAutoPost(1, ap.targetChannel);
+          ch1Triggered = true;
         }
       }
 
       // 2. Tech News Schedule Check
       const newsActive = ap.techNewsEnabled !== false && (ap.techNewsCount || 0) > 0;
-      if (newsActive) {
-        const newsMinutes = ap.techNewsIntervalMinutes || (ap.techNewsIntervalHours ? ap.techNewsIntervalHours * 60 : 240);
-        const newsIntervalMs = newsMinutes * 60 * 1000;
+      if (!ch1Triggered && newsActive) {
+        const newsMinutes = Number(ap.techNewsIntervalMinutes) || (Number(ap.techNewsIntervalHours) ? Number(ap.techNewsIntervalHours) * 60 : 240);
+        const newsIntervalMs = Math.max(1, newsMinutes) * 60 * 1000;
         const lastNewsTime = ap.lastTechNewsPostedAt;
         const timeSinceLastNews = lastNewsTime ? (now - new Date(lastNewsTime).getTime()) : Infinity;
         if (timeSinceLastNews >= newsIntervalMs) {
-          await executeTechNewsAutoPost(ap.targetChannel);
-          return;
+          await executeTechNewsAutoPost(1, ap.targetChannel);
+          ch1Triggered = true;
         }
       }
 
       // 3. Tech Tricks & Secrets Schedule Check
       const tricksActive = ap.techTricksEnabled !== false && (ap.techTricksCount || 0) > 0;
-      if (tricksActive) {
-        const tricksMinutes = ap.techTricksIntervalMinutes || (ap.techTricksIntervalHours ? ap.techTricksIntervalHours * 60 : 360);
-        const tricksIntervalMs = tricksMinutes * 60 * 1000;
+      if (!ch1Triggered && tricksActive) {
+        const tricksMinutes = Number(ap.techTricksIntervalMinutes) || (Number(ap.techTricksIntervalHours) ? Number(ap.techTricksIntervalHours) * 60 : 360);
+        const tricksIntervalMs = Math.max(1, tricksMinutes) * 60 * 1000;
         const lastTricksTime = ap.lastTechTricksPostedAt;
         const timeSinceLastTricks = lastTricksTime ? (now - new Date(lastTricksTime).getTime()) : Infinity;
         if (timeSinceLastTricks >= tricksIntervalMs) {
-          await executeTechTricksAutoPost(ap.targetChannel);
-          return;
+          await executeTechTricksAutoPost(1, ap.targetChannel);
+          ch1Triggered = true;
         }
       }
 
       // 4. AI Prompts Schedule Check
       const promptsActive = ap.aiPromptsEnabled !== false && (ap.aiPromptsCount || 0) > 0;
-      if (promptsActive) {
-        const promptsMinutes = ap.aiPromptsIntervalMinutes || (ap.aiPromptsIntervalHours ? ap.aiPromptsIntervalHours * 60 : 360);
-        const promptsIntervalMs = promptsMinutes * 60 * 1000;
+      if (!ch1Triggered && promptsActive) {
+        const promptsMinutes = Number(ap.aiPromptsIntervalMinutes) || (Number(ap.aiPromptsIntervalHours) ? Number(ap.aiPromptsIntervalHours) * 60 : 360);
+        const promptsIntervalMs = Math.max(1, promptsMinutes) * 60 * 1000;
         const lastPromptsTime = ap.lastAiPromptsPostedAt;
         const timeSinceLastPrompts = lastPromptsTime ? (now - new Date(lastPromptsTime).getTime()) : Infinity;
         if (timeSinceLastPrompts >= promptsIntervalMs) {
-          await executeAiPromptsAutoPost(ap.targetChannel);
-          return;
+          await executeAiPromptsAutoPost(1, ap.targetChannel);
+          ch1Triggered = true;
         }
       }
 
       // 5. Fun & General News Schedule Check (Channel 1)
       const funActive = ap.funNewsEnabled === true && (ap.funNewsCount || 0) > 0;
-      if (funActive) {
-        const funMinutes = ap.funNewsIntervalMinutes || (ap.funNewsIntervalHours ? ap.funNewsIntervalHours * 60 : 180);
-        const funIntervalMs = funMinutes * 60 * 1000;
+      if (!ch1Triggered && funActive) {
+        const funMinutes = Number(ap.funNewsIntervalMinutes) || (Number(ap.funNewsIntervalHours) ? Number(ap.funNewsIntervalHours) * 60 : 180);
+        const funIntervalMs = Math.max(1, funMinutes) * 60 * 1000;
         const lastFunTime = ap.lastFunNewsPostedAt;
         const timeSinceLastFun = lastFunTime ? (now - new Date(lastFunTime).getTime()) : Infinity;
         if (timeSinceLastFun >= funIntervalMs) {
           await executeFunNewsAutoPost(1, ap.targetChannel);
-          return;
+          ch1Triggered = true;
         }
       }
     }
   }
 
   // ==========================================
-  // 2. CHECK CHANNEL 2 SCHEDULE (Dedicated)
+  // 2. CHECK CHANNEL 2 SCHEDULE (Completely Independent)
   // ==========================================
   if (ap2 && ap2.enabled && ap2.targetChannel && db.settings.botToken) {
     const antiFloodMinutes2 = typeof ap2.antiFloodDelayMinutes === 'number' ? ap2.antiFloodDelayMinutes : 3;
     const antiFloodDelayMs2 = antiFloodMinutes2 * 60 * 1000;
     const timeSinceAny2 = ap2.lastAnyPostAt ? (now - new Date(ap2.lastAnyPostAt).getTime()) : Infinity;
 
+    // Only allow post if minimum anti-flood spacing between any Channel 2 posts has passed
     if (timeSinceAny2 >= antiFloodDelayMs2) {
+      let ch2Triggered = false;
+
       // 1. Fun & General News for Channel 2 (Primary role for Channel 2)
       const funActive2 = ap2.funNewsEnabled !== false && (ap2.funNewsCount || 0) > 0;
-      if (funActive2) {
-        const funMinutes2 = ap2.funNewsIntervalMinutes || (ap2.funNewsIntervalHours ? ap2.funNewsIntervalHours * 60 : 120);
-        const funIntervalMs2 = funMinutes2 * 60 * 1000;
+      if (!ch2Triggered && funActive2) {
+        const funMinutes2 = Number(ap2.funNewsIntervalMinutes) || (Number(ap2.funNewsIntervalHours) ? Number(ap2.funNewsIntervalHours) * 60 : 120);
+        const funIntervalMs2 = Math.max(1, funMinutes2) * 60 * 1000;
         const lastFunTime2 = ap2.lastFunNewsPostedAt;
         const timeSinceLastFun2 = lastFunTime2 ? (now - new Date(lastFunTime2).getTime()) : Infinity;
         if (timeSinceLastFun2 >= funIntervalMs2) {
           await executeFunNewsAutoPost(2, ap2.targetChannel);
-          return;
+          ch2Triggered = true;
         }
       }
 
       // 2. Configs for Channel 2
       const configsActive2 = ap2.configsEnabled === true && ((ap2.configCount || 0) > 0 || (ap2.proxyCount || 0) > 0);
-      if (configsActive2) {
-        const configMinutes2 = ap2.configIntervalMinutes || (ap2.configIntervalHours ? ap2.configIntervalHours * 60 : 240);
-        const configIntervalMs2 = configMinutes2 * 60 * 1000;
+      if (!ch2Triggered && configsActive2) {
+        const configMinutes2 = Number(ap2.configIntervalMinutes) || (Number(ap2.configIntervalHours) ? Number(ap2.configIntervalHours) * 60 : 240);
+        const configIntervalMs2 = Math.max(1, configMinutes2) * 60 * 1000;
         const lastConfigTime2 = ap2.lastConfigsPostedAt;
         const timeSinceLastConfig2 = lastConfigTime2 ? (now - new Date(lastConfigTime2).getTime()) : Infinity;
         if (timeSinceLastConfig2 >= configIntervalMs2) {
-          await executeConfigsAutoPost(ap2.targetChannel);
-          return;
+          await executeConfigsAutoPost(2, ap2.targetChannel);
+          ch2Triggered = true;
         }
       }
 
       // 3. Tech News for Channel 2
       const newsActive2 = ap2.techNewsEnabled === true && (ap2.techNewsCount || 0) > 0;
-      if (newsActive2) {
-        const newsMinutes2 = ap2.techNewsIntervalMinutes || (ap2.techNewsIntervalHours ? ap2.techNewsIntervalHours * 60 : 240);
-        const newsIntervalMs2 = newsMinutes2 * 60 * 1000;
+      if (!ch2Triggered && newsActive2) {
+        const newsMinutes2 = Number(ap2.techNewsIntervalMinutes) || (Number(ap2.techNewsIntervalHours) ? Number(ap2.techNewsIntervalHours) * 60 : 240);
+        const newsIntervalMs2 = Math.max(1, newsMinutes2) * 60 * 1000;
         const lastNewsTime2 = ap2.lastTechNewsPostedAt;
         const timeSinceLastNews2 = lastNewsTime2 ? (now - new Date(lastNewsTime2).getTime()) : Infinity;
         if (timeSinceLastNews2 >= newsIntervalMs2) {
-          await executeTechNewsAutoPost(ap2.targetChannel);
-          return;
+          await executeTechNewsAutoPost(2, ap2.targetChannel);
+          ch2Triggered = true;
         }
       }
 
       // 4. Tech Tricks for Channel 2
       const tricksActive2 = ap2.techTricksEnabled === true && (ap2.techTricksCount || 0) > 0;
-      if (tricksActive2) {
-        const tricksMinutes2 = ap2.techTricksIntervalMinutes || (ap2.techTricksIntervalHours ? ap2.techTricksIntervalHours * 60 : 360);
-        const tricksIntervalMs2 = tricksMinutes2 * 60 * 1000;
+      if (!ch2Triggered && tricksActive2) {
+        const tricksMinutes2 = Number(ap2.techTricksIntervalMinutes) || (Number(ap2.techTricksIntervalHours) ? Number(ap2.techTricksIntervalHours) * 60 : 360);
+        const tricksIntervalMs2 = Math.max(1, tricksMinutes2) * 60 * 1000;
         const lastTricksTime2 = ap2.lastTechTricksPostedAt;
         const timeSinceLastTricks2 = lastTricksTime2 ? (now - new Date(lastTricksTime2).getTime()) : Infinity;
         if (timeSinceLastTricks2 >= tricksIntervalMs2) {
-          await executeTechTricksAutoPost(ap2.targetChannel);
-          return;
+          await executeTechTricksAutoPost(2, ap2.targetChannel);
+          ch2Triggered = true;
         }
       }
 
       // 5. AI Prompts for Channel 2
       const promptsActive2 = ap2.aiPromptsEnabled === true && (ap2.aiPromptsCount || 0) > 0;
-      if (promptsActive2) {
-        const promptsMinutes2 = ap2.aiPromptsIntervalMinutes || (ap2.aiPromptsIntervalHours ? ap2.aiPromptsIntervalHours * 60 : 360);
-        const promptsIntervalMs2 = promptsMinutes2 * 60 * 1000;
+      if (!ch2Triggered && promptsActive2) {
+        const promptsMinutes2 = Number(ap2.aiPromptsIntervalMinutes) || (Number(ap2.aiPromptsIntervalHours) ? Number(ap2.aiPromptsIntervalHours) * 60 : 360);
+        const promptsIntervalMs2 = Math.max(1, promptsMinutes2) * 60 * 1000;
         const lastPromptsTime2 = ap2.lastAiPromptsPostedAt;
         const timeSinceLastPrompts2 = lastPromptsTime2 ? (now - new Date(lastPromptsTime2).getTime()) : Infinity;
         if (timeSinceLastPrompts2 >= promptsIntervalMs2) {
-          await executeAiPromptsAutoPost(ap2.targetChannel);
-          return;
+          await executeAiPromptsAutoPost(2, ap2.targetChannel);
+          ch2Triggered = true;
         }
       }
     }
@@ -11289,9 +11399,11 @@ async function startExpressServer() {
   // API: Trigger AI Prompts Auto-Post manually
   app.post('/api/bot/auto-post/trigger-ai-prompts', async (req, res) => {
     try {
-      const success = await executeAiPromptsAutoPost();
+      const channelNum = req.body?.channelNum === 2 ? 2 : 1;
+      const ap = channelNum === 2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
+      const success = await executeAiPromptsAutoPost(channelNum, ap?.targetChannel);
       if (success) {
-        res.json({ success: true, message: 'پست پرامپت‌های طلایی هوش مصنوعی با موفقیت به کانال ارسال گردید.' });
+        res.json({ success: true, message: `پست پرامپت‌های طلایی هوش مصنوعی با موفقیت به کانال ${channelNum} ارسال گردید.` });
       } else {
         res.status(400).json({ success: false, message: 'ارسال پرامپت‌ها با خطا مواجه شد یا پرامپتی یافت نشد.' });
       }
@@ -11321,7 +11433,7 @@ async function startExpressServer() {
     try {
       const channelNum = req.body?.channelNum === 2 ? 2 : 1;
       const ap = channelNum === 2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
-      const success = await executeConfigsAutoPost(ap?.targetChannel);
+      const success = await executeConfigsAutoPost(channelNum, ap?.targetChannel);
       if (success) {
         res.json({ success: true, message: `پست کانفیگ‌ها و پروکسی‌ها با موفقیت به کانال ${channelNum} ارسال گردید.` });
       } else {
@@ -11337,7 +11449,7 @@ async function startExpressServer() {
     try {
       const channelNum = req.body?.channelNum === 2 ? 2 : 1;
       const ap = channelNum === 2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
-      const success = await executeTechNewsAutoPost(ap?.targetChannel);
+      const success = await executeTechNewsAutoPost(channelNum, ap?.targetChannel);
       if (success) {
         res.json({ success: true, message: `پست اخبار تکنولوژی با موفقیت به کانال ${channelNum} ارسال گردید.` });
       } else {
@@ -11353,7 +11465,7 @@ async function startExpressServer() {
     try {
       const channelNum = req.body?.channelNum === 2 ? 2 : 1;
       const ap = channelNum === 2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
-      const success = await executeTechTricksAutoPost(ap?.targetChannel);
+      const success = await executeTechTricksAutoPost(channelNum, ap?.targetChannel);
       if (success) {
         res.json({ success: true, message: `پست ترفندها و رازهای تکنولوژی با موفقیت به کانال ${channelNum} ارسال گردید.` });
       } else {
@@ -11376,7 +11488,7 @@ async function startExpressServer() {
       if (!db.settings.botToken) {
         return res.status(400).json({ success: false, message: 'توکن ربات تلگرام در تنظیمات ثبت نشده یا غیرفعال است.' });
       }
-      const success = await executeFunNewsAutoPost(channelNum);
+      const success = await executeFunNewsAutoPost(channelNum, ap.targetChannel);
       if (success) {
         res.json({ success: true, message: `پست فان و اخبار با موفقیت به کانال ${channelNum} (${ap.targetChannel}) ارسال گردید.` });
       } else {
