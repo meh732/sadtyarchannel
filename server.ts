@@ -298,50 +298,55 @@ const DEFAULT_FUN_SOURCES: FunNewsSource[] = [
     category: 'news',
     extractedCount: 0,
     lastExtracted: null
+  },
+  {
+    id: 'fun-src-7',
+    name: 'خبرگزاری فارس (اخبار روز)',
+    urlOrHandle: '@Farsna',
+    enabled: true,
+    category: 'news',
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'fun-src-8',
+    name: 'دانستنی‌های جهان (دانستنی و اطلاعات جالب)',
+    urlOrHandle: '@danestanihaye_jahan',
+    enabled: true,
+    category: 'fun',
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'fun-src-9',
+    name: 'کانال گیزمیز (مطالب جالب و سرگرمی)',
+    urlOrHandle: '@GizmizTel',
+    enabled: true,
+    category: 'fun',
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'fun-src-10',
+    name: 'کافیه (مطالب خواندنی روز)',
+    urlOrHandle: '@Kafiha',
+    enabled: true,
+    category: 'fun',
+    extractedCount: 0,
+    lastExtracted: null
+  },
+  {
+    id: 'fun-src-11',
+    name: 'زومیت (اخبار علم و فناوری)',
+    urlOrHandle: '@zoomit',
+    enabled: true,
+    category: 'news',
+    extractedCount: 0,
+    lastExtracted: null
   }
 ];
 
-const DEFAULT_FUN_NEWS_ITEMS: FunNewsItem[] = [
-  {
-    id: 'fun-item-1',
-    title: 'وقتی بعد از یه روز کاری طولانی می‌رسی خونه...',
-    text: 'وقتی بعد از ۱۰ ساعت کار، کفشاتو درمیاری و دراز می‌کشی رو مبل... آرامش مطلق یعنی همین لحظه! 😴🛋️ کیا این حسو با هیچی تو دنیا عوض نمی‌کنن؟',
-    imageUrl: 'https://images.unsplash.com/photo-1517849845537-4d257902454a?w=800&auto=format&fit=crop&q=80',
-    sourceChannel: '@joker_ir',
-    sourceMessageId: 101,
-    category: 'fun',
-    tags: ['طنز', 'خستگی', 'زندگی_روزمره'],
-    createdAt: new Date().toISOString(),
-    postedToChannel1: false,
-    postedToChannel2: false
-  },
-  {
-    id: 'fun-item-2',
-    title: 'خبر فوری: کشف سیاره جدید با احتمال جو متراکم و آب مایع',
-    text: 'ستاره‌شناسان تلسکوپ فضایی جیمز وب موفق به شناسایی یک سیاره فراخورشیدی شگفت‌انگیز در کمربند حیات ستاره خود شدند که نشانه‌های واضحی از بخار آب و متان در جو آن ثبت گردیده است. 🔭🌌 این کشف گامی بزرگ در جهت یافتن نشانه‌های حیات فرازمینی به شمار می‌رود.',
-    imageUrl: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800&auto=format&fit=crop&q=80',
-    sourceChannel: '@akharinkhabar',
-    sourceMessageId: 204,
-    category: 'news',
-    tags: ['اخبار_علمی', 'جیمز_وب', 'فضا'],
-    createdAt: new Date().toISOString(),
-    postedToChannel1: false,
-    postedToChannel2: false
-  },
-  {
-    id: 'fun-item-3',
-    title: 'فرق برنامه‌نویسی تو فیلما با واقعیت 😂',
-    text: 'تو فیلما: ۳۰ ثانیه تندتند تایپ می‌کنه، میگه: من سازمان انرژی اتمی رو هک کردم! 😎💻\n\nتو واقعیت: ۵ ساعت دنبال یه سمیکالن (;) جاافتاده می‌گرده و آخرشم می‌فهمه کیبورد قطع بوده! 🤦‍♂️🤣',
-    imageUrl: 'https://images.unsplash.com/photo-1531482615713-2afd69097998?w=800&auto=format&fit=crop&q=80',
-    sourceChannel: '@funny_teleg',
-    sourceMessageId: 305,
-    category: 'fun',
-    tags: ['طنز_برنامه_نویسی', 'خنده', 'حق'],
-    createdAt: new Date().toISOString(),
-    postedToChannel1: false,
-    postedToChannel2: false
-  }
-];
+const DEFAULT_FUN_NEWS_ITEMS: FunNewsItem[] = [];
 
 const DEFAULT_CHANNEL2_SETTINGS: SecondaryChannelSettings = {
   enabled: false,
@@ -5063,15 +5068,8 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست فان و اخبار به کانال ${channelTargetNum} (${targetChannel})...`);
 
-    if (!db.funNewsItems || db.funNewsItems.length === 0) {
-      addLog('warn', 'دیتابیس فان و اخبار خالی است؛ تلاش برای استخراج خودکار از منابع...');
-      await extractFunNewsFromSources();
-    }
-
-    const allItems = db.funNewsItems || [];
-    if (allItems.length === 0) {
-      addLog('warn', 'هیچ مطلب فان یا خبری در سیستم موجود نیست.');
-      return false;
+    if (!db.funNewsItems) {
+      db.funNewsItems = [];
     }
 
     const activeHandles = db.funSources
@@ -5079,24 +5077,33 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       .map(s => s.urlOrHandle.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim());
 
     // Filter unposted items for this specific channel
-    let eligible = allItems.filter(item => {
+    let eligible = (db.funNewsItems || []).filter(item => {
       if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
       if (item.sourceChannel) {
         const handle = item.sourceChannel.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim();
-        if (!activeHandles.includes(handle)) return false;
+        if (activeHandles.length > 0 && !activeHandles.includes(handle)) return false;
       }
       return true;
     });
 
-    if (eligible.length === 0) {
-      // If all have been posted, reset rotation (but still only for active channels)
-      eligible = [...allItems].reverse().filter(item => {
+    // If available unposted items are low (< 5), automatically scrape fresh items from live channels
+    if (eligible.length < 5) {
+      addLog('info', `موجودی مطالب منتشرنشده فان و اخبار اندک است (${eligible.length} عدد). در حال استخراج و دریافت مطالب تازه از کانال‌های منبع...`);
+      await extractFunNewsFromSources();
+      
+      eligible = (db.funNewsItems || []).filter(item => {
+        if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
         if (item.sourceChannel) {
           const handle = item.sourceChannel.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim();
-          if (!activeHandles.includes(handle)) return false;
+          if (activeHandles.length > 0 && !activeHandles.includes(handle)) return false;
         }
         return true;
       });
+    }
+
+    if (eligible.length === 0) {
+      addLog('warn', `هیچ مطلب جدید و منتشرنشده‌ای برای کانال ${channelTargetNum} در منابع یافت نشد. جهت پیشگیری از ارسال پست تکراری، ارسال متوقف گردید.`);
+      return false;
     }
 
     const countToPost = Math.max(1, ap?.funNewsCount || 1);
@@ -6339,23 +6346,50 @@ async function setupBotMenuButton(token?: string, req?: express.Request): Promis
  */
 async function setBotCommands(token: string) {
   try {
-    const response = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+    // 1. Default commands for all users
+    await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         commands: [
-          { command: 'start', description: '🚀 شروع کار ربات و منوی اصلی' },
+          { command: 'start', description: '🚀 شروع کار ربات، رفرش و منوی اصلی' },
+          { command: 'v2ray', description: '⚡️ دریافت کانفیگ‌های فعال ویتوری' },
+          { command: 'proxy', description: '🔌 دریافت پروکسی‌های جدید تلگرام' },
           { command: 'help', description: 'ℹ️ راهنمای گام به گام اتصال' }
-        ]
+        ],
+        scope: { type: 'default' }
       }),
       signal: AbortSignal.timeout(10000)
     });
-    const data = await response.json();
-    if (data.ok) {
-      addLog('success', 'منوی دستورات پیش‌فرض ربات تلگرام با موفقیت تنظیم و ثبت گردید.');
-    } else {
-      console.error('Failed to set bot commands:', data.description);
+
+    // 2. Admin specific commands if adminId is configured
+    if (db.settings.adminId) {
+      const adminIdNum = Number(String(db.settings.adminId).replace(/[^0-9]/g, ''));
+      if (adminIdNum) {
+        await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            commands: [
+              { command: 'start', description: '🔄 شروع مجدد، رفرش و وضعیت ربات' },
+              { command: 'admin', description: '⚙️ پنل مدیریت تلگرامی و تنظیمات' },
+              { command: 'panel', description: '🌐 باز کردن وب‌اپلیکیشن مدیریت' },
+              { command: 'scrape', description: '🔄 استخراج و اسکن فوری کانفیگ‌ها' },
+              { command: 'test', description: '🌐 تست اتصال پورت‌ها و پینگ نت' },
+              { command: 'cron', description: '⏰ زمان‌بندی و تنظیمات ارسال خودکار' },
+              { command: 'backup', description: '📦 دانلود فوری فایل بکاپ دیتابیس' },
+              { command: 'restore', description: '📥 بازگردانی دیتابیس از بکاپ' },
+              { command: 'status', description: '📊 مشاهده آمار و وضعیت سرور' },
+              { command: 'help', description: 'ℹ️ راهنمای جامع سیستم' }
+            ],
+            scope: { type: 'chat', chat_id: adminIdNum }
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+      }
     }
+
+    addLog('success', 'منوی دستورات پیش‌فرض و دسترسی‌های مدیریت در تلگرام با موفقیت ثبت گردید.');
   } catch (err: any) {
     console.error('Error setting bot commands:', err.message || err);
   }
@@ -6407,13 +6441,15 @@ function getReplyKeyboard(userId: string | number, username?: string | null) {
       ]);
     }
     keyboard.push([
-      { text: '⚙️ ورود به پنل مدیریت در تلگرام 🔴' }
+      { text: '⚙️ ورود به پنل مدیریت در تلگرام 🔴' },
+      { text: '🔄 استخراج سریع کانفیگ‌ها ⚡' }
     ]);
   }
 
   return {
     keyboard,
     resize_keyboard: true,
+    is_persistent: true,
     one_time_keyboard: false
   };
 }
@@ -7487,7 +7523,76 @@ async function handleBotUpdate(update: any) {
         }
       }
 
-      // 2. Admin Menus & Callback Actions
+      // 2. Admin Menus & Direct Command Handlers
+      if (messageText === '/scrape' || messageText === '🔄 استخراج سریع کانفیگ‌ها ⚡' || callbackData === 'admin_scrape_now') {
+        if (callbackQueryId) await answerCallback('استخراج و اسکن منابع... 🔄');
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: '⏳ **در حال استخراج خودکار و اسکن تمامی کانال‌ها و سابسکریپشن‌ها...**\nاین فرآیند ممکن است چند ثانیه زمان ببرد.',
+          parse_mode: 'Markdown'
+        });
+        const result = await scrapeAllSources();
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `✅ **استخراج منابع با موفقیت انجام شد!**\n\n🟢 کانفیگ‌های جدید اضافه شده: **${result.configsAdded}**\n🔌 پروکسی‌های جدید: **${result.proxiesAdded}**\n📄 فایل‌های جدید: **${result.filesAdded}**\n\nتست خودکار پینگ پورت‌ها در پس‌زمینه آغاز گردید.`,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📊 مشاهده آمار سیستم', callback_data: 'admin_stats' }],
+              [{ text: '⚙️ پنل مدیریت', callback_data: 'admin_menu' }]
+            ]
+          }
+        });
+        return;
+      }
+
+      if (messageText === '/test' || callbackData === 'admin_test_configs') {
+        if (callbackQueryId) await answerCallback('شروع تست پینگ... 🌐');
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: '⏳ **تست اتصال و پینگ پورت‌های کانفیگ‌ها در پس‌زمینه آغاز گردید.**\nنتایج به صورت زنده در دیتابیس بروزرسانی می‌شود.',
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به پنل مدیریت', callback_data: 'admin_menu' }]] }
+        });
+        testAllConfigs().catch(() => {});
+        return;
+      }
+
+      if (messageText === '/status' || messageText === '/stats' || callbackData === 'admin_stats') {
+        if (callbackQueryId) await answerCallback('آمار سیستم 📊');
+        const workingConfigs = db.configs.filter(c => c.status === 'working').length;
+        const workingProxies = (db.proxies || []).filter(p => p.status === 'working').length;
+        const totalUsers = db.users.length;
+        const activeSources = db.sources.filter(s => s.enabled).length;
+        const ch1 = db.settings.autoPost?.targetChannel || 'تنظیم نشده';
+        const ch2 = db.settings.autoPost?.channel2?.targetChannel || 'تنظیم نشده';
+        const funCount = (db.funNewsItems || []).length;
+        const unpostedFunCh2 = (db.funNewsItems || []).filter(i => !i.postedToChannel2).length;
+
+        const statsText = `📊 **آمار جامع وضعیت ربات و سرور:**\n\n` +
+          `🟢 **کانفیگ‌های فعال V2Ray:** ${workingConfigs} از ${db.configs.length}\n` +
+          `🔌 **پروکسی‌های فعال تلگرام:** ${workingProxies} از ${(db.proxies || []).length}\n` +
+          `👥 **تعداد کل کاربران ربات:** ${totalUsers} نفر\n` +
+          `🌐 **منابع استخراج فعال:** ${activeSources} از ${db.sources.length}\n` +
+          `🎭 **مطالب فان و اخبار در آرشیو:** ${funCount} عدد (${unpostedFunCh2} منتشرنشده در کانال ۲)\n` +
+          `📢 **کانال اصلی ۱:** \`${ch1}\`\n` +
+          `🎭 **کانال دوم:** \`${ch2}\`\n` +
+          `⚡ **وضعیت سرور:** آنلاین و در حال کار`;
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: statsText,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔄 استخراج و اسکن منابع', callback_data: 'admin_scrape_now' }],
+              [{ text: '⚙️ پنل مدیریت', callback_data: 'admin_menu' }]
+            ]
+          }
+        });
+        return;
+      }
+
       if (messageText === '/panel' || callbackData === 'admin_webapp') {
         if (callbackQueryId) await answerCallback('پنل وب‌ویو 🌐');
         const appUrl = getPublicAppUrl();
@@ -10063,19 +10168,22 @@ function setupIntervals() {
     refreshAiPromptsAndPurgeOld().catch(err => console.error('AiPrompts auto-refresh error:', err));
   }, 2 * 60 * 60 * 1000);
 
+  // Auto crawl Fun & News sources every 30 minutes to maintain fresh unposted items
+  setInterval(() => {
+    extractFunNewsFromSources().catch(err => console.error('Fun/News auto-extract error:', err));
+  }, 30 * 60 * 1000);
 
   // Set up auto post interval
   setupAutoPostInterval();
 
-  
   // Run initial checks shortly after startup
   setTimeout(() => {
     monitorChannelPosts();
     checkAndTriggerBackup();
     refreshTechContentAndPurgeOld().catch(() => {});
     refreshAiPromptsAndPurgeOld().catch(() => {});
+    extractFunNewsFromSources().catch(() => {});
   }, 5 * 1000);
-
 }
 
 // Initialize background schedules
