@@ -189,6 +189,8 @@ export interface FunNewsItem {
   title: string;
   text: string;
   imageUrl?: string;
+  videoUrl?: string;
+  mediaType?: 'photo' | 'video' | 'animation';
   sourceChannel: string; // e.g. @khandeh_bazaar
   sourceMessageId?: number;
   category: 'fun' | 'news' | 'meme' | 'lifestyle';
@@ -289,6 +291,8 @@ export interface TechItem {
   summary: string;
   fullText?: string;
   imageUrl?: string;
+  videoUrl?: string;
+  mediaType?: 'photo' | 'video' | 'animation';
   category: TechItemCategory; // 'news' (اخبار تکنولوژی), 'trick' (ترفندهای گوشی و تکنولوژی), 'secret' (رازهای تکنولوژی و امنیت)
   tags: string[];
   source: string;
@@ -315,6 +319,8 @@ export interface AiPrompt {
   description: string; // توضیحات فارسی پرامپت و نتیجه حاصله
   promptText: string; // متن اصلی انگلیسی پرامپت جهت کپی کردن آسان
   imageUrl?: string; // تصویر نمونه برای پیش‌نمایش بصری (از لئوناردو، میدجرنی، دالی و غیره)
+  videoUrl?: string; // ویدیوی نمونه برای پیش‌نمایش پرامپت‌های ویدیویی (Sora, Kling, Runway, Luma)
+  mediaType?: 'photo' | 'video' | 'animation';
   tags: string[]; // هشتگ‌ها
   importance?: 'hot' | 'normal'; // داغ و ترند یا معمولی
   tipsForPersonalPhoto?: string; // راهنمای فارسی ترکیب با عکس

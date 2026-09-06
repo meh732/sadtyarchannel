@@ -12,7 +12,8 @@ import {
   Trash2, 
   Send, 
   Sparkles, 
-  Image as ImageIcon, 
+  Image as ImageIcon,
+  Video, 
   X, 
   ExternalLink,
   Tag
@@ -34,6 +35,8 @@ interface PromptsViewProps {
     description: string;
     promptText: string;
     imageUrl?: string;
+    videoUrl?: string;
+    mediaType?: 'photo' | 'video' | 'animation';
     tags?: string[];
   }) => Promise<boolean>;
   onDeletePrompt: (id: string) => Promise<void>;
@@ -109,6 +112,7 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
       description: '',
       promptText: '',
       imageUrl: '',
+      videoUrl: '',
       tags: ''
     });
     setShowModal(true);
@@ -122,6 +126,7 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
       description: prompt.description || '',
       promptText: prompt.promptText || '',
       imageUrl: prompt.imageUrl || '',
+      videoUrl: prompt.videoUrl || '',
       tags: Array.isArray(prompt.tags) ? prompt.tags.join(', ') : ''
     });
     setShowModal(true);
@@ -147,6 +152,7 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
         description: formData.description.trim(),
         promptText: formData.promptText.trim(),
         imageUrl: formData.imageUrl.trim() || undefined,
+        videoUrl: formData.videoUrl.trim() || undefined,
         tags: parsedTags
       });
 
@@ -270,9 +276,18 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
                 key={p.id}
                 className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow duration-200 relative group"
               >
-                {/* Preview Image / Header banner */}
-                <div className="relative aspect-video w-full bg-slate-900 overflow-hidden">
-                  {p.imageUrl ? (
+                {/* Preview Video / Image / Header banner */}
+                <div className="relative aspect-video w-full bg-slate-950 overflow-hidden flex items-center justify-center">
+                  {p.videoUrl ? (
+                    <video
+                      src={p.videoUrl}
+                      poster={p.imageUrl}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      className="w-full h-full object-contain relative z-10"
+                    />
+                  ) : p.imageUrl ? (
                     <img
                       src={p.imageUrl}
                       alt={p.title}
@@ -285,19 +300,25 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
                     />
                   ) : null}
 
-                  {/* Fallback graphic if image failed or missing */}
+                  {/* Fallback graphic if image/video failed or missing */}
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 via-indigo-950/60 to-slate-900 pointer-events-none -z-0">
                     <ImageIcon className="w-10 h-10 text-slate-700" />
-                    <span className="text-[10px] text-slate-500 mt-1">پیش‌نمایش تصویر گرافیکی</span>
+                    <span className="text-[10px] text-slate-500 mt-1">پیش‌نمایش رسانه</span>
                   </div>
 
                   {/* Category Badge */}
-                  <span className={`absolute top-3 left-3 text-[10px] font-bold px-2.5 py-1 rounded-full border shadow-sm backdrop-blur-md bg-white/90 ${catInfo.text}`}>
+                  <span className={`absolute top-3 left-3 text-[10px] font-bold px-2.5 py-1 rounded-full border shadow-sm backdrop-blur-md bg-white/90 ${catInfo.text} pointer-events-none z-20`}>
                     {catInfo.label}
                   </span>
 
+                  {p.videoUrl && (
+                    <span className="absolute bottom-3 right-3 text-[10px] font-bold px-2 py-0.5 rounded-md bg-black/75 text-purple-300 backdrop-blur-xs flex items-center gap-1 pointer-events-none z-20">
+                      <Video className="w-3 h-3" /> ویدیو
+                    </span>
+                  )}
+
                   {p.importance === 'hot' && (
-                    <span className="absolute top-3 right-3 text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-600 text-white shadow-sm flex items-center gap-1">
+                    <span className="absolute top-3 right-3 text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-600 text-white shadow-sm flex items-center gap-1 pointer-events-none z-20">
                       🔥 داغ و ترند
                     </span>
                   )}
@@ -422,7 +443,7 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-700">دسته‌بندی</label>
                     <select
@@ -438,12 +459,23 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700">آدرس تصویر نمونه (URL اختیاری)</label>
+                    <label className="text-xs font-bold text-slate-700">آدرس تصویر (URL)</label>
                     <input
                       type="url"
                       placeholder="https://images.unsplash.com/..."
                       value={formData.imageUrl}
                       onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
+                      className="w-full px-3 py-2.5 border border-slate-200 text-slate-800 text-xs rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700">آدرس ویدیو (URL)</label>
+                    <input
+                      type="url"
+                      placeholder="https://.../video.mp4"
+                      value={formData.videoUrl}
+                      onChange={(e) => setFormData({ ...formData, videoUrl: e.target.value })}
                       className="w-full px-3 py-2.5 border border-slate-200 text-slate-800 text-xs rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
                     />
                   </div>

@@ -11,7 +11,9 @@ import {
   Search, 
   Check, 
   X, 
-  Image as ImageIcon 
+  Image as ImageIcon,
+  Video,
+  Play
 } from 'lucide-react';
 import { FunNewsItem, FunNewsSource } from '../types';
 
@@ -283,8 +285,23 @@ export const FunNewsView: React.FC<FunNewsViewProps> = ({
               className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between"
             >
               <div>
-                {/* Image Preview if present */}
-                {item.imageUrl && (
+                {/* Media Preview (Video or Image) */}
+                {item.videoUrl ? (
+                  <div className="relative aspect-video w-full bg-slate-950 overflow-hidden border-b border-slate-100 flex items-center justify-center">
+                    <video
+                      src={item.videoUrl}
+                      poster={item.imageUrl}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      className="w-full h-full object-contain"
+                    />
+                    <div className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-md bg-black/75 text-amber-300 font-bold text-[10px] flex items-center gap-1 backdrop-blur-xs pointer-events-none">
+                      <Video className="w-3 h-3" />
+                      <span>{item.mediaType === 'animation' ? 'انیمیشن / GIF' : 'ویدیو'}</span>
+                    </div>
+                  </div>
+                ) : item.imageUrl ? (
                   <div className="relative aspect-video w-full bg-slate-900 overflow-hidden border-b border-slate-100">
                     <img
                       src={item.imageUrl}
@@ -292,8 +309,12 @@ export const FunNewsView: React.FC<FunNewsViewProps> = ({
                       referrerPolicy="no-referrer"
                       className="w-full h-full object-cover"
                     />
+                    <div className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-md bg-black/60 text-white font-bold text-[10px] flex items-center gap-1 backdrop-blur-xs">
+                      <ImageIcon className="w-3 h-3" />
+                      <span>تصویر</span>
+                    </div>
                   </div>
-                )}
+                ) : null}
 
                 <div className="p-5 space-y-3">
                   {/* Category & Source Badges */}

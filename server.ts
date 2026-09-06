@@ -3550,6 +3550,30 @@ function cleanHtmlText(html: string): string {
     .trim();
 }
 
+function extractVideoUrlFromXmlBlock(block: string): string | undefined {
+  if (!block) return undefined;
+  
+  // 1. Check <enclosure url="..." type="video/..." />
+  const enclosureMatch = block.match(/<enclosure[^>]*url=["']([^"']+)["'][^>]*>/i);
+  if (enclosureMatch && enclosureMatch[1] && (/\.(mp4|mov|webm|mkv|m4v)/i.test(enclosureMatch[1]) || /video/i.test(enclosureMatch[0]))) {
+    return enclosureMatch[1].trim();
+  }
+
+  // 2. Check <media:content type="video/..." url="..." />
+  const mediaMatch = block.match(/<media:content[^>]*url=["']([^"']+)["'][^>]*>/i);
+  if (mediaMatch && mediaMatch[1] && (/\.(mp4|webm|mov)/i.test(mediaMatch[1]) || /video/i.test(mediaMatch[0]))) {
+    return mediaMatch[1].trim();
+  }
+
+  // 3. Check <video src="..." />
+  const videoTagMatch = block.match(/<video[^>]+src=["']([^"']+)["']/i);
+  if (videoTagMatch && videoTagMatch[1] && /^https?:\/\//i.test(videoTagMatch[1])) {
+    return videoTagMatch[1].trim();
+  }
+
+  return undefined;
+}
+
 function extractImageUrlFromXmlBlock(block: string): string | undefined {
   if (!block) return undefined;
   
@@ -3920,7 +3944,14 @@ async function fetchLiveTechFromRss(): Promise<number> {
           if (!isNaN(d.getTime())) pubDate = d.toISOString();
         }
 
+        const videoUrl = extractVideoUrlFromXmlBlock(block);
         const imageUrl = extractImageUrlFromXmlBlock(block);
+        let mediaType: 'photo' | 'video' | 'animation' | undefined = undefined;
+        if (videoUrl) {
+          mediaType = /\.gif(\?|$)/i.test(videoUrl) ? 'animation' : 'video';
+        } else if (imageUrl) {
+          mediaType = 'photo';
+        }
 
         // Categorize based on keywords
         let category: TechItemCategory = 'news';
@@ -3947,6 +3978,8 @@ async function fetchLiveTechFromRss(): Promise<number> {
           source: feed.name,
           sourceUrl: link || undefined,
           imageUrl: imageUrl || undefined,
+          videoUrl: videoUrl || undefined,
+          mediaType: mediaType || undefined,
           importance,
           importanceScore: score,
           createdAt: pubDate,
@@ -4344,6 +4377,80 @@ function formatTechItemForTelegram(item: TechItem, showBadge = true): string {
   return text;
 }
 
+/**
+ * Unified Telegram Media Post Sender:
+ * Automatically dispatches Videos (sendVideo), Animations/GIFs (sendAnimation),
+ * Photos (sendPhoto), or Text (sendMessage) with automatic HTML caption length
+ * protection (1024 chars for media, 3900 for text) and multi-stage fallback.
+ */
+async function sendTelegramPostWithMedia(params: {
+  chatId: string | number;
+  text: string;
+  videoUrl?: string | null;
+  imageUrl?: string | null;
+  mediaType?: 'photo' | 'video' | 'animation' | null;
+  replyMarkup?: any;
+  silent?: boolean;
+}): Promise<{ success: boolean; messageId?: number; error?: string }> {
+  const { chatId, text, videoUrl, imageUrl, mediaType, replyMarkup, silent } = params;
+  const safeFullText = safeTelegramHtmlLength(text, 3900);
+  const caption = safeTelegramHtmlLength(text, 1024);
+
+  // 1. Try sending video or animation/gif if videoUrl is available
+  if (videoUrl && /^https?:\/\//i.test(videoUrl)) {
+    const isAnim = mediaType === 'animation' || /\.gif(\?|$)/i.test(videoUrl);
+    const method = isAnim ? 'sendAnimation' : 'sendVideo';
+    const payloadKey = isAnim ? 'animation' : 'video';
+
+    try {
+      const result = await callTelegramApi(method, {
+        chat_id: chatId,
+        [payloadKey]: videoUrl,
+        caption,
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup,
+        disable_notification: !!silent,
+        supports_streaming: true
+      });
+      return { success: true, messageId: result?.message_id };
+    } catch (videoErr: any) {
+      addLog('warn', `ارسال ویدیوی پست به ${chatId} با خطا مواجه شد (${videoErr?.message || videoErr})، در حال تلاش برای ارسال با عکس/متن...`);
+    }
+  }
+
+  // 2. Try sending photo if imageUrl is available (or if video failed and image exists)
+  if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
+    try {
+      const result = await callTelegramApi('sendPhoto', {
+        chat_id: chatId,
+        photo: imageUrl,
+        caption,
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup,
+        disable_notification: !!silent
+      });
+      return { success: true, messageId: result?.message_id };
+    } catch (photoErr: any) {
+      addLog('warn', `ارسال تصویر پست به ${chatId} با خطا مواجه شد (${photoErr?.message || photoErr})، در حال ارسال متنی...`);
+    }
+  }
+
+  // 3. Fallback to sendMessage (Text)
+  try {
+    const result = await callTelegramApi('sendMessage', {
+      chat_id: chatId,
+      text: safeFullText,
+      parse_mode: 'HTML',
+      reply_markup: replyMarkup,
+      disable_notification: !!silent
+    });
+    return { success: true, messageId: result?.message_id };
+  } catch (textErr: any) {
+    addLog('error', `ارسال پیام متنی به ${chatId} با خطا مواجه شد: ${textErr?.message || textErr}`);
+    return { success: false, error: textErr?.message || String(textErr) };
+  }
+}
+
 // Standalone Tech Post Dispatcher (General)
 async function executeStandaloneTechPost(targetChannel: string, items: TechItem[]): Promise<boolean> {
   if (!items || items.length === 0) return false;
@@ -4371,37 +4478,22 @@ async function executeStandaloneTechPost(targetChannel: string, items: TechItem[
       }]);
     }
 
-    const safeText = safeTelegramHtmlLength(msg, 3900);
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
-    
+    const itemWithVideo = items.find(n => !!n.videoUrl);
     const itemWithImage = items.find(n => !!n.imageUrl);
-    let sendSuccess = false;
 
-    if (itemWithImage && itemWithImage.imageUrl) {
-      try {
-        const photoCaption = safeTelegramHtmlLength(msg, 1024);
-        await callTelegramApi('sendPhoto', {
-          chat_id: channelHandle,
-          photo: itemWithImage.imageUrl,
-          caption: photoCaption,
-          parse_mode: 'HTML',
-          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-          disable_notification: !!db.settings.autoPost.silentMode
-        });
-        sendSuccess = true;
-      } catch (photoErr: any) {
-        // Fallback to text
-      }
-    }
+    const postResult = await sendTelegramPostWithMedia({
+      chatId: channelHandle,
+      text: msg,
+      videoUrl: itemWithVideo?.videoUrl,
+      imageUrl: itemWithImage?.imageUrl,
+      mediaType: itemWithVideo?.mediaType || itemWithImage?.mediaType,
+      replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+      silent: !!db.settings.autoPost.silentMode
+    });
 
-    if (!sendSuccess) {
-      await callTelegramApi('sendMessage', {
-        chat_id: channelHandle,
-        text: safeText,
-        parse_mode: 'HTML',
-        reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-        disable_notification: !!db.settings.autoPost.silentMode
-      });
+    if (!postResult.success) {
+      return false;
     }
 
     for (const it of items) {
@@ -4913,38 +5005,24 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
       }
     }
 
-    const safeText = safeTelegramHtmlLength(text, 3900);
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
-    // Check if any selected news item has an image to attach
+    // Check if any selected news item has a video or image to attach
+    const itemWithVideo = selectedNews.find(n => !!n.videoUrl);
     const itemWithImage = selectedNews.find(n => !!n.imageUrl);
-    let sendSuccess = false;
 
-    if (itemWithImage && itemWithImage.imageUrl) {
-      try {
-        const photoCaption = safeTelegramHtmlLength(text, 1024);
-        await callTelegramApi('sendPhoto', {
-          chat_id: channelHandle,
-          photo: itemWithImage.imageUrl,
-          caption: photoCaption,
-          parse_mode: 'HTML',
-          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-          disable_notification: !!settings.silentMode
-        });
-        sendSuccess = true;
-      } catch (photoErr: any) {
-        addLog('warn', `ارسال عکس برای پست اخبار با خطا مواجه شد، ارسال متنی جایگزین می‌شود: ${photoErr?.message || photoErr}`);
-      }
-    }
+    const postResult = await sendTelegramPostWithMedia({
+      chatId: channelHandle,
+      text,
+      videoUrl: itemWithVideo?.videoUrl,
+      imageUrl: itemWithImage?.imageUrl,
+      mediaType: itemWithVideo?.mediaType || itemWithImage?.mediaType,
+      replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+      silent: !!settings.silentMode
+    });
 
-    if (!sendSuccess) {
-      await callTelegramApi('sendMessage', {
-        chat_id: channelHandle,
-        text: safeText,
-        parse_mode: 'HTML',
-        reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-        disable_notification: !!settings.silentMode
-      });
+    if (!postResult.success) {
+      return false;
     }
 
     const nowIso = new Date().toISOString();
@@ -5062,38 +5140,24 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
       }
     }
 
-    const safeText = safeTelegramHtmlLength(text, 3900);
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
-    // Check if any selected trick item has an image to attach
+    // Check if any selected trick item has a video or image to attach
+    const itemWithVideo = selectedTricks.find(n => !!n.videoUrl);
     const itemWithImage = selectedTricks.find(n => !!n.imageUrl);
-    let sendSuccess = false;
 
-    if (itemWithImage && itemWithImage.imageUrl) {
-      try {
-        const photoCaption = safeTelegramHtmlLength(text, 1024);
-        await callTelegramApi('sendPhoto', {
-          chat_id: channelHandle,
-          photo: itemWithImage.imageUrl,
-          caption: photoCaption,
-          parse_mode: 'HTML',
-          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-          disable_notification: !!settings.silentMode
-        });
-        sendSuccess = true;
-      } catch (photoErr: any) {
-        addLog('warn', `ارسال عکس برای پست ترفندها با خطا مواجه شد، ارسال متنی جایگزین می‌شود: ${photoErr?.message || photoErr}`);
-      }
-    }
+    const postResult = await sendTelegramPostWithMedia({
+      chatId: channelHandle,
+      text,
+      videoUrl: itemWithVideo?.videoUrl,
+      imageUrl: itemWithImage?.imageUrl,
+      mediaType: itemWithVideo?.mediaType || itemWithImage?.mediaType,
+      replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+      silent: !!settings.silentMode
+    });
 
-    if (!sendSuccess) {
-      await callTelegramApi('sendMessage', {
-        chat_id: channelHandle,
-        text: safeText,
-        parse_mode: 'HTML',
-        reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-        disable_notification: !!settings.silentMode
-      });
+    if (!postResult.success) {
+      return false;
     }
 
     const nowIso = new Date().toISOString();
@@ -5254,38 +5318,24 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
       }
     }
 
-    const safeText = safeTelegramHtmlLength(text, 3900);
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
-    // Check if any selected prompt item has an image to attach
+    // Check if any selected prompt item has a video or image to attach
+    const itemWithVideo = selectedPrompts.find(n => !!n.videoUrl);
     const itemWithImage = selectedPrompts.find(n => !!n.imageUrl);
-    let sendSuccess = false;
 
-    if (itemWithImage && itemWithImage.imageUrl) {
-      try {
-        const photoCaption = safeTelegramHtmlLength(text, 1024);
-        await callTelegramApi('sendPhoto', {
-          chat_id: channelHandle,
-          photo: itemWithImage.imageUrl,
-          caption: photoCaption,
-          parse_mode: 'HTML',
-          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-          disable_notification: !!settings.silentMode
-        });
-        sendSuccess = true;
-      } catch (photoErr: any) {
-        addLog('warn', `ارسال عکس برای پست پرامپت‌ها با خطا مواجه شد، ارسال متنی جایگزین می‌شود: ${photoErr?.message || photoErr}`);
-      }
-    }
+    const postResult = await sendTelegramPostWithMedia({
+      chatId: channelHandle,
+      text,
+      videoUrl: itemWithVideo?.videoUrl,
+      imageUrl: itemWithImage?.imageUrl,
+      mediaType: itemWithVideo?.mediaType || itemWithImage?.mediaType,
+      replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+      silent: !!settings.silentMode
+    });
 
-    if (!sendSuccess) {
-      await callTelegramApi('sendMessage', {
-        chat_id: channelHandle,
-        text: safeText,
-        parse_mode: 'HTML',
-        reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-        disable_notification: !!settings.silentMode
-      });
+    if (!postResult.success) {
+      return false;
     }
 
     const nowIso = new Date().toISOString();
@@ -5633,46 +5683,31 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       }
       text += `🆔 ${escapeHtml(channelHandle)}`;
 
-      let sendSuccess = false;
       const inlineButtons: any[] = [];
       const channelBtn = getChannelInlineButton(isCh2 ? 2 : 1, channelHandle);
       if (channelBtn) {
         inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
       }
 
-      if (item.imageUrl && text.length <= 1000) {
-        try {
-          await callTelegramApi('sendPhoto', {
-            chat_id: channelHandle,
-            photo: item.imageUrl,
-            caption: text,
-            parse_mode: 'HTML',
-            reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-            disable_notification: !!ap.silentMode
-          });
-          sendSuccess = true;
-        } catch (photoErr: any) {
-          addLog('warn', `ارسال تصویر فان/خبر با خطا مواجه شد، ارسال متنی انجام می‌شود: ${photoErr?.message || photoErr}`);
+      const postResult = await sendTelegramPostWithMedia({
+        chatId: channelHandle,
+        text,
+        videoUrl: item.videoUrl,
+        imageUrl: item.imageUrl,
+        mediaType: item.mediaType,
+        replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+        silent: !!ap.silentMode
+      });
+
+      if (postResult.success) {
+        if (isCh2) {
+          item.postedToChannel2 = true;
+        } else {
+          item.postedToChannel1 = true;
         }
+        item.postedAt = nowIso;
+        anySuccess = true;
       }
-
-      if (!sendSuccess) {
-        await callTelegramApi('sendMessage', {
-          chat_id: channelHandle,
-          text: safeTelegramHtmlLength(text, 3900),
-          parse_mode: 'HTML',
-          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-          disable_notification: !!ap.silentMode
-        });
-      }
-
-      if (isCh2) {
-        item.postedToChannel2 = true;
-      } else {
-        item.postedToChannel1 = true;
-      }
-      item.postedAt = nowIso;
-      anySuccess = true;
 
       if (selected.length > 1) {
         await new Promise(r => setTimeout(r, 2000));
@@ -5787,28 +5822,55 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
         const msgIdParts = postAttr.split('/');
         const msgId = msgIdParts.length > 1 ? parseInt(msgIdParts[1], 10) : undefined;
 
-        // Extract image url if present
+        // Extract video URL if present (MP4, round video, telesco.pe CDN, webm, etc.)
+        let videoUrl: string | undefined = undefined;
+        let isAnimation = false;
+        const videoMatch = fullBlock.match(/<video[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/i)
+          || fullBlock.match(/<source[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/i)
+          || fullBlock.match(/class=["'][^"']*tgme_widget_message_video_player[^"']*["'][^>]*href=["'](https?:\/\/[^"']+)["']/i);
+        
+        if (videoMatch && videoMatch[1]) {
+          videoUrl = videoMatch[1].trim();
+          if (fullBlock.includes('autoplay') || fullBlock.includes('tgme_widget_message_video_thumb') || /\.gif(\?|$)/i.test(videoUrl)) {
+            isAnimation = true;
+          }
+        }
+
+        // Extract image url or video thumbnail if present
         let imageUrl: string | undefined = undefined;
-        const imgMatch = fullBlock.match(/background-image:\s*url\('(https?:\/\/[^']+)'\)/i) 
+        const imgMatch = fullBlock.match(/class=["'][^"']*tgme_widget_message_photo(?:_wrap)?[^"']*["'][^>]*style=["'][^"']*background-image:\s*url\(['"]?(https?:\/\/[^'"\)]+)['"]?\)/i)
+          || fullBlock.match(/background-image:\s*url\(['"]?(https?:\/\/[^'"\)]+)['"]?\)/i)
+          || fullBlock.match(/<img[^>]*class=["'][^"']*tgme_widget_message_photo[^"']*["'][^>]*src=["'](https?:\/\/[^"']+)["']/i)
+          || fullBlock.match(/<video[^>]*\bposter=["'](https?:\/\/[^"']+)["']/i)
           || fullBlock.match(/src="(https?:\/\/[^"]+)"/i);
+
         if (imgMatch && imgMatch[1] && !imgMatch[1].includes('favicon') && !imgMatch[1].includes('avatar')) {
-          imageUrl = imgMatch[1];
+          imageUrl = imgMatch[1].trim();
+        }
+
+        let mediaType: 'photo' | 'video' | 'animation' | undefined = undefined;
+        if (videoUrl) {
+          mediaType = isAnimation ? 'animation' : 'video';
+        } else if (imageUrl) {
+          mediaType = 'photo';
         }
 
         // Extract and thoroughly clean text
         const textMatch = fullBlock.match(/<div[^>]*class="[^"]*tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-        if (!textMatch && !imageUrl) continue;
+        if (!textMatch && !imageUrl && !videoUrl) continue;
 
         const rawHtmlText = textMatch ? textMatch[1] : '';
         const cleanText = cleanTelegramFunText(rawHtmlText);
 
-        if (!cleanText && !imageUrl) continue;
-        if (cleanText.length < 15 && !imageUrl) continue;
+        if (!cleanText && !imageUrl && !videoUrl) continue;
+        if (cleanText.length < 10 && !imageUrl && !videoUrl) continue;
 
         // Check for duplicates
         const isDuplicate = db.funNewsItems.some(item => {
           if (msgId && item.sourceChannel === `@${cleanHandle}` && item.sourceMessageId === msgId) return true;
-          if (cleanText && item.text === cleanText) return true;
+          if (cleanText && cleanText.length > 20 && item.text === cleanText) return true;
+          if (videoUrl && item.videoUrl === videoUrl) return true;
+          if (imageUrl && !videoUrl && item.imageUrl === imageUrl) return true;
           return false;
         });
 
@@ -5822,7 +5884,7 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
         const title = sanitizePostTitle(
           firstLine.length > 0
             ? (firstLine.length > 65 ? firstLine.substring(0, 62) + '...' : firstLine)
-            : (imageUrl ? 'تصویر منتخب سرگرمی و جذاب' : 'مطلب منتخب طنز و روز')
+            : (videoUrl ? 'ویدیوی منتخب سرگرمی و روز' : (imageUrl ? 'تصویر منتخب سرگرمی و جذاب' : 'مطلب منتخب طنز و روز'))
         );
 
         // Classify into 'fun' or 'news'
@@ -5843,6 +5905,8 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
           title,
           text: cleanText,
           imageUrl,
+          videoUrl,
+          mediaType,
           sourceChannel: `@${cleanHandle}`,
           sourceMessageId: msgId,
           category,
@@ -11687,13 +11751,19 @@ async function startExpressServer() {
   // API: Add Custom Tech Item
   app.post('/api/tech-items', (req, res) => {
     try {
-      const { title, summary, category, importance } = req.body;
+      const { title, summary, category, importance, imageUrl, videoUrl, mediaType } = req.body;
       if (!title || !summary) {
         return res.status(400).json({ success: false, message: 'عنوان و متن ترفند یا خبر الزامی است.' });
       }
       const calc = calculateTechImportance(title, summary);
       const cat = category === 'news' || category === 'trick' || category === 'secret' ? category : 'trick';
       const imp = (importance || calc.importance) as TechImportance;
+
+      let determinedMediaType = mediaType;
+      if (!determinedMediaType) {
+        if (videoUrl) determinedMediaType = 'video';
+        else if (imageUrl) determinedMediaType = 'photo';
+      }
 
       const newItem: TechItem = {
         id: generateId(),
@@ -11702,6 +11772,9 @@ async function startExpressServer() {
         category: cat,
         importance: imp,
         importanceScore: calc.score,
+        imageUrl: imageUrl ? imageUrl.trim() : undefined,
+        videoUrl: videoUrl ? videoUrl.trim() : undefined,
+        mediaType: determinedMediaType || undefined,
         source: 'مدیریت دستی',
         tags: ['تکنولوژی', cat === 'trick' ? 'ترفند_موبایل' : cat === 'secret' ? 'راز_تکنولوژی' : 'اخبار_فناوری'],
         createdAt: new Date().toISOString(),
@@ -11747,7 +11820,7 @@ async function startExpressServer() {
   // API: Add AI Prompt
   app.post('/api/ai-prompts', (req, res) => {
     try {
-      const { title, category, description, promptText, imageUrl, tags, importance } = req.body;
+      const { title, category, description, promptText, imageUrl, videoUrl, mediaType, tags, importance } = req.body;
       if (!title || !description || !promptText) {
         return res.status(400).json({ success: false, message: 'پرکردن عنوان، توضیحات و متن پرامپت الزامی است.' });
       }
@@ -11758,6 +11831,12 @@ async function startExpressServer() {
           ? tags.split(',').map((t: string) => t.trim().replace(/^#/, '')) 
           : [];
 
+      let determinedMediaType = mediaType;
+      if (!determinedMediaType) {
+        if (videoUrl) determinedMediaType = 'video';
+        else if (imageUrl) determinedMediaType = 'photo';
+      }
+
       const newItem: AiPrompt = {
         id: generateId(),
         title: title.trim(),
@@ -11765,6 +11844,8 @@ async function startExpressServer() {
         description: description.trim(),
         promptText: promptText.trim(),
         imageUrl: imageUrl ? imageUrl.trim() : undefined,
+        videoUrl: videoUrl ? videoUrl.trim() : undefined,
+        mediaType: determinedMediaType || undefined,
         tags: parsedTags.filter(Boolean),
         importance: importance === 'hot' ? 'hot' : 'normal',
         createdAt: new Date().toISOString(),
@@ -11786,7 +11867,7 @@ async function startExpressServer() {
   app.put('/api/ai-prompts/:id', (req, res) => {
     try {
       const { id } = req.params;
-      const { title, category, description, promptText, imageUrl, tags, importance } = req.body;
+      const { title, category, description, promptText, imageUrl, videoUrl, mediaType, tags, importance } = req.body;
       
       const item = (db.aiPrompts || []).find(p => p.id === id);
       if (!item) {
@@ -11798,6 +11879,8 @@ async function startExpressServer() {
       if (description) item.description = description.trim();
       if (promptText) item.promptText = promptText.trim();
       if (typeof imageUrl !== 'undefined') item.imageUrl = imageUrl ? imageUrl.trim() : undefined;
+      if (typeof videoUrl !== 'undefined') item.videoUrl = videoUrl ? videoUrl.trim() : undefined;
+      if (typeof mediaType !== 'undefined') item.mediaType = mediaType;
       if (importance) item.importance = importance === 'hot' ? 'hot' : 'normal';
       
       if (typeof tags !== 'undefined') {
@@ -12015,37 +12098,24 @@ async function startExpressServer() {
       }
       text += `🆔 ${escapeHtml(channelHandle)}`;
 
-      let sendSuccess = false;
       const inlineButtons: any[] = [];
       const channelBtn = getChannelInlineButton(isCh2 ? 2 : 1, channelHandle);
       if (channelBtn) {
         inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
       }
 
-      if (item.imageUrl && text.length <= 1000) {
-        try {
-          await callTelegramApi('sendPhoto', {
-            chat_id: channelHandle,
-            photo: item.imageUrl,
-            caption: text,
-            parse_mode: 'HTML',
-            reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-            disable_notification: !!ap.silentMode
-          });
-          sendSuccess = true;
-        } catch (e) {
-          // fallback to text
-        }
-      }
+      const postResult = await sendTelegramPostWithMedia({
+        chatId: channelHandle,
+        text,
+        videoUrl: item.videoUrl,
+        imageUrl: item.imageUrl,
+        mediaType: item.mediaType,
+        replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+        silent: !!ap.silentMode
+      });
 
-      if (!sendSuccess) {
-        await callTelegramApi('sendMessage', {
-          chat_id: channelHandle,
-          text: safeTelegramHtmlLength(text, 3900),
-          parse_mode: 'HTML',
-          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-          disable_notification: !!ap.silentMode
-        });
+      if (!postResult.success) {
+        return res.status(500).json({ success: false, message: postResult.error || 'خطا در ارسال مطلب به تلگرام' });
       }
 
       if (isCh2) {
