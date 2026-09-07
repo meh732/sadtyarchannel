@@ -1,0 +1,47 @@
+{
+  "log": {
+    "loglevel": "none"
+  },
+  "inbounds": [
+    {
+      "port": 17657,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "trojan",
+      "settings": {
+        "servers": [
+          {
+            "address": "130.250.137.171",
+            "port": 443,
+            "password": "humanity"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "www.ignitelimit.com",
+          "allowInsecure": true
+        },
+        "wsSettings": {
+          "path": "/assignment",
+          "headers": {
+            "Host": "www.ignitelimit.com"
+          }
+        }
+      }
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    }
+  ]
+}

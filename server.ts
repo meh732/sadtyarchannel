@@ -4629,9 +4629,13 @@ async function sendTelegramPostWithMedia(params: {
     }
   }
 
+  let forceTextFallbackForPhoto = false;
   // 2. Try sending photo if imageUrl is available
   if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
-    // Step 2a: Attempt direct binary buffer download and upload via FormData
+    if (safeFullText.length > 1000) {
+      forceTextFallbackForPhoto = true;
+    } else {
+      // Step 2a: Attempt direct binary buffer download and upload via FormData
     try {
       const mediaData = await downloadMediaToBlob(imageUrl, 12000);
       if (mediaData) {
@@ -4666,13 +4670,30 @@ async function sendTelegramPostWithMedia(params: {
     } catch (photoErr: any) {
       addLog('warn', `ارسال تصویر پست به ${chatId} با خطا مواجه شد (${photoErr?.message || photoErr})، در حال ارسال متنی...`);
     }
+    }
   }
 
   // 3. Fallback to sendMessage (Text)
   try {
+    let finalPayloadText = safeFullText;
+    let linkPreviewOptions = undefined;
+    
+    // If we forced text fallback because the caption was too long,
+    // inject an invisible link at the top to force Telegram to render a rich image preview
+    if (forceTextFallbackForPhoto && imageUrl) {
+      finalPayloadText = `<a href="${imageUrl}">&#8205;</a>\n` + safeFullText;
+      linkPreviewOptions = {
+        is_disabled: false,
+        url: imageUrl,
+        prefer_large_media: true,
+        show_above_text: true
+      };
+    }
+
     const result = await callTelegramApi('sendMessage', {
       chat_id: chatId,
-      text: safeFullText,
+      text: finalPayloadText,
+      link_preview_options: linkPreviewOptions,
       parse_mode: 'HTML',
       reply_markup: replyMarkup,
       disable_notification: !!silent
@@ -5446,8 +5467,8 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       `کانفیگ ویتوری پروکسی`
     );
 
-    // If singlePostMode is explicitly disabled AND config pack has large count, upload full .txt pack file
-    if (settings.singlePostMode === false && needsFullPackFile && fullPackConfigsContent) {
+    // If config pack has large count, upload full .txt pack file
+    if (needsFullPackFile && fullPackConfigsContent) {
       try {
         const formData = new FormData();
         formData.append('chat_id', channelHandle);
