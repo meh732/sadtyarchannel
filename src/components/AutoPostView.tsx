@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Sliders, 
   Send, 
@@ -14,7 +14,11 @@ import {
   TrendingUp,
   Moon,
   Clock,
-  Wrench
+  Wrench,
+  Trash2,
+  AlertCircle,
+  CheckCircle2,
+  Layers
 } from 'lucide-react';
 import { AutoPostSettings, SecondaryChannelSettings, DigitalToolCategory } from '../types';
 import { ChannelHealthDashboard } from './ChannelHealthDashboard';
@@ -52,6 +56,27 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
   handleTriggerFunNewsAutoPost,
   handleTriggerDigitalToolsAutoPost,
 }) => {
+  const [cleaningDuplicates, setCleaningDuplicates] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<{ message: string; isError?: boolean } | null>(null);
+
+  const handleCleanDuplicates = async (channelNum: 1 | 2) => {
+    setCleaningDuplicates(true);
+    setCleanupResult(null);
+    try {
+      const res = await fetch('/api/bot/auto-post/cleanup-duplicates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelNum })
+      });
+      const data = await res.json();
+      setCleanupResult({ message: data.message || 'عملیات با موفقیت انجام شد.', isError: !data.success });
+    } catch (err: any) {
+      setCleanupResult({ message: err.message || 'خطا در ارتباط با سرور', isError: true });
+    } finally {
+      setCleaningDuplicates(false);
+    }
+  };
+
   const c2 = autoPostForm.channel2 || {
     enabled: false,
     targetChannel: '',
@@ -347,6 +372,57 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                     <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
                   </button>
                 </div>
+              </div>
+            </div>
+
+            {/* Anti-Duplicate Concurrency Guard & Auto-Cleanup Shield for Channel 1 */}
+            <div className="bg-white border border-rose-100 rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-rose-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <span>سپر ضد ارسال همزمان و پاکسازی خودکار تکراری‌ها (کانال اول)</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">
+                        فعال خودکار
+                      </span>
+                    </h4>
+                    <p className="text-[10px] text-slate-500">جلوگیری قطعی از ارسال پست تکراری و حذف فوری پیام اضافه از کانال تلگرام</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-rose-50/40 rounded-xl p-3.5 border border-rose-100/60 space-y-2 text-xs text-slate-700">
+                <div className="flex items-start gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 shrink-0" />
+                  <span><strong>قفل انحصاری فرایندها (Mutex Lock):</strong> مانع از اجرای همزمان دو پروسه ارسال در یک ثانیه روی کانال اول می‌شود.</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 shrink-0" />
+                  <span><strong>رهگیری اثرانگشت محتوا:</strong> چنانچه یک پست با موضوع یکسان دو بار فرستاده شود، سیستم پیام تکراری دوم را فوراً از کانال پاک (Delete Message) می‌کند.</span>
+                </div>
+              </div>
+
+              {cleanupResult && (
+                <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${cleanupResult.isError ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-emerald-50 text-emerald-800 border border-emerald-200'}`}>
+                  {cleanupResult.isError ? <AlertCircle className="w-4 h-4 shrink-0" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
+                  <span>{cleanupResult.message}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[11px] text-slate-500">اگر پستی تصادفاً تکرار شده باشد، می‌توانید همین حالا پاکسازی کنید:</span>
+                <button
+                  type="button"
+                  disabled={cleaningDuplicates}
+                  onClick={() => handleCleanDuplicates(1)}
+                  className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-all flex items-center gap-1.5 border border-rose-200 disabled:opacity-50 cursor-pointer shadow-sm"
+                >
+                  <Trash2 className={`w-3.5 h-3.5 ${cleaningDuplicates ? 'animate-spin' : ''}`} />
+                  <span>{cleaningDuplicates ? 'در حال اسکن و حذف...' : 'بررسی و پاکسازی پست‌های تکراری اخیر کانال ۱'}</span>
+                </button>
               </div>
             </div>
 

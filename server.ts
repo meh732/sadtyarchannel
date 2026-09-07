@@ -136,6 +136,10 @@ export interface ChannelPostHistoryItem {
   tehranHour: number; // 0 - 23
   messageId?: number;
   previewText?: string;
+  topicTitle?: string;
+  contentFingerprint?: string;
+  deletedAsDuplicate?: boolean;
+  deletedAt?: string;
 }
 
 interface DatabaseSchema {
@@ -4779,30 +4783,198 @@ async function fetchTelegramChannelStats(channelHandle: string): Promise<{ title
   return { title, memberCount };
 }
 
+// --- Channel Concurrency Mutex & Anti-Simultaneous Double Posting Guard ---
+const channelPostingLocks: Record<number, boolean> = { 1: false, 2: false };
+const channelLastPostedSignatures: Record<number, { time: number; topic: string; category: string }> = {
+  1: { time: 0, topic: '', category: '' },
+  2: { time: 0, topic: '', category: '' }
+};
+
+function normalizeTopicFingerprint(text?: string): string {
+  if (!text) return '';
+  return text
+    .toLowerCase()
+    .replace(/https?:\/\/[^\s]+/g, '')
+    .replace(/@[a-zA-Z0-9_]+/g, '')
+    .replace(/[^\w\u0600-\u06FF]/g, '')
+    .slice(0, 80);
+}
+
+async function deleteTelegramMessage(chatId: string | number, messageId: number): Promise<boolean> {
+  if (!db.settings.botToken || !chatId || !messageId) return false;
+  try {
+    const cleanChatId = typeof chatId === 'string' && !chatId.startsWith('@') && !chatId.startsWith('-') ? `@${chatId}` : chatId;
+    const result = await callTelegramApi('deleteMessage', {
+      chat_id: cleanChatId,
+      message_id: messageId
+    });
+    return !!(result === true || result?.ok || result);
+  } catch (err: any) {
+    console.error(`Failed to delete message ${messageId} from ${chatId}:`, err?.message || err);
+    return false;
+  }
+}
+
 function recordChannelPostEvent(
   channelNum: 1 | 2, 
   channelHandle: string, 
   category: 'configs' | 'news' | 'tricks' | 'prompts' | 'fun' | 'tech' | 'digital_tools', 
   messageId?: number,
-  previewText?: string
+  previewText?: string,
+  topicTitle?: string
 ) {
   if (!db.channelPostHistory) db.channelPostHistory = [];
   const now = new Date();
   const tehran = getTehranTimeInfo(now);
-  db.channelPostHistory.push({
+  const cleanHandle = channelHandle.startsWith('@') ? channelHandle : `@${channelHandle.replace('@', '')}`;
+  const topicFp = normalizeTopicFingerprint(topicTitle || previewText);
+  const textFp = normalizeTopicFingerprint(previewText);
+
+  const newHistoryItem: ChannelPostHistoryItem = {
     id: generateId(),
     channelTarget: channelNum,
-    channelHandle: channelHandle.startsWith('@') ? channelHandle : `@${channelHandle.replace('@', '')}`,
+    channelHandle: cleanHandle,
     category,
     postedAt: now.toISOString(),
     tehranDate: tehran.dateStr,
     tehranHour: tehran.hour,
     messageId,
-    previewText
-  });
+    previewText,
+    topicTitle: topicTitle || (previewText ? previewText.split('\n')[0].slice(0, 100) : undefined),
+    contentFingerprint: topicFp || textFp || undefined
+  };
+
+  db.channelPostHistory.push(newHistoryItem);
   if (db.channelPostHistory.length > 300) {
     db.channelPostHistory = db.channelPostHistory.slice(-300);
   }
+
+  // Update last posted signature
+  channelLastPostedSignatures[channelNum] = {
+    time: Date.now(),
+    topic: topicFp,
+    category
+  };
+
+  // Run immediate duplicate check & auto-cleanup deletion for this channel
+  if (messageId) {
+    checkAndCleanupDuplicateChannelPost(channelNum, cleanHandle, messageId, topicTitle, previewText).catch(err => {
+      console.error('Error during auto-cleanup of duplicate channel post:', err);
+    });
+  }
+}
+
+/**
+ * Intelligent Duplicate Detector & Auto-Deleter:
+ * If a post with the same topic/title or content was posted twice in a short time frame (<= 15 minutes)
+ * to the channel (e.g. Channel 1 simultaneous glitch), it instantly calls Telegram's deleteMessage API
+ * to remove the redundant/duplicate post and logs an alert.
+ */
+async function checkAndCleanupDuplicateChannelPost(
+  channelNum: 1 | 2,
+  channelHandle: string,
+  currentMessageId: number,
+  currentTopic?: string,
+  currentPreviewText?: string
+): Promise<{ detected: boolean; deleted: boolean; redundantMessageId?: number }> {
+  if (!currentMessageId || !channelHandle || !db.channelPostHistory || db.channelPostHistory.length < 2) {
+    return { detected: false, deleted: false };
+  }
+
+  const currentTopicFp = normalizeTopicFingerprint(currentTopic || currentPreviewText);
+  if (!currentTopicFp || currentTopicFp.length < 6) {
+    return { detected: false, deleted: false };
+  }
+
+  const nowMs = Date.now();
+  const cleanHandle = channelHandle.startsWith('@') ? channelHandle : `@${channelHandle.replace('@', '')}`;
+
+  // Check recent history items for this channel within last 15 minutes (excluding current message)
+  const recentHistory = db.channelPostHistory
+    .filter(h => h.channelTarget === channelNum && h.messageId && h.messageId !== currentMessageId && !h.deletedAsDuplicate)
+    .filter(h => (nowMs - new Date(h.postedAt).getTime()) <= 15 * 60 * 1000);
+
+  for (const prev of recentHistory) {
+    const prevTopicFp = normalizeTopicFingerprint(prev.topicTitle || prev.previewText);
+    if (!prevTopicFp) continue;
+
+    // Check if topics match or have > 75% overlap
+    const isExactMatch = prevTopicFp === currentTopicFp;
+    const isSubstringMatch = (currentTopicFp.length >= 10 && prevTopicFp.includes(currentTopicFp)) || 
+                             (prevTopicFp.length >= 10 && currentTopicFp.includes(prevTopicFp));
+
+    if (isExactMatch || isSubstringMatch) {
+      addLog('warn', `🚨 تشخیص ارسال تکراری همزمان: پستی با موضوع «${currentTopic || prev.topicTitle || 'یکسان'}» در کانال ${channelNum} (${cleanHandle}) مجدداً ارسال شده بود. در حال حذف فوری پست اضافه از کانال تلگرام...`);
+
+      const deletedOk = await deleteTelegramMessage(cleanHandle, currentMessageId);
+      if (deletedOk) {
+        // Mark current record as deleted duplicate in database
+        const curItem = db.channelPostHistory.find(h => h.messageId === currentMessageId);
+        if (curItem) {
+          curItem.deletedAsDuplicate = true;
+          curItem.deletedAt = new Date().toISOString();
+        }
+        saveDatabase();
+
+        addLog('success', `✅ پست اضافه و تکراری با موضوع «${currentTopic || prev.topicTitle || 'یکسان'}» (شناسه پیام: ${currentMessageId}) با موفقیت از کانال ${channelNum} (${cleanHandle}) پاکسازی و حذف گردید.`);
+        return { detected: true, deleted: true, redundantMessageId: currentMessageId };
+      } else {
+        addLog('error', `خطا در حذف پیام تکراری (شناسه: ${currentMessageId}) از کانال ${cleanHandle}. لطفاً دسترسی ادمین ربات (Delete Messages) در کانال را بررسی فرمایید.`);
+        return { detected: true, deleted: false, redundantMessageId: currentMessageId };
+      }
+    }
+  }
+
+  return { detected: false, deleted: false };
+}
+
+/**
+ * Scan and clean all recent duplicate posts across channel history
+ */
+async function scanAndCleanRecentDuplicates(channelNum: 1 | 2 = 1): Promise<{ scanned: number; duplicatesFound: number; deletedCount: number }> {
+  if (!db.channelPostHistory || db.channelPostHistory.length === 0) {
+    return { scanned: 0, duplicatesFound: 0, deletedCount: 0 };
+  }
+
+  const items = db.channelPostHistory.filter(h => h.channelTarget === channelNum && h.messageId && !h.deletedAsDuplicate);
+  let duplicatesFound = 0;
+  let deletedCount = 0;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const itemFp = normalizeTopicFingerprint(item.topicTitle || item.previewText);
+    if (!itemFp || itemFp.length < 8) continue;
+
+    for (let j = i + 1; j < items.length; j++) {
+      const older = items[j];
+      if (older.deletedAsDuplicate) continue;
+      const olderFp = normalizeTopicFingerprint(older.topicTitle || older.previewText);
+      if (!olderFp) continue;
+
+      const timeDiff = Math.abs(new Date(item.postedAt).getTime() - new Date(older.postedAt).getTime());
+      if (timeDiff <= 30 * 60 * 1000 && (itemFp === olderFp || itemFp.includes(olderFp) || olderFp.includes(itemFp))) {
+        duplicatesFound++;
+        // Delete the newer duplicate message
+        const targetToDelete = item.messageId!;
+        const handle = item.channelHandle;
+        addLog('warn', `در حال پاکسازی پیام تکراری شناسایی‌شده (شناسه پیام: ${targetToDelete}) در کانال ${channelNum}...`);
+        const ok = await deleteTelegramMessage(handle, targetToDelete);
+        if (ok) {
+          item.deletedAsDuplicate = true;
+          item.deletedAt = new Date().toISOString();
+          deletedCount++;
+        }
+        break;
+      }
+    }
+  }
+
+  if (deletedCount > 0) {
+    saveDatabase();
+    addLog('success', `عملیات پاکسازی تکراری‌ها به پایان رسید: ${deletedCount} پست تکراری اضافه از کانال ${channelNum} حذف گردید.`);
+  }
+
+  return { scanned: items.length, duplicatesFound, deletedCount };
 }
 
 async function evaluateChannelPostingAllowance(channelNum: 1 | 2, bypassTimeChecks = false) {
@@ -5070,6 +5242,12 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
     return false;
   }
 
+  if (channelPostingLocks[channelTargetNum]) {
+    addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} موقتاً متوقف شد: یک ارسال دیگر در همین لحظه در جریان است.`);
+    return false;
+  }
+  channelPostingLocks[channelTargetNum] = true;
+
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست کانفیگ‌ها و پروکسی‌ها به کانال ${channelTargetNum} (${targetChannel})...`);
 
@@ -5259,7 +5437,14 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       disable_notification: !!settings.silentMode
     });
 
-    recordChannelPostEvent(channelTargetNum, channelHandle, 'configs', sentMsg?.message_id);
+    recordChannelPostEvent(
+      channelTargetNum, 
+      channelHandle, 
+      'configs', 
+      sentMsg?.message_id, 
+      `پک کانفیگ‌های ویتوری (${selectedConfigs.length} عدد)`,
+      `کانفیگ ویتوری پروکسی`
+    );
 
     // If singlePostMode is explicitly disabled AND config pack has large count, upload full .txt pack file
     if (settings.singlePostMode === false && needsFullPackFile && fullPackConfigsContent) {
@@ -5410,6 +5595,8 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
   } catch (err: any) {
     addLog('error', `خطا در ارسال پست کانفیگ‌ها به کانال ${channelTargetNum}: ${err.message || err}`);
     return false;
+  } finally {
+    channelPostingLocks[channelTargetNum] = false;
   }
 }
 
@@ -5428,6 +5615,12 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
     addLog('warn', 'ارسال اخبار انجام نشد: توکن ربات فعال نیست.');
     return false;
   }
+
+  if (channelPostingLocks[channelTargetNum]) {
+    addLog('warn', `ارسال اخبار به کانال ${channelTargetNum} موقتاً متوقف شد: یک ارسال دیگر در همین لحظه در جریان است.`);
+    return false;
+  }
+  channelPostingLocks[channelTargetNum] = true;
 
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست اخبار روز تکنولوژی به کانال ${channelTargetNum} (${targetChannel})...`);
@@ -5538,7 +5731,14 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
       db.settings.autoPost.lastPostedAt = nowIso;
       db.settings.autoPost.lastAnyPostAt = nowIso;
     }
-    recordChannelPostEvent(channelTargetNum, targetChannel, 'news');
+    recordChannelPostEvent(
+      channelTargetNum, 
+      targetChannel, 
+      'news', 
+      postResult.messageId, 
+      selectedNews[0]?.title || text.slice(0, 80), 
+      selectedNews[0]?.title
+    );
     saveDatabase();
 
     addLog('success', `پست اخبار روز تکنولوژی (${selectedNews.length} خبر) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال گردید.`);
@@ -5546,6 +5746,8 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
   } catch (err: any) {
     addLog('error', `خطا در ارسال اخبار روز به کانال ${channelTargetNum}: ${err.message || err}`);
     return false;
+  } finally {
+    channelPostingLocks[channelTargetNum] = false;
   }
 }
 
@@ -5564,6 +5766,12 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
     addLog('warn', 'ارسال ترفندها انجام نشد: توکن ربات فعال نیست.');
     return false;
   }
+
+  if (channelPostingLocks[channelTargetNum]) {
+    addLog('warn', `ارسال ترفندها به کانال ${channelTargetNum} موقتاً متوقف شد: یک ارسال دیگر در همین لحظه در جریان است.`);
+    return false;
+  }
+  channelPostingLocks[channelTargetNum] = true;
 
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست رازها و ترفندهای موبایل به کانال ${channelTargetNum} (${targetChannel})...`);
@@ -5674,7 +5882,14 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
       db.settings.autoPost.lastPostedAt = nowIso;
       db.settings.autoPost.lastAnyPostAt = nowIso;
     }
-    recordChannelPostEvent(channelTargetNum, targetChannel, 'tricks');
+    recordChannelPostEvent(
+      channelTargetNum, 
+      targetChannel, 
+      'tricks', 
+      postResult.messageId, 
+      selectedTricks[0]?.title || text.slice(0, 80), 
+      selectedTricks[0]?.title
+    );
     saveDatabase();
 
     addLog('success', `پست ترفندها و رازهای موبایل (${selectedTricks.length} ترفند) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال گردید.`);
@@ -5682,6 +5897,8 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
   } catch (err: any) {
     addLog('error', `خطا در ارسال ترفندها به کانال ${channelTargetNum}: ${err.message || err}`);
     return false;
+  } finally {
+    channelPostingLocks[channelTargetNum] = false;
   }
 }
 
@@ -5793,6 +6010,12 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
     addLog('warn', 'ارسال پرامپت‌های هوش مصنوعی انجام نشد: توکن ربات فعال نیست.');
     return false;
   }
+
+  if (channelPostingLocks[channelTargetNum]) {
+    addLog('warn', `ارسال پرامپت‌های هوش مصنوعی به کانال ${channelTargetNum} موقتاً متوقف شد: یک ارسال دیگر در همین لحظه در جریان است.`);
+    return false;
+  }
+  channelPostingLocks[channelTargetNum] = true;
 
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست پرامپت‌های ترند هوش مصنوعی به کانال ${channelTargetNum} (${targetChannel})...`);
@@ -5910,7 +6133,14 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
       db.settings.autoPost.lastPostedAt = nowIso;
       db.settings.autoPost.lastAnyPostAt = nowIso;
     }
-    recordChannelPostEvent(channelTargetNum, targetChannel, 'prompts');
+    recordChannelPostEvent(
+      channelTargetNum, 
+      targetChannel, 
+      'prompts', 
+      postResult.messageId, 
+      selectedPrompts[0]?.title || text.slice(0, 80), 
+      selectedPrompts[0]?.title
+    );
     saveDatabase();
 
     addLog('success', `پست پرامپت‌های طلایی هوش مصنوعی (${selectedPrompts.length} پرامپت) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال گردید.`);
@@ -5918,6 +6148,8 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
   } catch (err: any) {
     addLog('error', `خطا در ارسال پرامپت‌های هوش مصنوعی به کانال ${channelTargetNum}: ${err.message || err}`);
     return false;
+  } finally {
+    channelPostingLocks[channelTargetNum] = false;
   }
 }
 
@@ -5980,6 +6212,12 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
     addLog('warn', 'ارسال ابزارها و ترفندهای دیجیتال انجام نشد: توکن ربات فعال نیست.');
     return false;
   }
+
+  if (channelPostingLocks[channelTargetNum]) {
+    addLog('warn', `ارسال ابزارهای دیجیتال به کانال ${channelTargetNum} موقتاً متوقف شد: یک ارسال دیگر در همین لحظه در جریان است.`);
+    return false;
+  }
+  channelPostingLocks[channelTargetNum] = true;
 
   try {
     addLog('info', `در حال آماده‌سازی و ارسال ابزارها و ترفندهای کاربردی به کانال ${channelTargetNum} (${targetChannel})...`);
@@ -6115,7 +6353,14 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
       db.settings.autoPost.lastAnyPostAt = nowIso;
     }
 
-    recordChannelPostEvent(channelTargetNum, targetChannel, 'digital_tools', undefined, selectedTools[0]?.title);
+    recordChannelPostEvent(
+      channelTargetNum, 
+      targetChannel, 
+      'digital_tools', 
+      postResult.messageId, 
+      selectedTools[0]?.title || text.slice(0, 80), 
+      selectedTools[0]?.title
+    );
     saveDatabase();
 
     addLog('success', `پست جعبه‌ابزار دیجیتال و محتوای کاربردی (${selectedTools.length} مورد) با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال شد.`);
@@ -6123,6 +6368,8 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
   } catch (err: any) {
     addLog('error', `خطا در ارسال ابزارهای دیجیتال به کانال ${channelTargetNum}: ${err.message || err}`);
     return false;
+  } finally {
+    channelPostingLocks[channelTargetNum] = false;
   }
 }
 
@@ -6347,6 +6594,12 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
     return false;
   }
 
+  if (channelPostingLocks[channelTargetNum]) {
+    addLog('warn', `ارسال فان و اخبار به کانال ${channelTargetNum} موقتاً متوقف شد: یک ارسال دیگر در همین لحظه در جریان است.`);
+    return false;
+  }
+  channelPostingLocks[channelTargetNum] = true;
+
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست فان و اخبار به کانال ${channelTargetNum} (${targetChannel})...`);
 
@@ -6459,6 +6712,15 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
         }
         item.postedAt = nowIso;
         anySuccess = true;
+
+        recordChannelPostEvent(
+          channelTargetNum, 
+          channelHandle, 
+          'fun', 
+          postResult.messageId, 
+          item.title || item.text.slice(0, 80), 
+          item.title
+        );
       }
 
       if (selected.length > 1) {
@@ -6475,9 +6737,6 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       db.settings.autoPost.lastAnyPostAt = nowIso;
       db.settings.autoPost.lastPostedAt = nowIso;
     }
-    if (anySuccess) {
-      recordChannelPostEvent(channelTargetNum, channelHandle, 'fun');
-    }
     saveDatabase();
 
     if (anySuccess) {
@@ -6488,6 +6747,8 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
   } catch (err: any) {
     addLog('error', `خطا در ارسال پست فان و اخبار به کانال ${channelTargetNum}: ${err.message || err}`);
     return false;
+  } finally {
+    channelPostingLocks[channelTargetNum] = false;
   }
 }
 
@@ -6795,8 +7056,9 @@ async function checkAndTriggerAutoPost() {
   // ==========================================
   // 1. CHECK CHANNEL 1 SCHEDULE (Independent)
   // ==========================================
-  const ch1Allowance = await evaluateChannelPostingAllowance(1);
-  if (ch1Allowance.allowed) {
+  if (!channelPostingLocks[1]) {
+    const ch1Allowance = await evaluateChannelPostingAllowance(1);
+    if (ch1Allowance.allowed) {
     const ap = db.settings.autoPost;
     const tehran = getTehranTimeInfo();
 
@@ -6927,12 +7189,14 @@ async function checkAndTriggerAutoPost() {
       await candidates[0].run();
     }
   }
+}
 
   // ==========================================
   // 2. CHECK CHANNEL 2 SCHEDULE (Independent)
   // ==========================================
-  const ch2Allowance = await evaluateChannelPostingAllowance(2);
-  if (ch2Allowance.allowed) {
+  if (!channelPostingLocks[2]) {
+    const ch2Allowance = await evaluateChannelPostingAllowance(2);
+    if (ch2Allowance.allowed) {
     const ap2 = db.settings.autoPost.channel2;
     const tehran = getTehranTimeInfo();
 
@@ -7048,6 +7312,7 @@ async function checkAndTriggerAutoPost() {
       await candidates2[0].run();
     }
   }
+}
 }
 
 // --- Dynamic Post Monitoring & Text Regeneration ---
@@ -13113,6 +13378,54 @@ async function startExpressServer() {
         res.status(400).json({ success: false, message: 'ارسال با خطا مواجه شد یا ابزاری در دسته‌بندی انتخابی یافت نشد.' });
       }
     } catch(err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Manually trigger duplicate posts scan & auto-cleanup deletion
+  app.post('/api/bot/auto-post/cleanup-duplicates', async (req, res) => {
+    try {
+      const channelNum = req.body?.channelNum === 2 ? 2 : 1;
+      const result = await scanAndCleanRecentDuplicates(channelNum);
+      res.json({
+        success: true,
+        channelNum,
+        ...result,
+        message: result.deletedCount > 0 
+          ? `عملیات پاکسازی با موفقیت انجام شد: ${result.deletedCount} پست تکراری همزمان از کانال ${channelNum} پاک گردید.`
+          : result.duplicatesFound > 0
+          ? `${result.duplicatesFound} مورد تکراری شناسایی شد اما پیام‌ها قبلاً حذف شده بودند یا دسترسی حذف موجود نیست.`
+          : `هیچ پست تکراری در بررسی اخیر کانال ${channelNum} یافت نشد (وضعیت کاملاً پاک و بهینه است).`
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Get Duplicate Detection and Posting Guard Status
+  app.get('/api/bot/auto-post/duplicate-guard-status', (req, res) => {
+    try {
+      const history = db.channelPostHistory || [];
+      const ch1Deleted = history.filter(h => h.channelTarget === 1 && h.deletedAsDuplicate).length;
+      const ch2Deleted = history.filter(h => h.channelTarget === 2 && h.deletedAsDuplicate).length;
+      res.json({
+        success: true,
+        guardActive: true,
+        locks: {
+          channel1: channelPostingLocks[1],
+          channel2: channelPostingLocks[2]
+        },
+        cleanedDuplicatesCount: {
+          channel1: ch1Deleted,
+          channel2: ch2Deleted,
+          total: ch1Deleted + ch2Deleted
+        },
+        lastPosts: {
+          channel1: channelLastPostedSignatures[1],
+          channel2: channelLastPostedSignatures[2]
+        }
+      });
+    } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
   });
