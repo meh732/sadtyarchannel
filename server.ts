@@ -1288,20 +1288,28 @@ detectPublicIp();
 
 // --- Gemini Client Lazy Initializer ---
 let geminiClient: GoogleGenAI | null = null;
+let currentGeminiKey: string | null = null;
+
 function getGeminiClient(): GoogleGenAI | null {
-  if (!geminiClient && process.env.GEMINI_API_KEY) {
+  const activeKey = (db.settings.geminiApiKey || '').trim() || process.env.GEMINI_API_KEY || '';
+  if (!activeKey) {
+    return null;
+  }
+  if (!geminiClient || currentGeminiKey !== activeKey) {
     try {
       geminiClient = new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY,
+        apiKey: activeKey,
         httpOptions: {
           headers: {
             'User-Agent': 'aistudio-build',
           }
         }
       });
-      console.log('[Gemini Client] Initialized successfully server-side.');
+      currentGeminiKey = activeKey;
+      console.log('[Gemini Client] Initialized successfully with active API Key.');
     } catch (e) {
       console.error('Error initializing Gemini client:', e);
+      return null;
     }
   }
   return geminiClient;
@@ -6480,16 +6488,34 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       channelBranding = settings.adText || db.settings.branding || '';
     }
 
-    let text = `⚡ <b>${escapeHtml(settings.customText || '💎 پک اختصاصی کانفیگ‌های پرسرعت و پروکسی‌های جدید')}</b>\n`;
-    text += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+    // Collect top countries for headline
+    const countryBadges: string[] = [];
+    const previewCount = Math.min(selectedConfigs.length, 6);
+    for (let i = 0; i < previewCount; i++) {
+      const conf = selectedConfigs[i];
+      const loc = await getIpLocation(conf.server || '');
+      const flag = getFlagEmoji(loc.countryCode);
+      if (flag && !countryBadges.includes(flag)) {
+        countryBadges.push(flag);
+      }
+    }
+    const countryFlagsStr = countryBadges.slice(0, 4).join(' ');
+
+    let dynamicHeadline = settings.customText && !settings.customText.includes('کانفیگ جدید منتشر شد')
+      ? settings.customText
+      : `${countryFlagsStr || '🚀'} سرورهای پرسرعت V2Ray [ضدفیلتر و پایدار]`;
+
+    let text = `⚡ <b>${escapeHtml(dynamicHeadline)}</b>\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `📶 <b>تست‌شده روی: همراه اول 🟢 | ایرانسل 🟢 | مخابرات 🟢</b>\n`;
+    text += `🎯 <i>مناسب اینستاگرام، یوتیوب ۴K و وب‌گردی بدون قطعی</i>\n\n`;
 
     let needsFullPackFile = false;
     let fullPackConfigsContent = '';
 
     if (selectedConfigs.length > 0) {
-      text += `🚀 <b>پک ${selectedConfigs.length} کانفیگ پرسرعت V2Ray (تست شده):</b>\n\n`;
+      text += `🚀 <b>پک ${selectedConfigs.length} کانفیگ اختصاصی V2Ray:</b>\n\n`;
       
-      const previewCount = Math.min(selectedConfigs.length, 6);
       for (let i = 0; i < previewCount; i++) {
         const conf = selectedConfigs[i];
         const loc = await getIpLocation(conf.server || '');
@@ -6510,7 +6536,7 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       let inlineBatch = '';
       let inlineCount = 0;
       for (const confStr of allBrandedList) {
-        if ((inlineBatch + confStr + '\n').length < 2400) {
+        if ((inlineBatch + confStr + '\n').length < 3200) {
           inlineBatch += (inlineBatch ? '\n' : '') + confStr;
           inlineCount++;
         } else {
@@ -6518,7 +6544,7 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
         }
       }
 
-      if (inlineCount < selectedConfigs.length) {
+      if (settings.postFiles && inlineCount < selectedConfigs.length) {
         needsFullPackFile = true;
       }
 
@@ -6627,7 +6653,8 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
         formData.append('document', blob, packFilename);
         formData.append('caption', `📦 <b>فایل کامل ${selectedConfigs.length} کانفیگ V2Ray</b>\n\n🆔 ${escapeHtml(brandingTag || '')}`);
         formData.append('parse_mode', 'HTML');
-        if (settings.silentMode) formData.append('disable_notification', 'true');
+        // ALWAYS send secondary pack document silently to prevent double-notification spam in channels
+        formData.append('disable_notification', 'true');
 
         await fetch(`https://api.telegram.org/bot${db.settings.botToken}/sendDocument`, {
           method: 'POST',
@@ -6811,19 +6838,43 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
       return false;
     }
 
-    // Sort eligible: highest score first, then newest
+    // Sort eligible: newest first, then highest score
     eligibleNews.sort((a, b) => {
+      const timeB = new Date(b.createdAt || 0).getTime();
+      const timeA = new Date(a.createdAt || 0).getTime();
+      if (Math.abs(timeB - timeA) > 3600000) { // 1 hour difference gives priority to newest
+        return timeB - timeA;
+      }
       return (b.importanceScore || 50) - (a.importanceScore || 50);
     });
 
     const selectedNews = eligibleNews.slice(0, count);
 
-    let text = `🔥 <b>تازه‌ترین اخبار دنیای تکنولوژی و هوش مصنوعی:</b>\n\n`;
-
-    for (let i = 0; i < selectedNews.length; i++) {
-      const it = selectedNews[i];
-      text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false);
-      if (i < selectedNews.length - 1) text += `\n───────────────\n\n`;
+    let text = '';
+    if (selectedNews.length === 1) {
+      const it = selectedNews[0];
+      const isBreaking = it.importance === 'breaking';
+      const badge = isBreaking ? 'خبر فوری و مهم' : 'تازه‌های تکنولوژی و هوش مصنوعی';
+      text += `${isBreaking ? '🚨' : '🔥'} <b>${escapeHtml(it.title)}</b>\n`;
+      text += `━━━━━━━━━━━━━━━━━━━━\n`;
+      text += `📰 <i>« ${badge} »</i>\n\n`;
+      if (it.summary) {
+        text += `<blockquote>${escapeHtml(it.summary)}</blockquote>\n\n`;
+      }
+      if (it.source) {
+        text += `🔍 منبع: <i>${escapeHtml(it.source)}</i>\n`;
+      }
+      if (it.tags && it.tags.length > 0) {
+        const formattedTags = it.tags.slice(0, 4).map(t => `#${t.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '')}`).join(' ');
+        text += `🏷 <i>${formattedTags}</i>\n`;
+      }
+    } else {
+      text = `🔥 <b>تازه‌ترین اخبار دنیای تکنولوژی و هوش مصنوعی:</b>\n\n`;
+      for (let i = 0; i < selectedNews.length; i++) {
+        const it = selectedNews[i];
+        text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false);
+        if (i < selectedNews.length - 1) text += `\n───────────────\n\n`;
+      }
     }
 
     let channelBranding = '';
@@ -6971,19 +7022,48 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
       return false;
     }
 
-    // Sort: highest score first, then newest
+    // Sort: newest first, then highest score
     eligibleTricks.sort((a, b) => {
+      const timeB = new Date(b.createdAt || 0).getTime();
+      const timeA = new Date(a.createdAt || 0).getTime();
+      if (Math.abs(timeB - timeA) > 3600000) { // 1 hour difference gives priority to newest
+        return timeB - timeA;
+      }
       return (b.importanceScore || 50) - (a.importanceScore || 50);
     });
 
     const selectedTricks = eligibleTricks.slice(0, count);
 
-    let text = `💡 <b>ترفندها، رازها و آموزش‌های کاربردی موبایل و امنیت:</b>\n\n`;
-
-    for (let i = 0; i < selectedTricks.length; i++) {
-      const it = selectedTricks[i];
-      text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false);
-      if (i < selectedTricks.length - 1) text += `\n───────────────\n\n`;
+    let text = '';
+    if (selectedTricks.length === 1) {
+      const it = selectedTricks[0];
+      const isApple = it.title.toLowerCase().includes('iphone') || 
+                      it.title.toLowerCase().includes('apple') || 
+                      it.title.toLowerCase().includes('ios') || 
+                      it.title.includes('آیفون') || 
+                      it.title.includes('اپل');
+      const icon = isApple ? '🍏' : '💡';
+      const categoryBadge = isApple ? 'ترفند محرمانه و اختصاصی آیفون (iOS)' : 'آموزش و ترفند طلایی موبایل';
+      text += `${icon} <b>${escapeHtml(it.title)}</b>\n`;
+      text += `━━━━━━━━━━━━━━━━━━━━\n`;
+      text += `📱 <i>« ${categoryBadge} »</i>\n\n`;
+      if (it.summary) {
+        text += `<blockquote>${escapeHtml(it.summary)}</blockquote>\n\n`;
+      }
+      if (it.source) {
+        text += `🔍 منبع: <i>${escapeHtml(it.source)}</i>\n`;
+      }
+      if (it.tags && it.tags.length > 0) {
+        const formattedTags = it.tags.slice(0, 4).map(t => `#${t.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '')}`).join(' ');
+        text += `🏷 <i>${formattedTags}</i>\n`;
+      }
+    } else {
+      text = `💡 <b>ترفندها، رازها و آموزش‌های کاربردی موبایل و امنیت:</b>\n\n`;
+      for (let i = 0; i < selectedTricks.length; i++) {
+        const it = selectedTricks[i];
+        text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false);
+        if (i < selectedTricks.length - 1) text += `\n───────────────\n\n`;
+      }
     }
 
     let channelBranding = '';
@@ -7240,22 +7320,48 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
       return false;
     }
 
-    // Sort eligible: hot first, then newest
+    // Sort eligible: strictly NEWEST FIRST so newly discovered trends are posted immediately!
     eligiblePrompts.sort((a, b) => {
+      const timeB = new Date(b.createdAt || 0).getTime();
+      const timeA = new Date(a.createdAt || 0).getTime();
+      if (Math.abs(timeB - timeA) > 60000) {
+        return timeB - timeA;
+      }
       if (a.importance !== b.importance) {
         return a.importance === 'hot' ? -1 : 1;
       }
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      return timeB - timeA;
     });
 
     const selectedPrompts = eligiblePrompts.slice(0, count);
 
-    let text = `🔮 <b>پک اختصاصی پرامپت‌های ترند و برتر هوش مصنوعی:</b>\n\n`;
-
-    for (let i = 0; i < selectedPrompts.length; i++) {
-      const it = selectedPrompts[i];
-      text += formatAiPromptForTelegram(it);
-      if (i < selectedPrompts.length - 1) text += `\n───────────────\n\n`;
+    let text = '';
+    if (selectedPrompts.length === 1) {
+      const it = selectedPrompts[0];
+      text += `🔮 <b>${escapeHtml(it.title)}</b>\n`;
+      text += `━━━━━━━━━━━━━━━━━━━━\n`;
+      text += `🤖 <i>« پرامپت طلایی و مهندسی‌شده هوش مصنوعی »</i>\n\n`;
+      if (it.description) {
+        text += `<blockquote>${escapeHtml(it.description)}</blockquote>\n\n`;
+      }
+      if (it.promptText) {
+        text += `📝 <b>متن پرامپت (روی کادر زیر بزنید تا کپی شود):</b>\n`;
+        text += `<blockquote expandable><code>${escapeHtml(it.promptText)}</code></blockquote>\n\n`;
+      }
+      if (it.tipsForPersonalPhoto) {
+        text += `💡 <b>نکته و راهنما:</b>\n<i>${escapeHtml(it.tipsForPersonalPhoto)}</i>\n\n`;
+      }
+      if (it.tags && it.tags.length > 0) {
+        const formattedTags = it.tags.slice(0, 4).map(t => `#${t.replace(/\s+/g, '_')}`).join(' ');
+        text += `🏷 <i>${formattedTags}</i>\n`;
+      }
+    } else {
+      text = `🔮 <b>پک اختصاصی پرامپت‌های ترند و برتر هوش مصنوعی:</b>\n\n`;
+      for (let i = 0; i < selectedPrompts.length; i++) {
+        const it = selectedPrompts[i];
+        text += formatAiPromptForTelegram(it);
+        if (i < selectedPrompts.length - 1) text += `\n───────────────\n\n`;
+      }
     }
 
     let channelBranding = '';
@@ -7474,12 +7580,39 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
 
     const selectedTools = eligibleTools.slice(0, count);
 
-    let text = `🚀 <b>محتوای کاربردی و جعبه‌ابزار دیجیتال:</b>\n\n`;
+    let text = '';
+    if (selectedTools.length === 1) {
+      const it = selectedTools[0];
+      let catTitle = 'جعبه ابزار دیجیتال و کاربردی';
+      if (it.category === 'ai_tools') catTitle = 'ابزار هوش مصنوعی کاربردی';
+      else if (it.category === 'cool_websites') catTitle = 'سایت‌های شگفت‌انگیز و ناب';
+      else if (it.category === 'mobile_hacks') catTitle = 'ترفندهای طلایی موبایل';
+      else if (it.category === 'cyber_security') catTitle = 'امنیت سایبری و ضد هک';
+      else if (it.category === 'must_apps') catTitle = 'اپلیکیشن شاهکار و ضروری';
 
-    for (let i = 0; i < selectedTools.length; i++) {
-      const it = selectedTools[i];
-      text += formatDigitalToolForTelegram(it);
-      if (i < selectedTools.length - 1) text += `\n───────────────\n\n`;
+      text += `🛠️ <b>${escapeHtml(it.title)}</b>\n`;
+      text += `━━━━━━━━━━━━━━━━━━━━\n`;
+      text += `🚀 <i>« ${catTitle} »</i>\n\n`;
+      if (it.summary) {
+        text += `<blockquote>${escapeHtml(it.summary)}</blockquote>\n\n`;
+      }
+      if (it.howToUse) {
+        text += `📝 <b>راهنما و ترفند استفاده:</b>\n<i>${escapeHtml(it.howToUse)}</i>\n\n`;
+      }
+      if (it.linkUrl) {
+        text += `🌐 <b>ورود مستقیم:</b>\n👉 <code>${escapeHtml(it.linkUrl)}</code>\n\n`;
+      }
+      if (it.tags && it.tags.length > 0) {
+        const formattedTags = it.tags.slice(0, 4).map(t => `#${t.replace(/\s+/g, '_')}`).join(' ');
+        text += `🏷 <i>${formattedTags}</i>\n`;
+      }
+    } else {
+      text = `🚀 <b>محتوای کاربردی و جعبه‌ابزار دیجیتال:</b>\n\n`;
+      for (let i = 0; i < selectedTools.length; i++) {
+        const it = selectedTools[i];
+        text += formatDigitalToolForTelegram(it);
+        if (i < selectedTools.length - 1) text += `\n───────────────\n\n`;
+      }
     }
 
     let channelBranding = '';
@@ -14146,7 +14279,7 @@ async function startExpressServer() {
       '/api/bot/auto-post/trigger-ai-prompts'
     ];
     
-    if (publicPaths.includes(req.path) || req.path.startsWith('/api/fun-sources') || req.path.startsWith('/api/fun-news')) {
+    if (publicPaths.includes(req.path) || req.path.startsWith('/api/fun-sources') || req.path.startsWith('/api/fun-news') || req.path.startsWith('/api/ai-prompts')) {
       return next();
     }
     
@@ -14443,6 +14576,41 @@ async function startExpressServer() {
     }
   });
 
+  // API: Test Gemini AI API Key
+  app.post('/api/settings/test-gemini', async (req, res) => {
+    try {
+      const keyToTest = (req.body?.apiKey || db.settings.geminiApiKey || process.env.GEMINI_API_KEY || '').trim();
+      if (!keyToTest) {
+        return res.status(400).json({ success: false, message: 'لطفاً ابتدا کلید Gemini API را وارد کنید.' });
+      }
+      const testClient = new GoogleGenAI({
+        apiKey: keyToTest,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+      const response = await testClient.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: 'سلام! یک کلمه بنویس: متصل',
+      });
+      if (response && response.text) {
+        return res.json({
+          success: true,
+          message: `اتصال هوش مصنوعی گوگل با موفقیت تأیید شد! پاسخ تست: ${response.text.trim().slice(0, 50)}`
+        });
+      }
+      return res.status(400).json({ success: false, message: 'پاسخی از سرور هوش مصنوعی دریافت نشد.' });
+    } catch (err: any) {
+      console.error('[Gemini Test Error]:', err);
+      return res.status(400).json({
+        success: false,
+        message: `خطا در اتصال به هوش مصنوعی: ${err.message || 'کلید نامعتبر است یا دسترسی به سرور گوگل مسدود می‌باشد.'}`
+      });
+    }
+  });
+
   // API: Get Settings
   app.get('/api/settings', (req, res) => {
     res.json(db.settings);
@@ -14464,6 +14632,7 @@ async function startExpressServer() {
         autoExtractInterval, 
         testBatchLimit, 
         iranRelayProxy, 
+        geminiApiKey,
         postMonitoringEnabled, 
         backupEnabled, 
         backupIntervalHours,
@@ -14474,6 +14643,13 @@ async function startExpressServer() {
         maxConfigsRetention
       } = req.body;
       
+      if (geminiApiKey !== undefined) {
+        db.settings.geminiApiKey = (geminiApiKey || '').trim();
+        // Reset cached client if key changed
+        if (currentGeminiKey !== db.settings.geminiApiKey) {
+          geminiClient = null;
+        }
+      }
       if (maxConfigsRetention !== undefined) {
         db.settings.maxConfigsRetention = Math.max(1, Math.min(10000, Number(maxConfigsRetention) || 2000));
         enforceConfigsRetentionLimit();
@@ -15303,6 +15479,90 @@ async function startExpressServer() {
       db.aiPrompts.splice(idx, 1);
       saveDatabase();
       res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Send a specific AI Prompt directly to Telegram channel right now
+  app.post('/api/ai-prompts/:id/send-now', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const channelNum = req.body?.channelNum === 2 ? 2 : 1;
+      const prompt = (db.aiPrompts || []).find(p => p.id === id);
+      if (!prompt) {
+        return res.status(404).json({ success: false, message: 'پرامپت مورد نظر یافت نشد.' });
+      }
+
+      const isCh2 = channelNum === 2;
+      const settings = isCh2 ? (db.settings.autoPost?.channel2 || db.settings.autoPost) : db.settings.autoPost;
+      const targetChannel = isCh2
+        ? (db.settings.autoPost?.channel2?.targetChannel || db.settings.autoPost?.targetChannel || db.settings.branding || '')
+        : (db.settings.autoPost?.targetChannel || db.settings.branding || '');
+
+      if (!targetChannel) {
+        return res.status(400).json({ success: false, message: `شناسه یا آیدی کانال ${channelNum} تنظیم نشده است.` });
+      }
+
+      let text = `🔮 <b>${escapeHtml(prompt.title)}</b>\n`;
+      text += `━━━━━━━━━━━━━━━━━━━━\n`;
+      text += `🤖 <i>« پرامپت طلایی و مهندسی‌شده هوش مصنوعی »</i>\n\n`;
+      if (prompt.description) {
+        text += `<blockquote>${escapeHtml(prompt.description)}</blockquote>\n\n`;
+      }
+      if (prompt.promptText) {
+        text += `📝 <b>متن پرامپت (روی کادر زیر بزنید تا کپی شود):</b>\n`;
+        text += `<blockquote expandable><code>${escapeHtml(prompt.promptText)}</code></blockquote>\n\n`;
+      }
+      if (prompt.tipsForPersonalPhoto) {
+        text += `💡 <b>نکته و راهنما:</b>\n<i>${escapeHtml(prompt.tipsForPersonalPhoto)}</i>\n\n`;
+      }
+      if (prompt.tags && prompt.tags.length > 0) {
+        const formattedTags = prompt.tags.slice(0, 4).map(t => `#${t.replace(/\s+/g, '_')}`).join(' ');
+        text += `🏷 <i>${formattedTags}</i>\n`;
+      }
+
+      let channelBranding = isCh2 ? (settings?.adText || '') : (settings?.adText || db.settings.branding || '');
+      if (channelBranding) {
+        text += `\n🆔 ${escapeHtml(channelBranding)}`;
+      }
+
+      const inlineButtons: any[] = [];
+      const channelBtn = getChannelInlineButton(channelNum, targetChannel);
+      if (channelBtn) inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
+      const shareBtn = getChannelShareInlineButton(channelNum, targetChannel, '🎨 پرامپت ترند و خفن هوش مصنوعی! برای دوستات بفرست 👇');
+      if (shareBtn) inlineButtons.push([{ text: shareBtn.text, url: shareBtn.url }]);
+
+      const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
+      const postResult = await sendTelegramPostWithMedia({
+        chatId: channelHandle,
+        text,
+        videoUrl: prompt.videoUrl,
+        imageUrl: prompt.imageUrl,
+        mediaType: prompt.mediaType,
+        replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+        silent: !!settings?.silentMode
+      });
+
+      if (!postResult.success) {
+        return res.status(400).json({ success: false, message: `خطا در ارسال به تلگرام: ${postResult.error || 'ناشناخته'}` });
+      }
+
+      // Mark as posted
+      prompt.postedToChannel = true;
+      if (channelNum === 2) {
+        prompt.postedToChannel2 = true;
+        prompt.lastPostedAtCh2 = new Date().toISOString();
+      } else {
+        prompt.postedToChannel1 = true;
+        prompt.lastPostedAtCh1 = new Date().toISOString();
+      }
+      prompt.postedAt = new Date().toISOString();
+      prompt.postCount = (prompt.postCount || 0) + 1;
+      saveDatabase();
+
+      addLog('success', `پرامپت «${prompt.title}» با موفقیت به کانال ${channelNum} (${targetChannel}) ارسال گردید.`);
+      res.json({ success: true, message: `پرامپت با موفقیت به کانال ${channelNum} ارسال شد.`, prompt });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }

@@ -311,6 +311,7 @@ export interface SystemSettings {
   testBatchLimit?: number; // Batch limit for config testing (default: 100)
   autoExtractInterval: number; // in minutes
   iranRelayProxy?: string; // Optional SOCKS5/HTTP relay proxy in Iran for 100% accurate Iran-net testing (e.g. socks5://185.x.x.x:1080)
+  geminiApiKey?: string; // Google Gemini API Key for AI Trend extraction & AI Prompts
   autoPost: AutoPostSettings;
   postMonitoringEnabled?: boolean;
   backupEnabled?: boolean;
