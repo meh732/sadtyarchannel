@@ -1,0 +1,34 @@
+{
+  "log": {
+    "loglevel": "none"
+  },
+  "inbounds": [
+    {
+      "port": 23103,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "shadowsocks",
+      "settings": {
+        "servers": [
+          {
+            "address": "Irj.jobwebs.ir",
+            "port": 25341,
+            "method": "chacha20-ietf-poly1305",
+            "password": "qb0uRN2r8CACi1tqOsZN3n5j_IcyqcEm"
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    }
+  ]
+}

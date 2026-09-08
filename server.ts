@@ -130,7 +130,7 @@ export interface ChannelPostHistoryItem {
   id: string;
   channelTarget: 1 | 2;
   channelHandle: string;
-  category: 'configs' | 'news' | 'tricks' | 'prompts' | 'fun' | 'tech' | 'digital_tools';
+  category: 'configs' | 'news' | 'tricks' | 'prompts' | 'fun' | 'tech' | 'digital_tools' | 'polls';
   postedAt: string; // ISO string
   tehranDate: string; // YYYY-MM-DD
   tehranHour: number; // 0 - 23
@@ -142,7 +142,50 @@ export interface ChannelPostHistoryItem {
   deletedAt?: string;
 }
 
+export interface ChannelStatItem {
+  id: string;
+  channelHandle: string;
+  memberCount: number;
+  delta?: number;
+  recordedAt: string; // ISO String
+}
+
+export interface ChannelMemberEvent {
+  id: string;
+  channelHandle: string;
+  eventType: 'join' | 'leave';
+  userId?: number;
+  username?: string | null;
+  firstName?: string | null;
+  timestamp: string;
+  inviteLink?: string | null;
+  precedingPost?: {
+    category: string;
+    postedAt: string;
+    elapsedMinutes: number;
+    summary?: string;
+  } | null;
+}
+
+export interface PollResultItem {
+  pollId: string;
+  messageId: number;
+  channelHandle: string;
+  question: string;
+  category?: string;
+  options: { text: string; voterCount: number }[];
+  totalVoterCount: number;
+  isClosed: boolean;
+  postedAt: string; // ISO String
+  lastUpdatedAt: string; // ISO String
+  strategicInsight?: string;
+  settingTarget?: string;
+}
+
 interface DatabaseSchema {
+  channelStats?: ChannelStatItem[];
+  pollResults?: PollResultItem[];
+  channelMemberEvents?: ChannelMemberEvent[];
   settings: SystemSettings;
   sources: SourceItem[];
   forceJoinChannels: ForceJoinChannel[];
@@ -963,6 +1006,9 @@ function loadDatabase() {
     db = {
       settings: finalSettings,
       sources: finalSources,
+      channelStats: loadedDataStore?.channelStats || [],
+      pollResults: loadedDataStore?.pollResults || [],
+      channelMemberEvents: loadedDataStore?.channelMemberEvents || [],
       forceJoinChannels: finalForceJoin,
       configs: finalConfigs,
       proxies: finalProxies,
@@ -1071,7 +1117,10 @@ function saveDatabase(immediate = false) {
         aiPrompts: db.aiPrompts || [],
         funNewsItems: db.funNewsItems || [],
         digitalTools: db.digitalTools || [],
-        postedPromptHistory: db.postedPromptHistory || []
+        postedPromptHistory: db.postedPromptHistory || [],
+        channelStats: db.channelStats || [],
+        pollResults: db.pollResults || [],
+        channelMemberEvents: db.channelMemberEvents || []
       };
       writeJsonAtomic(DB_FILE, storeData);
     } catch (err) {
@@ -4839,7 +4888,7 @@ async function deleteTelegramMessage(chatId: string | number, messageId: number)
 function recordChannelPostEvent(
   channelNum: 1 | 2, 
   channelHandle: string, 
-  category: 'configs' | 'news' | 'tricks' | 'prompts' | 'fun' | 'tech' | 'digital_tools', 
+  category: 'configs' | 'news' | 'tricks' | 'prompts' | 'fun' | 'tech' | 'digital_tools' | 'polls', 
   messageId?: number,
   previewText?: string,
   topicTitle?: string
@@ -6394,6 +6443,226 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
   }
 }
 
+
+// ====================================================
+// SMART STRATEGIC POLLS & AUDIENCE TELEMETRY ENGINE
+// ====================================================
+export interface SmartPollDefinition {
+  id: string;
+  category: 'protocol_preference' | 'post_frequency' | 'content_type' | 'isp_network' | 'app_client' | 'issues';
+  question: string;
+  options: string[];
+  strategicImpact: string;
+  settingTarget: string;
+}
+
+export const DEFAULT_SMART_POLLS: SmartPollDefinition[] = [
+  {
+    id: 'poll_proto_pref',
+    category: 'protocol_preference',
+    question: "🚀 کدام پروتکل یا نوع کانفیگ برای شما بیشترین سرعت و پایداری را دارد؟",
+    options: [
+      "Vless Reality (پیشنهادی و سریع)",
+      "VMess / Trojan",
+      "پروکسی تلگرام (MTProto)",
+      "کلودفلر وارپ (Cloudflare WARP)",
+      "هیچکدام برایم وصل نمی‌شوند"
+    ],
+    strategicImpact: "تنظیم پروتکل‌های اولویت‌دار و نسبت کانفیگ‌ها به پروکسی‌ها",
+    settingTarget: "configsEnabled, sourceFilter, proxyCount"
+  },
+  {
+    id: 'poll_frequency',
+    category: 'post_frequency',
+    question: "📊 تعداد و فاصله زمانی ارسال پست‌ها در کانال از نظر شما چگونه است؟",
+    options: [
+      "👍 عالی و مناسب است، تغییری ندهید",
+      "📢 زیاد است و کانال شلوغ شده (فاصله‌ها را بیشتر کنید)",
+      "📉 کم است، کانفیگ‌های فعال بیشتری بفرستید",
+      "🌙 لطفاً در ساعات شب و خواب اصلاً پست نگذارید"
+    ],
+    strategicImpact: "تنظیم سقف مجاز پست‌های روزانه و فاصله زمانی بین پست‌ها برای جلوگیری از ریزش اعضا",
+    settingTarget: "maxDailyPosts, minPostSpacingMinutes, sleepHoursProtection"
+  },
+  {
+    id: 'poll_content_pref',
+    category: 'content_type',
+    question: "💡 علاوه بر کانفیگ و پروکسی، دیدن چه مطالبی را در کانال بیشتر می‌پسندید؟",
+    options: [
+      "🤖 معرفی ابزارها و سایت‌های هوش مصنوعی رایگان",
+      "📱 ترفندهای کاربردی گوشی، مخفی‌کاری و ضد فیلتر",
+      "🔐 امنیت سایبری و ترفندهای ضد هک حساب‌ها",
+      "📰 اخبار و هشدارهای مهم اینترنت و اختلالات",
+      "🚫 فقط کانفیگ بگذارید و محتوای دیگر ارسال نکنید"
+    ],
+    strategicImpact: "تنظیم وزن و برنامه انتشار ابزارهای دیجیتال و ترفندها جهت رشد ارگانیک",
+    settingTarget: "digitalToolsEnabled, techTricksEnabled, techNewsEnabled"
+  },
+  {
+    id: 'poll_isp_network',
+    category: 'isp_network',
+    question: "📶 اینترنت اصلی شما که با آن به فیلترشکن وصل می‌شوید کدام است؟",
+    options: [
+      "ایرانسل (MTN Irancell) 💛",
+      "همراه اول (MCI) 🩵",
+      "رایتل (Rightel) 💜",
+      "اینترنت ثابت خانگی (مخابرات/شاتل/آسیاتک) 🏠",
+      "سایر اپراتورها یا فیبر نوری ⚡"
+    ],
+    strategicImpact: "بهینه‌سازی کانفیگ‌ها و پینگ‌گیری متناسب با اپراتور اکثریت مخاطبان کانال",
+    settingTarget: "iranRelayProxy, latencyThreshold"
+  },
+  {
+    id: 'poll_issues_churn',
+    category: 'issues',
+    question: "⚠️ مهم‌ترین مشکلی که معمولاً با کانفیگ‌های ارسالی دارید چیست؟",
+    options: [
+      "⏱️ بعد از مدتی قطع می‌شوند و پایدار نیستند",
+      "🐢 سرعت دانلود یا تماشای ویدیو کم است",
+      "❌ اصلاً برای من متصل نمی‌شوند",
+      "✅ عالی و بدون قطعی وصل هستند"
+    ],
+    strategicImpact: "تنظیم بازه زمانی تست خودکار و پاکسازی خودکار کانفیگ‌های تاریخ‌گذشته",
+    settingTarget: "autoTestInterval, maxConfigsRetention, autoPurgeOldTechDays"
+  },
+  {
+    id: 'poll_app_client',
+    category: 'app_client',
+    question: "📱 از کدام برنامه در گوشی یا کامپیوتر خود برای اتصال استفاده می‌کنید؟",
+    options: [
+      "v2rayNG / MahsaNG (اندروید)",
+      "Streisand / FoXray / V2Box (آیفون)",
+      "NekoBox / Sing-box / Clash",
+      "Nekoray / v2rayN (ویندوز / لپ‌تاپ)"
+    ],
+    strategicImpact: "ارسال آموزش‌ها و فرمت لینک‌های کانفیگ مناسب اپ‌های پرطرفدار کاربران",
+    settingTarget: "postFiles, customText"
+  }
+];
+
+function getClosestPrecedingPost(channelHandle: string) {
+  if (!db.channelPostHistory || db.channelPostHistory.length === 0) return null;
+  const cleanTarget = channelHandle.toLowerCase().replace('@', '');
+  const posts = db.channelPostHistory
+    .filter(p => p.channelHandle.toLowerCase().replace('@', '') === cleanTarget)
+    .sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime());
+  
+  if (posts.length === 0) return null;
+  const latest = posts[0];
+  const elapsedMs = Date.now() - new Date(latest.postedAt).getTime();
+  const elapsedMinutes = Math.max(0, Math.round(elapsedMs / 60000));
+  
+  return {
+    category: latest.category,
+    postedAt: latest.postedAt,
+    elapsedMinutes,
+    summary: latest.topicTitle || latest.previewText?.slice(0, 100) || latest.category
+  };
+}
+
+async function executeSmartPollsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetChannel?: string): Promise<boolean> {
+  const isCh2 = channelTargetNum === 2;
+  const settings = isCh2 ? (db.settings.autoPost.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
+  const targetChannel = customTargetChannel || settings?.targetChannel;
+  if (!targetChannel) {
+    addLog('warn', `ارسال نظرسنجی هوشمند به کانال ${channelTargetNum} انجام نشد: کانال مقصد تنظیم نشده است.`);
+    return false;
+  }
+  if (!db.settings.botToken) {
+    addLog('warn', 'ارسال نظرسنجی هوشمند انجام نشد: توکن ربات فعال نیست.');
+    return false;
+  }
+
+  if (channelPostingLocks[channelTargetNum]) {
+    addLog('info', `ارسال نظرسنجی به کانال ${channelTargetNum} به دلیل عملیات همزمان دیگر به تعویق افتاد.`);
+    return false;
+  }
+
+  const cleanHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
+
+  if (!db.pollResults) db.pollResults = [];
+  
+  // Pick the poll that hasn't been posted recently
+  const eligiblePolls = [...DEFAULT_SMART_POLLS].sort((a, b) => {
+    const lastA = db.pollResults?.filter(p => p.question === a.question && p.channelHandle.toLowerCase() === cleanHandle.toLowerCase())
+      .sort((x, y) => new Date(y.postedAt).getTime() - new Date(x.postedAt).getTime())[0];
+    const lastB = db.pollResults?.filter(p => p.question === b.question && p.channelHandle.toLowerCase() === cleanHandle.toLowerCase())
+      .sort((x, y) => new Date(y.postedAt).getTime() - new Date(x.postedAt).getTime())[0];
+    const timeA = lastA ? new Date(lastA.postedAt).getTime() : 0;
+    const timeB = lastB ? new Date(lastB.postedAt).getTime() : 0;
+    return timeA - timeB;
+  });
+
+  const selectedPoll = eligiblePolls[0];
+  if (!selectedPoll) return false;
+
+  channelPostingLocks[channelTargetNum] = true;
+  try {
+    const payload = {
+      chat_id: cleanHandle,
+      question: selectedPoll.question,
+      options: JSON.stringify(selectedPoll.options),
+      is_anonymous: true,
+      type: 'regular'
+    };
+
+    const res = await callTelegramApi('sendPoll', payload);
+    if (!res || !res.poll) {
+      throw new Error('Telegram sendPoll returned empty or failed response');
+    }
+
+    const nowIso = new Date().toISOString();
+    const newPollItem: PollResultItem = {
+      pollId: res.poll.id,
+      messageId: res.message_id,
+      channelHandle: cleanHandle,
+      question: res.poll.question,
+      category: selectedPoll.category,
+      strategicInsight: selectedPoll.strategicImpact,
+      settingTarget: selectedPoll.settingTarget,
+      options: res.poll.options.map((opt: any) => ({ text: opt.text, voterCount: opt.voter_count || 0 })),
+      totalVoterCount: 0,
+      isClosed: false,
+      postedAt: nowIso,
+      lastUpdatedAt: nowIso
+    };
+
+    db.pollResults.unshift(newPollItem);
+    if (db.pollResults.length > 100) {
+      db.pollResults = db.pollResults.slice(0, 100);
+    }
+
+    if (isCh2) {
+      if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
+      db.settings.autoPost.channel2.lastSmartPollPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastAnyPostAt = nowIso;
+    } else {
+      db.settings.autoPost.lastSmartPollPostedAt = nowIso;
+      db.settings.autoPost.lastPostedAt = nowIso;
+      db.settings.autoPost.lastAnyPostAt = nowIso;
+    }
+
+    recordChannelPostEvent(
+      channelTargetNum,
+      cleanHandle,
+      'polls',
+      res.message_id,
+      selectedPoll.question,
+      selectedPoll.category
+    );
+    saveDatabase();
+
+    addLog('success', `نظرسنجی هوشمند تعاملی با موفقیت به کانال ${channelTargetNum} (${cleanHandle}) ارسال شد: "${selectedPoll.question.slice(0, 45)}..."`);
+    return true;
+  } catch (err: any) {
+    addLog('error', `خطا در ارسال نظرسنجی به کانال ${channelTargetNum}: ${err.message || err}`);
+    return false;
+  } finally {
+    channelPostingLocks[channelTargetNum] = false;
+  }
+}
+
 // ----------------------------------------------------
 // 5. DEDICATED EXECUTOR: FUN & GENERAL NEWS AUTO-POST
 // ----------------------------------------------------
@@ -7084,7 +7353,7 @@ async function checkAndTriggerAutoPost() {
     const tehran = getTehranTimeInfo();
 
     interface PostCandidate {
-      category: 'configs' | 'tricks' | 'news' | 'prompts' | 'fun' | 'tools';
+      category: 'configs' | 'tricks' | 'news' | 'prompts' | 'fun' | 'tools' | 'polls';
       isDue: boolean;
       timeSinceDueMs: number;
       goldenPriority: number;
@@ -7195,6 +7464,26 @@ async function checkAndTriggerAutoPost() {
           timeSinceDueMs: elapsed - intervalMs,
           goldenPriority: p,
           run: () => executeDigitalToolsAutoPost(1, ap.targetChannel)
+        });
+      }
+    }
+
+
+    // 7. Smart Polls
+    if (ap.smartPollsEnabled === true) {
+      const pollsMinutes = Number(ap.smartPollsIntervalMinutes) || (Number(ap.smartPollsIntervalHours) ? Number(ap.smartPollsIntervalHours) * 60 : 360);
+      const intervalMs = Math.max(30, pollsMinutes) * 60 * 1000;
+      const lastTime = ap.lastSmartPollPostedAt;
+      const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
+      if (elapsed >= intervalMs) {
+        let p = 1; // lowest priority
+        if (ap.smartGoldenHours !== false && tehran.isGoldenHour) p = 1; 
+        candidates.push({
+          category: 'polls',
+          isDue: true,
+          timeSinceDueMs: elapsed - intervalMs,
+          goldenPriority: p,
+          run: () => executeSmartPollsAutoPost(1, ap.targetChannel)
         });
       }
     }
@@ -7321,6 +7610,23 @@ async function checkAndTriggerAutoPost() {
           timeSinceDueMs: elapsed2 - intervalMs2,
           priority: 5,
           run: () => executeDigitalToolsAutoPost(2, ap2.targetChannel)
+        });
+      }
+    }
+
+
+    // 7. Smart Polls for Channel 2
+    if (ap2.smartPollsEnabled === true) {
+      const pollsMinutes2 = Number(ap2.smartPollsIntervalMinutes) || (Number(ap2.smartPollsIntervalHours) ? Number(ap2.smartPollsIntervalHours) * 60 : 360);
+      const intervalMs2 = Math.max(30, pollsMinutes2) * 60 * 1000;
+      const lastTime2 = ap2.lastSmartPollPostedAt;
+      const elapsed2 = lastTime2 ? (now - new Date(lastTime2).getTime()) : Infinity;
+      if (elapsed2 >= intervalMs2) {
+        candidates2.push({
+          category: 'polls',
+          timeSinceDueMs: elapsed2 - intervalMs2,
+          priority: 6,
+          run: () => executeSmartPollsAutoPost(2, ap2.targetChannel)
         });
       }
     }
@@ -8209,7 +8515,7 @@ async function runBotPolling() {
   }
 
   try {
-    const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${botOffset}&timeout=10`;
+    const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${botOffset}&timeout=10&allowed_updates=["message","callback_query","channel_post","poll","poll_answer","chat_member"]`;
     const response = await fetch(url, {
       signal: AbortSignal.timeout(20000)
     });
@@ -8254,6 +8560,117 @@ async function handleBotUpdate(update: any) {
     let callbackData: string | null = null;
     let callbackQueryId: string | null = null;
 
+
+    if (update.chat_member) {
+      const cm = update.chat_member;
+      const chat = cm.chat;
+      const channelHandle = chat.username ? `@${chat.username}` : (chat.title || String(chat.id));
+      const targetUser = cm.new_chat_member?.user || cm.old_chat_member?.user || cm.from;
+      const oldStatus = cm.old_chat_member?.status;
+      const newStatus = cm.new_chat_member?.status;
+
+      const isJoin = (oldStatus === 'left' || oldStatus === 'kicked' || !oldStatus) && 
+                     (newStatus === 'member' || newStatus === 'administrator' || newStatus === 'restricted');
+      const isLeave = (oldStatus === 'member' || oldStatus === 'administrator' || oldStatus === 'restricted') && 
+                      (newStatus === 'left' || newStatus === 'kicked');
+
+      if (isJoin || isLeave) {
+        if (!db.channelMemberEvents) db.channelMemberEvents = [];
+        const precedingPost = getClosestPrecedingPost(channelHandle);
+
+        const eventItem: ChannelMemberEvent = {
+          id: 'cme-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+          channelHandle,
+          eventType: isJoin ? 'join' : 'leave',
+          userId: targetUser?.id,
+          username: targetUser?.username ? `@${targetUser.username}` : null,
+          firstName: targetUser?.first_name || null,
+          timestamp: new Date().toISOString(),
+          inviteLink: cm.invite_link?.invite_link || null,
+          precedingPost
+        };
+
+        db.channelMemberEvents.unshift(eventItem);
+        if (db.channelMemberEvents.length > 3000) {
+          db.channelMemberEvents = db.channelMemberEvents.slice(0, 3000);
+        }
+        saveDatabase();
+
+        const actionFa = isJoin ? 'عضویت جدید (ورود)' : 'خروج کاربر (لفت/ریزش)';
+        addLog(isJoin ? 'info' : 'warn', `[آمار کانال ${channelHandle}] ${actionFa}: ${eventItem.username || eventItem.firstName || eventItem.userId || 'کاربر تلگرام'}${precedingPost && isLeave ? ` (فاصله از آخرین پست: ${precedingPost.elapsedMinutes} دقیقه - دسته: ${precedingPost.category})` : ''}`);
+      }
+      return;
+    }
+
+
+    if (update.chat_member) {
+      const cm = update.chat_member;
+      const chat = cm.chat;
+      const channelHandle = chat.username ? `@${chat.username}` : (chat.title || String(chat.id));
+      const targetUser = cm.new_chat_member?.user || cm.old_chat_member?.user || cm.from;
+      const oldStatus = cm.old_chat_member?.status;
+      const newStatus = cm.new_chat_member?.status;
+
+      const isJoin = (oldStatus === 'left' || oldStatus === 'kicked' || !oldStatus) && 
+                     (newStatus === 'member' || newStatus === 'administrator' || newStatus === 'restricted');
+      const isLeave = (oldStatus === 'member' || oldStatus === 'administrator' || oldStatus === 'restricted') && 
+                      (newStatus === 'left' || newStatus === 'kicked');
+
+      if (isJoin || isLeave) {
+        if (!db.channelMemberEvents) db.channelMemberEvents = [];
+        const precedingPost = getClosestPrecedingPost(channelHandle);
+
+        const eventItem: ChannelMemberEvent = {
+          id: 'cme-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+          channelHandle,
+          eventType: isJoin ? 'join' : 'leave',
+          userId: targetUser?.id,
+          username: targetUser?.username ? `@${targetUser.username}` : null,
+          firstName: targetUser?.first_name || null,
+          timestamp: new Date().toISOString(),
+          inviteLink: cm.invite_link?.invite_link || null,
+          precedingPost
+        };
+
+        db.channelMemberEvents.unshift(eventItem);
+        if (db.channelMemberEvents.length > 3000) {
+          db.channelMemberEvents = db.channelMemberEvents.slice(0, 3000);
+        }
+        saveDatabase();
+
+        const actionFa = isJoin ? 'عضویت جدید (ورود)' : 'خروج کاربر (لفت/ریزش)';
+        addLog(isJoin ? 'info' : 'warn', `[آمار کانال ${channelHandle}] ${actionFa}: ${eventItem.username || eventItem.firstName || eventItem.userId || 'کاربر تلگرام'}${precedingPost && isLeave ? ` (فاصله از آخرین پست: ${precedingPost.elapsedMinutes} دقیقه - دسته: ${precedingPost.category})` : ''}`);
+      }
+      return;
+    }
+
+    if (update.poll) {
+      const poll = update.poll;
+      if (!db.pollResults) db.pollResults = [];
+      const existing = db.pollResults.find(p => p.pollId === poll.id);
+      if (existing) {
+        existing.options = poll.options.map(opt => ({ text: opt.text, voterCount: opt.voter_count }));
+        existing.totalVoterCount = poll.total_voter_count;
+        existing.isClosed = poll.is_closed;
+        existing.lastUpdatedAt = new Date().toISOString();
+        saveDatabase();
+      } else {
+        db.pollResults.push({
+          pollId: poll.id,
+          messageId: 0, // We don't get message_id in update.poll
+          channelHandle: 'Unknown',
+          question: poll.question,
+          options: poll.options.map(opt => ({ text: opt.text, voterCount: opt.voter_count })),
+          totalVoterCount: poll.total_voter_count,
+          isClosed: poll.is_closed,
+          postedAt: new Date().toISOString(),
+          lastUpdatedAt: new Date().toISOString()
+        });
+        saveDatabase();
+      }
+      return;
+    }
+    
     if (update.message) {
       chatId = update.message.chat.id;
       userId = update.message.from.id;
@@ -11895,7 +12312,10 @@ async function startBot() {
       const webhookUrl = `https://${cleanUrl}/api/telegram-webhook`;
       
       addLog('info', `در حال تنظیم وب‌هوک تلگرام روی آدرس: ${webhookUrl} ...`);
-      await callTelegramApi('setWebhook', { url: webhookUrl });
+      await callTelegramApi('setWebhook', { 
+        url: webhookUrl,
+        allowed_updates: ["message", "callback_query", "channel_post", "poll", "poll_answer", "chat_member"] 
+      });
       
       db.settings.isBotRunning = true;
       pollingActive = false;
@@ -11932,6 +12352,67 @@ let extractIntervalRef: NodeJS.Timeout | null = null;
 let testIntervalRef: NodeJS.Timeout | null = null;
 let monitorIntervalRef: NodeJS.Timeout | null = null;
 let backupIntervalRef: NodeJS.Timeout | null = null;
+
+
+async function trackChannelStats() {
+  if (!db.settings.botToken) return;
+  const channels = new Set<string>();
+  
+  if (db.settings.autoPost?.targetChannel) {
+    channels.add(db.settings.autoPost.targetChannel);
+  }
+  if (db.settings.autoPost?.channel2?.targetChannel) {
+    channels.add(db.settings.autoPost.channel2.targetChannel);
+  }
+  
+  for (const channel of channels) {
+    const handle = channel.startsWith('@') ? channel : '@' + channel.replace('@', '');
+    try {
+      const resp = await callTelegramApi('getChatMemberCount', { chat_id: handle });
+      if (resp && typeof resp === 'number') {
+        if (!db.channelStats) db.channelStats = [];
+        
+        const prevStats = db.channelStats
+          .filter(s => s.channelHandle.toLowerCase() === handle.toLowerCase())
+          .sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime());
+        
+        const lastStat = prevStats[0];
+        const delta = lastStat ? (resp - lastStat.memberCount) : 0;
+        const nowIso = new Date().toISOString();
+
+        db.channelStats.push({
+          id: 'stat-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+          channelHandle: handle,
+          memberCount: resp,
+          delta,
+          recordedAt: nowIso
+        });
+        
+        if (delta !== 0) {
+          if (!db.channelMemberEvents) db.channelMemberEvents = [];
+          const precedingPost = getClosestPrecedingPost(handle);
+          db.channelMemberEvents.unshift({
+            id: 'cme-batch-' + Date.now(),
+            channelHandle: handle,
+            eventType: delta > 0 ? 'join' : 'leave',
+            timestamp: nowIso,
+            firstName: `${Math.abs(delta)} کاربر (${delta > 0 ? 'ورود' : 'ریزش'} دوره‌ای)`,
+            precedingPost
+          });
+          if (db.channelMemberEvents.length > 3000) {
+            db.channelMemberEvents = db.channelMemberEvents.slice(0, 3000);
+          }
+        }
+
+        if (db.channelStats.length > 2000) {
+          db.channelStats = db.channelStats.slice(-2000);
+        }
+      }
+    } catch (err: any) {
+      console.warn('Failed to get chat member count for ' + handle + ':', err?.message || err);
+    }
+  }
+}
 
 function setupIntervals() {
   if (extractIntervalRef) clearInterval(extractIntervalRef);
@@ -11992,6 +12473,14 @@ function setupIntervals() {
     }
   }, testMins * 60 * 1000);
 
+  // Track Channel Stats (every 12 hours)
+  setInterval(() => {
+    trackChannelStats().catch(err => console.error('Error tracking stats:', err));
+  }, 12 * 60 * 60 * 1000);
+  
+  // Also run once on startup after 30 seconds
+  setTimeout(() => trackChannelStats().catch(() => {}), 30 * 1000);
+  
   // Post monitoring check (every 15 minutes)
   monitorIntervalRef = setInterval(() => {
     monitorChannelPosts();
@@ -13846,6 +14335,234 @@ async function startExpressServer() {
   });
 
   // API: Bot Status Toggle
+
+  // API: Get Channel Stats
+  app.get('/api/bot/channel-stats', (req, res) => {
+    try {
+      res.json({ success: true, stats: db.channelStats || [] });
+    } catch (err) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+  
+  // API: Get Poll Results
+  app.get('/api/bot/poll-results', (req, res) => {
+    try {
+      res.json({ success: true, polls: db.pollResults || [] });
+    } catch (err) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+
+  // ====================================================
+  // AI TELEMETRY PROMPT GENERATOR
+  // ====================================================
+  function generateAiChannelIntelligencePrompt(): string {
+    const stats = db.channelStats || [];
+    const polls = db.pollResults || [];
+    const events = db.channelMemberEvents || [];
+    const ap = db.settings.autoPost;
+    const ap2 = ap.channel2 || DEFAULT_CHANNEL2_SETTINGS;
+
+    const totalJoins = events.filter(e => e.eventType === 'join').length;
+    const totalLeaves = events.filter(e => e.eventType === 'leave').length;
+    const netGrowth = totalJoins - totalLeaves;
+
+    const churnsWithPost = events.filter(e => e.eventType === 'leave' && e.precedingPost);
+    const churnByPostCategory: Record<string, number> = {};
+    for (const c of churnsWithPost) {
+      const cat = c.precedingPost?.category || 'unknown';
+      churnByPostCategory[cat] = (churnByPostCategory[cat] || 0) + 1;
+    }
+
+    const churnWithin30Min = churnsWithPost.filter(c => (c.precedingPost?.elapsedMinutes || 999) <= 30).length;
+
+    let prompt = `# ROLE & OBJECTIVE:
+You are an Elite Telegram Channel Growth & Audience Intelligence Specialist, Churn Analyst, and Bot Automation Engineer.
+Your mission is to analyze real audience telemetry from our Telegram channels, diagnose why members join or leave (churn), evaluate community feedback from smart interactive polls, and provide precise, optimal configuration recommendations for the automated posting bot.
+
+=======================================================
+1. CHANNEL CURRENT AUDIENCE TELEMETRY (ورود، خروج و تحلیل ریزش)
+=======================================================
+- Primary Target Channel 1: ${ap.targetChannel || 'تنظیم نشده'}
+- Secondary Target Channel 2: ${ap2.targetChannel || 'تنظیم نشده'}
+- Total Tracked Joins (عضویت‌های ثبت‌شده): ${totalJoins}
+- Total Tracked Leaves (خروج‌ها و لفت‌دادن‌ها): ${totalLeaves}
+- Net Audience Growth (رشد خالص): ${netGrowth > 0 ? '+' : ''}${netGrowth}
+- Churn Immediately Following Posts (خروج زیر ۳۰ دقیقه بعد از پست): ${churnWithin30Min} out of ${totalLeaves} leaves (${totalLeaves > 0 ? ((churnWithin30Min / totalLeaves) * 100).toFixed(1) : 0}%)
+
+Churn by Preceding Post Category (کدام دسته از پست‌ها بیشترین ریزش را ایجاد کرده‌اند):
+${Object.keys(churnByPostCategory).length === 0 ? 'هنوز ریزش وابسته به پستی ثبت نشده است.' : Object.entries(churnByPostCategory).map(([cat, count]) => ` - Category [${cat}]: ${count} unsubscriptions (${totalLeaves > 0 ? ((count / totalLeaves) * 100).toFixed(1) : 0}% of all leaves)`).join('\n')}
+
+Recent Churn Event Sample (آخرین رویدادهای خروج با مشخصات پست قبلی):
+${events.filter(e => e.eventType === 'leave').slice(0, 10).map(e => ` - [${e.timestamp}] User left ${e.channelHandle}${e.precedingPost ? ` | Closest Post: ${e.precedingPost.category} (${e.precedingPost.elapsedMinutes} mins earlier: "${e.precedingPost.summary}")` : ''}`).join('\n') || 'موردی ثبت نشده است.'}
+
+Recent Member Count Timeline:
+${stats.slice(-10).map(s => ` - [${s.recordedAt}] ${s.channelHandle}: ${s.memberCount} members (Delta: ${s.delta && s.delta > 0 ? '+' : ''}${s.delta || 0})`).join('\n') || 'داده‌ای ثبت نشده است.'}
+
+=======================================================
+2. SMART INTERACTIVE POLL TELEMETRY (نتایج نظرسنجی‌های هوشمند مخاطبان)
+=======================================================
+${polls.length === 0 ? 'هنوز نظرسنجی ثبت نشده است.' : polls.map((p, idx) => {
+  let pText = `[Poll #${idx + 1}] Category: ${p.category || 'general'}\n`;
+  pText += `Question: ${p.question}\n`;
+  pText += `Status: ${p.isClosed ? 'Closed' : 'Active'} | Total Voters: ${p.totalVoterCount} | Channel: ${p.channelHandle}\n`;
+  pText += `Strategic Significance: ${p.strategicInsight || 'Determines bot auto-post parameters'}\n`;
+  pText += `Results:\n`;
+  for (const opt of p.options) {
+    const pct = p.totalVoterCount > 0 ? ((opt.voterCount / p.totalVoterCount) * 100).toFixed(1) : '0';
+    pText += `  * ${opt.text}: ${opt.voterCount} votes (${pct}%)\n`;
+  }
+  return pText;
+}).join('\n\n')}
+
+=======================================================
+3. CURRENT ACTIVE BOT AUTO-POST CONFIGURATION (تنظیمات فعلی ربات)
+=======================================================
+Channel 1 Settings:
+- Configs Auto-Post: ${ap.configsEnabled !== false ? 'ENABLED' : 'DISABLED'} (Every ${ap.configIntervalHours || 6}h / ${ap.configIntervalMinutes || 360}m | Count: ${ap.configCount || 5} configs, ${ap.proxyCount || 2} proxies)
+- Max Daily Posts Cap: ${ap.maxDailyPosts || 6} posts/day
+- Anti-Flood Spacing: At least ${ap.minPostSpacingMinutes || 180} minutes between any two posts
+- Smart Golden Hours (Tehran Peak Focus): ${ap.smartGoldenHours !== false ? 'ENABLED' : 'DISABLED'}
+- Sleep Hours Protection (00:30 - 08:30 Tehran): ${ap.sleepHoursProtection !== false ? 'ENABLED' : 'DISABLED'}
+- Digital Tools & AI Toolbox: ${ap.digitalToolsEnabled !== false ? 'ENABLED' : 'DISABLED'} (Every ${ap.digitalToolsIntervalMinutes || 240}m)
+- Tech News: ${ap.techNewsEnabled === true ? 'ENABLED' : 'DISABLED'} (Every ${ap.techNewsIntervalMinutes || 360}m)
+- Tech Tricks: ${ap.techTricksEnabled === true ? 'ENABLED' : 'DISABLED'} (Every ${ap.techTricksIntervalMinutes || 360}m)
+- AI Prompts: ${ap.aiPromptsEnabled === true ? 'ENABLED' : 'DISABLED'} (Every ${ap.aiPromptsIntervalMinutes || 360}m)
+- Smart Polls: ${ap.smartPollsEnabled !== false ? 'ENABLED' : 'DISABLED'} (Every ${ap.smartPollsIntervalMinutes || 1440}m)
+
+=======================================================
+4. REQUIRED ANALYSIS & RECONFIGURATION DELIVERABLES:
+=======================================================
+Please analyze the data above and provide a professional, structured executive report containing:
+
+1. **CHURN & AUDIENCE RETENTION DIAGNOSIS**:
+   - Analyze why users are leaving: Is it due to posting frequency (post fatigue), specific post types (e.g., dead configs, too many ads), or night notifications?
+   - Identify which post categories have the highest churn correlation and recommend how to remedy them.
+
+2. **COMMUNITY PREFERENCE & POLL INSIGHTS**:
+   - What protocols (Vless vs VMess vs MTProto) do users clearly demand?
+   - What non-proxy content (AI tools, mobile tricks, security) should be prioritized to maintain interest?
+   - What are the telecom operator distributions and their implications on testing filters?
+
+3. **OPTIMAL BOT RECONFIGURATION PLAN (EXACT PARAMETERS)**:
+   - Provide concrete recommendations for adjusting:
+     * Post spacing and intervals
+     * Maximum daily posts
+     * Content type balance (ratio of configs to digital tools and tricks)
+     * Golden hour priorities
+   - Provide a final JSON configuration block formatted as:
+\`\`\`json
+{
+  "recommendedSettings": {
+    "configsIntervalMinutes": 360,
+    "configCount": 5,
+    "proxyCount": 2,
+    "maxDailyPosts": 6,
+    "minPostSpacingMinutes": 180,
+    "digitalToolsEnabled": true,
+    "digitalToolsIntervalMinutes": 240,
+    "sleepHoursProtection": true,
+    "rationale": "Explanation..."
+  }
+}
+\`\`\`
+`;
+
+    return prompt;
+  }
+
+  // API: Get Full Growth Analytics & Churn Telemetry
+  app.get('/api/bot/channel-growth-analytics', (req, res) => {
+    try {
+      const stats = db.channelStats || [];
+      const polls = db.pollResults || [];
+      const events = db.channelMemberEvents || [];
+
+      const totalJoins = events.filter(e => e.eventType === 'join').length;
+      const totalLeaves = events.filter(e => e.eventType === 'leave').length;
+      const netGrowth = totalJoins - totalLeaves;
+
+      const churnsWithPost = events.filter(e => e.eventType === 'leave' && e.precedingPost);
+      const churnByPostCategory: Record<string, number> = {};
+      for (const c of churnsWithPost) {
+        const cat = c.precedingPost?.category || 'unknown';
+        churnByPostCategory[cat] = (churnByPostCategory[cat] || 0) + 1;
+      }
+
+      const churnWithin30Min = churnsWithPost.filter(c => (c.precedingPost?.elapsedMinutes || 999) <= 30).length;
+
+      const churnCorrelation = Object.entries(churnByPostCategory).map(([category, count]) => ({
+        category,
+        count,
+        percentage: totalLeaves > 0 ? Math.round((count / totalLeaves) * 100) : 0
+      })).sort((a, b) => b.count - a.count);
+
+      // Latest member count by channel
+      const ch1Target = (db.settings.autoPost.targetChannel || '').toLowerCase().replace('@', '');
+      const ch2Target = (db.settings.autoPost.channel2?.targetChannel || '').toLowerCase().replace('@', '');
+      const lastCh1Stat = stats.filter(s => s.channelHandle.toLowerCase().replace('@', '') === ch1Target).slice(-1)[0];
+      const lastCh2Stat = stats.filter(s => s.channelHandle.toLowerCase().replace('@', '') === ch2Target).slice(-1)[0];
+
+      const analytics = {
+        summary: {
+          totalMembersCh1: lastCh1Stat ? lastCh1Stat.memberCount : 0,
+          totalMembersCh2: lastCh2Stat ? lastCh2Stat.memberCount : 0,
+          totalJoins,
+          totalLeaves,
+          netGrowth,
+          churnWithin30Min
+        },
+        memberEvents: events.slice(0, 100),
+        pollResults: polls,
+        churnCorrelation,
+        recentStats: stats.slice(-30)
+      };
+
+      res.json({ success: true, analytics });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Get AI Telemetry Prompt for 1-Click Copy
+  app.get('/api/bot/ai-telemetry-prompt', (req, res) => {
+    try {
+      const prompt = generateAiChannelIntelligencePrompt();
+      res.json({ success: true, prompt });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Trigger Smart Poll Now
+  app.post('/api/bot/trigger-smart-poll', async (req, res) => {
+    try {
+      const channelNum = req.body.channelNum === 2 ? 2 : 1;
+      const success = await executeSmartPollsAutoPost(channelNum);
+      if (success) {
+        res.json({ success: true, message: `نظرسنجی هوشمند با موفقیت به کانال ${channelNum} ارسال شد.` });
+      } else {
+        res.status(400).json({ success: false, message: 'ارسال نظرسنجی انجام نشد. وضعیت کانال و توکن ربات را بررسی کنید.' });
+      }
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Export Comprehensive AI Analysis Report (.txt / markdown)
+  app.get('/api/bot/export-ai-report', (req, res) => {
+    try {
+      const prompt = generateAiChannelIntelligencePrompt();
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="ai_channel_intelligence_report.txt"');
+      res.status(200).send(prompt);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   app.post('/api/bot/toggle', async (req, res) => {
     try {
       if (pollingActive) {

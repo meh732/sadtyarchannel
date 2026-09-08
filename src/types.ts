@@ -137,6 +137,12 @@ export interface AutoPostSettings {
   inlineButtonText?: string; // Custom button label (e.g. "کانال رسمی ما 📢")
   inlineButtonUrl?: string; // Custom button link/invite URL
 
+  // 7. Smart Interactive Polls Schedule
+  smartPollsEnabled?: boolean;
+  smartPollsIntervalHours?: number;
+  smartPollsIntervalMinutes?: number;
+  lastSmartPollPostedAt?: string | null;
+
   // Legacy/Backwards compatibility
   techPostMode?: 'combined' | 'standalone' | 'both';
 
@@ -212,6 +218,12 @@ export interface SecondaryChannelSettings {
   digitalToolsCount?: number;
   digitalToolsCategories?: ('ai_tools' | 'cool_websites' | 'mobile_hacks' | 'cyber_security' | 'must_apps')[];
   lastDigitalToolsPostedAt?: string | null;
+
+  // 7. Smart Interactive Polls Schedule for Channel 2
+  smartPollsEnabled?: boolean;
+  smartPollsIntervalHours?: number;
+  smartPollsIntervalMinutes?: number;
+  lastSmartPollPostedAt?: string | null;
 }
 
 export interface ChannelHealthStatus {
@@ -456,3 +468,66 @@ export interface PostedPromptRecord {
 }
 
 
+
+// --- AI Channel Intelligence & Audience Growth Types ---
+export interface ChannelMemberEvent {
+  id: string;
+  channelHandle: string;
+  eventType: 'join' | 'leave';
+  userId?: number;
+  username?: string | null;
+  firstName?: string | null;
+  timestamp: string;
+  inviteLink?: string | null;
+  precedingPost?: {
+    category: string;
+    postedAt: string;
+    elapsedMinutes: number;
+    summary?: string;
+  } | null;
+}
+
+export interface PollOptionResult {
+  text: string;
+  voterCount: number;
+  percentage?: number;
+}
+
+export interface PollResultItem {
+  pollId: string;
+  messageId: number;
+  channelHandle: string;
+  question: string;
+  category?: string;
+  options: PollOptionResult[];
+  totalVoterCount: number;
+  isClosed: boolean;
+  postedAt: string;
+  lastUpdatedAt: string;
+  strategicInsight?: string;
+  settingTarget?: string;
+}
+
+export interface ChannelGrowthAnalytics {
+  summary: {
+    totalMembersCh1: number;
+    totalMembersCh2: number;
+    totalJoins: number;
+    totalLeaves: number;
+    netGrowth: number;
+    churnWithin30Min: number;
+  };
+  memberEvents: ChannelMemberEvent[];
+  pollResults: PollResultItem[];
+  churnCorrelation: {
+    category: string;
+    count: number;
+    percentage: number;
+  }[];
+  recentStats: {
+    channelHandle: string;
+    memberCount: number;
+    delta?: number;
+    recordedAt: string;
+  }[];
+}
