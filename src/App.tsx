@@ -1600,6 +1600,27 @@ export default function App() {
     }
   };
 
+  const handleResetDefaultFunSources = async () => {
+    setActionLoading('reset_fun_sources');
+    try {
+      const res = await fetch('/api/fun-sources/reset-defaults', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || 'کانال‌های پیشنهادی با موفقیت بارگذاری شدند.', 'success');
+        if (Array.isArray(data.sources)) {
+          setFunSources(data.sources);
+        }
+        fetchData(true);
+      } else {
+        showToast(data.message || 'خطا در بارگذاری کانال‌های پیشنهادی', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'خطا در برقراری ارتباط با سرور', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleSendFunNewsItem = async (itemId: string, channelNum: 1 | 2 = 2) => {
     setActionLoading(`send_fun_item_${itemId}`);
     try {
@@ -4812,6 +4833,7 @@ export default function App() {
                     onAddSource={handleAddFunSource}
                     onToggleSource={handleToggleFunSource}
                     onDeleteSource={handleDeleteFunSource}
+                    onRestoreDefaults={handleResetDefaultFunSources}
                     onSendItem={handleSendFunNewsItem}
                     onDeleteItem={handleDeleteFunNewsItem}
                   />

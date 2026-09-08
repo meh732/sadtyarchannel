@@ -685,7 +685,63 @@ const DEFAULT_FUN_SOURCES: FunNewsSource[] = [
   }
 ];
 
-const DEFAULT_FUN_NEWS_ITEMS: FunNewsItem[] = [];
+const DEFAULT_FUN_NEWS_ITEMS: FunNewsItem[] = [
+  {
+    id: 'fn-item-1',
+    title: 'وقتی بعد از یه روز خسته‌کننده به خونه میرسی...',
+    text: 'وقتی بعد از یه روز شلوغ و خسته‌کننده به خونه میرسی و متوجه میشی فردا هم باید بری سر کار:\n\n«خدایا این اشتراک آزمایشی زندگی تموم نشد لغوش کنیم؟!» 😂\n\n#طنز #خنده #زندگی',
+    category: 'fun',
+    sourceChannel: '@jokkadeh',
+    tags: ['طنز', 'خنده', 'سرگرمی'],
+    createdAt: new Date().toISOString(),
+    postedToChannel1: false,
+    postedToChannel2: false
+  },
+  {
+    id: 'fn-item-2',
+    title: 'مکالمه ذهنی من و ساعت خوابم 😴',
+    text: 'من ساعت ۱۱ شب: امشب دیگه ساعت ۱۲ می‌خوابم که فردا سر حال و پر انرژی باشم.\n\nهمون من ساعت ۳:۳۰ بامداد: آیا پنگوئن‌ها وقتی سردشون میشه جوراب می‌پوشن؟ بذار تو اینترنت سرچ کنم... 🤦‍♂️😂',
+    category: 'fun',
+    sourceChannel: '@farsifun',
+    tags: ['طنز', 'شوخی', 'بیخوابی'],
+    createdAt: new Date().toISOString(),
+    postedToChannel1: false,
+    postedToChannel2: false
+  },
+  {
+    id: 'fn-item-3',
+    title: 'راز خوشبختی از زبان مادربزرگ‌ها',
+    text: 'از مادربزرگم پرسیدم راز آرامشت تو زندگی چیه؟\nگفت: هر چی میگن بگو باشه، ولی در نهایت کار درست خودتو بکن! دیدم فلسفه ۵۰ سال روانشناسی تو همین یه جمله خلاصه شده بود. 👌✨\n\n#دانستنی #نکته #حکایت',
+    category: 'fun',
+    sourceChannel: '@cafee',
+    tags: ['طنز', 'نکته', 'آرامش'],
+    createdAt: new Date().toISOString(),
+    postedToChannel1: false,
+    postedToChannel2: false
+  },
+  {
+    id: 'fn-item-4',
+    title: 'کشف بزرگ ستاره‌شناسان درباره اقیانوس‌های پنهان در منظومه شمسی 🛰️',
+    text: 'اخبار علمی | محققان ناسا با تحلیل دقیق داده‌های کاوشگرهای فضایی شواهد جدیدی از وجود اقیانوس‌های عظیم آب مایع زیر لایه‌های یخی قمرهای زحل و مشتری ثبت کردند که احتمال وجود حیات در این اجرام را افزایش داده است.\n\n#علمی #اخبار #فضا',
+    category: 'news',
+    sourceChannel: '@akharinkhabar',
+    tags: ['اخبار', 'علمی', 'نجوم'],
+    createdAt: new Date().toISOString(),
+    postedToChannel1: false,
+    postedToChannel2: false
+  },
+  {
+    id: 'fn-item-5',
+    title: 'رکورد جدید سرعت اینترنت نسل ششم (6G) در آزمایشگاه‌های بین‌المللی 🌐',
+    text: 'اخبار فناوری | دانشمندان در آزمایش میدانی شبکه 6G موفق به انتقال داده‌ها با سرعت خارق‌العاده ۱۰۰ گیگابیت بر ثانیه شدند؛ این سرعت حدود ۵۰۰ برابر سریع‌تر از میانگین سرعت اینترنت 5G در جهان است.\n\n#تکنولوژی #فناوری #اخبار_روز',
+    category: 'news',
+    sourceChannel: '@khabar_fouri',
+    tags: ['اخبار', 'تکنولوژی', 'اینترنت'],
+    createdAt: new Date().toISOString(),
+    postedToChannel1: false,
+    postedToChannel2: false
+  }
+];
 
 const DEFAULT_CHANNEL2_SETTINGS: SecondaryChannelSettings = {
   enabled: false,
@@ -1026,11 +1082,11 @@ function loadDatabase() {
       }
     }
 
-    const finalFunSources = Array.isArray(loadedSettings?.funSources)
+    const finalFunSources = (Array.isArray(loadedSettings?.funSources) && loadedSettings.funSources.length > 0)
       ? loadedSettings.funSources
-      : (Array.isArray(loadedDataStore?.funSources) ? loadedDataStore.funSources : DEFAULT_FUN_SOURCES);
+      : ((Array.isArray(loadedDataStore?.funSources) && loadedDataStore.funSources.length > 0) ? loadedDataStore.funSources : DEFAULT_FUN_SOURCES);
 
-    const finalFunNewsItems = Array.isArray(loadedDataStore?.funNewsItems)
+    const finalFunNewsItems = (Array.isArray(loadedDataStore?.funNewsItems) && loadedDataStore.funNewsItems.length > 0)
       ? loadedDataStore.funNewsItems
       : DEFAULT_FUN_NEWS_ITEMS;
 
@@ -2896,6 +2952,67 @@ function restoreDatabaseFromObject(raw: any, options?: { skipConfigs?: boolean; 
   const newLogs = shouldSkipConfigs ? db.logs : (Array.isArray(target.logs) ? target.logs : db.logs);
   const newPosted = Array.isArray(target.postedMessages) ? target.postedMessages : (db.postedMessages || []);
 
+  // Extract and restore Fun Sources safely
+  const rawFunSources = target.funSources || target.fun_sources;
+  let newFunSources: FunNewsSource[] = [];
+  if (Array.isArray(rawFunSources) && rawFunSources.length > 0) {
+    newFunSources = rawFunSources.map((s: any): FunNewsSource => ({
+      id: String(s.id || ('fun_src_' + Math.random().toString(36).substring(2, 9))),
+      name: String(s.name || s.title || s.urlOrHandle || 'کانال منبع'),
+      urlOrHandle: String(s.urlOrHandle || s.handle || s.url || ''),
+      category: (s.category === 'news' ? 'news' : 'fun') as 'fun' | 'news',
+      enabled: s.enabled !== false,
+      extractedCount: Number(s.extractedCount) || 0,
+      lastExtracted: s.lastExtracted || null
+    })).filter(s => s.urlOrHandle);
+  } else if (Array.isArray(db.funSources) && db.funSources.length > 0) {
+    newFunSources = db.funSources;
+  } else {
+    newFunSources = DEFAULT_FUN_SOURCES.map(s => ({ ...s }));
+  }
+
+  // Extract and restore Fun News Items safely
+  const rawFunNewsItems = target.funNewsItems || target.fun_news_items;
+  let newFunNewsItems: FunNewsItem[] = [];
+  if (Array.isArray(rawFunNewsItems) && rawFunNewsItems.length > 0) {
+    newFunNewsItems = rawFunNewsItems;
+  } else if (Array.isArray(db.funNewsItems) && db.funNewsItems.length > 0) {
+    newFunNewsItems = db.funNewsItems;
+  } else {
+    newFunNewsItems = DEFAULT_FUN_NEWS_ITEMS.map(i => ({ ...i }));
+  }
+
+  // Extract and restore AI Prompts safely
+  const rawAiPrompts = target.aiPrompts || target.ai_prompts;
+  const newAiPrompts = (Array.isArray(rawAiPrompts) && rawAiPrompts.length > 0)
+    ? rawAiPrompts
+    : ((Array.isArray(db.aiPrompts) && db.aiPrompts.length > 0) ? db.aiPrompts : DEFAULT_AI_PROMPTS);
+
+  // Extract and restore Digital Tools safely
+  const rawDigitalTools = target.digitalTools || target.digital_tools;
+  const newDigitalTools = (Array.isArray(rawDigitalTools) && rawDigitalTools.length > 0)
+    ? rawDigitalTools
+    : ((Array.isArray(db.digitalTools) && db.digitalTools.length > 0) ? db.digitalTools : DEFAULT_DIGITAL_TOOLS);
+
+  // Extract and restore Tech Items safely
+  const rawTechItems = target.techItems || target.tech_items;
+  const newTechItems = (Array.isArray(rawTechItems) && rawTechItems.length > 0)
+    ? rawTechItems
+    : ((Array.isArray(db.techItems) && db.techItems.length > 0) ? db.techItems : []);
+
+  // Preserve other history and state safely
+  const newPostHistory = Array.isArray(target.channelPostHistory) ? target.channelPostHistory : (db.channelPostHistory || []);
+  const newPostedPromptHistory = Array.isArray(target.postedPromptHistory) ? target.postedPromptHistory : (db.postedPromptHistory || []);
+  const newPostedConfigSignatures = Array.isArray(target.postedConfigSignatures) ? target.postedConfigSignatures : (db.postedConfigSignatures || []);
+  const newPostedProxySignatures = Array.isArray(target.postedProxySignatures) ? target.postedProxySignatures : (db.postedProxySignatures || []);
+  const newPostedTechNewsHistory = Array.isArray(target.postedTechNewsHistory) ? target.postedTechNewsHistory : (db.postedTechNewsHistory || []);
+  const newPostedDigitalToolsHistory = Array.isArray(target.postedDigitalToolsHistory) ? target.postedDigitalToolsHistory : (db.postedDigitalToolsHistory || []);
+  const newPostedTricksHistory = Array.isArray(target.postedTricksHistory) ? target.postedTricksHistory : (db.postedTricksHistory || []);
+  const newChannelStats = Array.isArray(target.channelStats) ? target.channelStats : (db.channelStats || []);
+  const newPollResults = Array.isArray(target.pollResults) ? target.pollResults : (db.pollResults || []);
+  const newPollAnswerLogs = Array.isArray(target.pollAnswerLogs) ? target.pollAnswerLogs : (db.pollAnswerLogs || []);
+  const newChannelMemberEvents = Array.isArray(target.channelMemberEvents) ? target.channelMemberEvents : (db.channelMemberEvents || []);
+
   db = {
     settings: newSettings,
     sources: newSources,
@@ -2905,7 +3022,23 @@ function restoreDatabaseFromObject(raw: any, options?: { skipConfigs?: boolean; 
     npvFiles: newNpvFiles,
     users: newUsers,
     logs: newLogs,
-    postedMessages: newPosted
+    postedMessages: newPosted,
+    funSources: newFunSources,
+    funNewsItems: newFunNewsItems,
+    techItems: newTechItems,
+    aiPrompts: newAiPrompts,
+    digitalTools: newDigitalTools,
+    channelPostHistory: newPostHistory,
+    postedPromptHistory: newPostedPromptHistory,
+    postedConfigSignatures: newPostedConfigSignatures,
+    postedProxySignatures: newPostedProxySignatures,
+    postedTechNewsHistory: newPostedTechNewsHistory,
+    postedDigitalToolsHistory: newPostedDigitalToolsHistory,
+    postedTricksHistory: newPostedTricksHistory,
+    channelStats: newChannelStats,
+    pollResults: newPollResults,
+    pollAnswerLogs: newPollAnswerLogs,
+    channelMemberEvents: newChannelMemberEvents
   };
 
   if (!shouldSkipConfigs) {
@@ -2914,9 +3047,9 @@ function restoreDatabaseFromObject(raw: any, options?: { skipConfigs?: boolean; 
   saveDatabase(true); // write immediately synchronously to disk
   
   if (shouldSkipConfigs) {
-    addLog('success', `تنظیمات و لیست کانال‌ها/منابع با موفقیت از بکاپ بازگردانی شدند (${newSources.length} منبع، ${newForceJoin.length} کانال عضویت اجباری - کانفیگ‌های فعلی حفظ شدند).`);
+    addLog('success', `تنظیمات و لیست کانال‌ها/منابع با موفقیت از بکاپ بازگردانی شدند (${newSources.length} منبع، ${newForceJoin.length} کانال عضویت اجباری، ${newFunSources.length} منبع فان/اخبار - کانفیگ‌های فعلی حفظ شدند).`);
   } else {
-    addLog('success', `دیتابیس ربات با موفقیت بازگردانی شد (${newConfigs.length} کانفیگ، ${newProxies.length} پروکسی، ${newSources.length} منبع، ${newUsers.length} کاربر).`);
+    addLog('success', `دیتابیس ربات با موفقیت بازگردانی شد (${newConfigs.length} کانفیگ، ${newProxies.length} پروکسی، ${newSources.length} منبع، ${newFunSources.length} منبع فان/اخبار، ${newUsers.length} کاربر).`);
   }
 
   return {
@@ -2927,6 +3060,8 @@ function restoreDatabaseFromObject(raw: any, options?: { skipConfigs?: boolean; 
       proxies: (db.proxies || []).length,
       sources: db.sources.length,
       forceJoinChannels: (db.forceJoinChannels || []).length,
+      funSources: (db.funSources || []).length,
+      funNewsItems: (db.funNewsItems || []).length,
       npvFiles: (db.npvFiles || []).length,
       users: db.users.length
     }
@@ -9339,7 +9474,7 @@ function getCleanDatabaseBackup(includeConfigsAndFiles: boolean = false) {
   if (includeConfigsAndFiles) {
     return db;
   }
-  // Lightweight backup: ONLY settings, sources, forceJoinChannels, and users (NO bulky configs, proxies, npvFiles, postsHistory, logs)
+  // Lightweight backup: ONLY settings, sources, funSources, aiPrompts, digitalTools, forceJoinChannels, and users (NO bulky configs, proxies, npvFiles, postsHistory, logs)
   return {
     version: '2.0',
     type: 'lightweight_backup',
@@ -9348,6 +9483,14 @@ function getCleanDatabaseBackup(includeConfigsAndFiles: boolean = false) {
     sources: (db.sources || []).map(s => ({ ...s })),
     forceJoinChannels: (db.forceJoinChannels || []).map(c => ({ ...c })),
     users: (db.users || []).map(u => ({ ...u })),
+    funSources: (db.funSources && db.funSources.length > 0) ? db.funSources.map(s => ({ ...s })) : DEFAULT_FUN_SOURCES.map(s => ({ ...s })),
+    funNewsItems: (db.funNewsItems && db.funNewsItems.length > 0) ? db.funNewsItems.slice(0, 100).map(i => ({ ...i })) : DEFAULT_FUN_NEWS_ITEMS.map(i => ({ ...i })),
+    aiPrompts: (db.aiPrompts || []).map(p => ({ ...p })),
+    digitalTools: (db.digitalTools || []).map(t => ({ ...t })),
+    techItems: (db.techItems || []).slice(0, 100).map(i => ({ ...i })),
+    channelStats: (db.channelStats || []).map(cs => ({ ...cs })),
+    pollResults: (db.pollResults || []).map(pr => ({ ...pr })),
+    pollAnswerLogs: (db.pollAnswerLogs || []).map(pal => ({ ...pal })),
     configs: [],
     proxies: [],
     npvFiles: [],
@@ -15854,8 +15997,9 @@ async function startExpressServer() {
 
   // API: Get Fun News Items
   app.get('/api/fun-news', (req, res) => {
-    if (!Array.isArray(db.funNewsItems)) {
-      db.funNewsItems = [];
+    if (!Array.isArray(db.funNewsItems) || db.funNewsItems.length === 0) {
+      db.funNewsItems = DEFAULT_FUN_NEWS_ITEMS.map(i => ({ ...i }));
+      saveDatabase(false);
     }
     res.json(db.funNewsItems || []);
   });
@@ -15984,10 +16128,44 @@ async function startExpressServer() {
 
   // API: Get Fun Sources
   app.get('/api/fun-sources', (req, res) => {
-    if (!Array.isArray(db.funSources)) {
-      db.funSources = [];
+    if (!Array.isArray(db.funSources) || db.funSources.length === 0) {
+      db.funSources = DEFAULT_FUN_SOURCES.map(s => ({ ...s, id: generateId() }));
+      saveDatabase(true);
     }
     res.json(db.funSources || []);
+  });
+
+  // API: Reset / Restore Default Fun Sources
+  app.post('/api/fun-sources/reset-defaults', async (req, res) => {
+    try {
+      if (!Array.isArray(db.funSources)) db.funSources = [];
+      let addedCount = 0;
+      for (const def of DEFAULT_FUN_SOURCES) {
+        const handle = def.urlOrHandle.toLowerCase().trim();
+        const exists = db.funSources.some(s => s.urlOrHandle.toLowerCase().trim() === handle);
+        if (!exists) {
+          db.funSources.push({ ...def, id: generateId() });
+          addedCount++;
+        }
+      }
+      if (db.funSources.length === 0) {
+        db.funSources = DEFAULT_FUN_SOURCES.map(s => ({ ...s, id: generateId() }));
+        addedCount = db.funSources.length;
+      }
+      saveDatabase(true);
+      addLog('success', `تعداد ${addedCount} کانال پیشنهادی تلگرام به منابع فان و اخبار اضافه شد.`);
+      
+      // Background extraction for newly added channels
+      extractFunNewsFromSources().catch(err => console.error('Background fun news extraction error:', err));
+
+      res.json({ 
+        success: true, 
+        message: `${addedCount} کانال پیشنهادی با موفقیت به منابع اضافه شدند و استخراج مطالب آغاز گردید.`, 
+        sources: db.funSources 
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
   });
 
   // API: Add Fun Source

@@ -13,7 +13,9 @@ import {
   X, 
   Image as ImageIcon,
   Video,
-  Play
+  Play,
+  Sparkles,
+  Layers
 } from 'lucide-react';
 import { FunNewsItem, FunNewsSource } from '../types';
 
@@ -28,6 +30,7 @@ interface FunNewsViewProps {
   onAddSource: (source: { name: string; urlOrHandle: string; category?: 'fun' | 'news' }) => Promise<boolean | void>;
   onToggleSource: (id: string, enabled: boolean) => Promise<void>;
   onDeleteSource: (id: string) => Promise<void>;
+  onRestoreDefaults?: () => Promise<void>;
   onSendItem: (id: string, channelNum: number) => Promise<void>;
   onDeleteItem: (id: string) => Promise<void>;
 }
@@ -43,6 +46,7 @@ export const FunNewsView: React.FC<FunNewsViewProps> = ({
   onAddSource,
   onToggleSource,
   onDeleteSource,
+  onRestoreDefaults,
   onSendItem,
   onDeleteItem,
 }) => {
@@ -151,18 +155,62 @@ export const FunNewsView: React.FC<FunNewsViewProps> = ({
             </p>
           </div>
 
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer w-fit"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>ثبت کانال جدید</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {onRestoreDefaults && (
+              <button
+                type="button"
+                onClick={() => onRestoreDefaults()}
+                disabled={actionLoading === 'reset_fun_sources'}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                title="بارگذاری مجدد کانال‌های پیشنهادی تلگرام"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${actionLoading === 'reset_fun_sources' ? 'animate-spin' : ''}`} />
+                <span>بازیابی کانال‌های پیشنهادی</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer w-fit"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>ثبت کانال جدید</span>
+            </button>
+          </div>
         </div>
 
         {funSources.length === 0 ? (
-          <div className="py-8 text-center text-slate-400 text-xs bg-slate-50 rounded-xl border border-dashed border-slate-200">
-            هنوز کانال تلگرامی برای بخش فان و اخبار ثبت نشده است. روی دکمه «افزودن کانال تلگرامی جدید» کلیک کنید.
+          <div className="p-6 text-center bg-gradient-to-br from-amber-50/60 to-orange-50/40 rounded-2xl border border-amber-200/80 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto shadow-inner">
+              <Smile className="w-6 h-6" />
+            </div>
+            <div className="max-w-md mx-auto space-y-1.5">
+              <h5 className="font-bold text-slate-800 text-sm">هیچ کانال تلگرامی برای استخراج فان و اخبار ثبت نشده است</h5>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                می‌توانید با یک کلیک مجموعه کانال‌های پرمخاطب تلگرام فارسی (جوک، طنز، سرگرمی، دانستنی و اخبار فوری) را فعال کنید یا کانال‌های اختصاصی مدنظر خود را اضافه نمایید.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+              {onRestoreDefaults && (
+                <button
+                  type="button"
+                  onClick={() => onRestoreDefaults()}
+                  disabled={actionLoading === 'reset_fun_sources'}
+                  className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>بارگذاری و فعال‌سازی کانال‌های پیشنهادی آماده</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowAddModal(true)}
+                className="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4 text-amber-600" />
+                <span>ثبت دستی کانال جدید</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
