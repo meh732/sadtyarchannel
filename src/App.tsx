@@ -1634,6 +1634,35 @@ export default function App() {
     }
   };
 
+  // --- Viral & Shareable Post Handlers (Apple & Tech Secrets AI) ---
+  const handleTriggerViralAutoPost = async (channelNum: number = 1) => {
+    setActionLoading(`trigger_viral_${channelNum}`);
+    try {
+      await fetch('/api/settings/auto-post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(autoPostForm)
+      });
+
+      const res = await fetch('/api/bot/auto-post/trigger-viral', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelNum })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || `پست ویروسی هوش مصنوعی با موفقیت به کانال ${channelNum} ارسال شد.`, 'success');
+      } else {
+        showToast(data.message || 'خطا در ارسال پست ویروسی', 'error');
+      }
+    } catch (err) {
+      showToast('خطا در ارتباط با سرور تلگرام', 'error');
+    } finally {
+      setActionLoading(null);
+      fetchData(true);
+    }
+  };
+
   const handleSaveDigitalTool = async (toolData: Partial<DigitalToolItem>): Promise<boolean> => {
     setActionLoading('save_digital_tool');
     try {
@@ -4729,6 +4758,7 @@ export default function App() {
                     handleTriggerAiPromptsAutoPost={handleTriggerAiPromptsAutoPost}
                     handleTriggerFunNewsAutoPost={handleTriggerFunNewsAutoPost}
                     handleTriggerDigitalToolsAutoPost={handleTriggerDigitalToolsAutoPost}
+                    handleTriggerViralAutoPost={handleTriggerViralAutoPost}
                   />
                 </motion.div>
               )}

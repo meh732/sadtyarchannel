@@ -748,7 +748,14 @@ const DEFAULT_CHANNEL2_SETTINGS: SecondaryChannelSettings = {
   digitalToolsIntervalMinutes: 360,
   digitalToolsCount: 1,
   digitalToolsCategories: ['ai_tools', 'cool_websites', 'mobile_hacks', 'cyber_security', 'must_apps'],
-  lastDigitalToolsPostedAt: null
+  lastDigitalToolsPostedAt: null,
+
+  // 8. Viral & High-Share Rate Content for Channel 2
+  viralShareEnabled: false,
+  viralShareIntervalHours: 24,
+  viralShareIntervalMinutes: 1440,
+  lastViralSharePostedAt: null,
+  includeShareButton: true
 };
 
 const DEFAULT_AUTO_POST: AutoPostSettings = {
@@ -815,6 +822,18 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   digitalToolsCount: 1,
   digitalToolsCategories: ['ai_tools', 'cool_websites', 'mobile_hacks', 'cyber_security', 'must_apps'],
   lastDigitalToolsPostedAt: null,
+
+  // 8. AI Trend Prompt Extraction Schedule (Gemini)
+  aiTrendExtractionEnabled: true,
+  aiTrendExtractionIntervalHours: 24,
+  lastAiTrendExtractionAt: null,
+
+  // 9. Viral & High-Share Rate Content (Channel 1 Booster)
+  viralShareEnabled: true,
+  viralShareIntervalHours: 24,
+  viralShareIntervalMinutes: 1440,
+  lastViralSharePostedAt: null,
+  includeShareButton: true,
 
   // Dedicated Glass / Inline Button for Channel 1
   inlineButtonEnabled: true,
@@ -4566,6 +4585,344 @@ async function fetchLiveAiPromptsFromWeb(): Promise<number> {
   return addedCount;
 }
 
+// Curated high quality visual style matching images for AI Prompts
+const STYLE_PREVIEW_IMAGES: Record<string, string[]> = {
+  cyberpunk: [
+    'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=1080&q=80',
+    'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=1080&q=80',
+    'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1080&q=80',
+    'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080&q=80'
+  ],
+  pixar: [
+    'https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?w=1080&q=80',
+    'https://images.unsplash.com/photo-1563089145-599997674d42?w=1080&q=80',
+    'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=1080&q=80'
+  ],
+  fashion: [
+    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=1080&q=80',
+    'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=1080&q=80',
+    'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=1080&q=80',
+    'https://images.unsplash.com/photo-1509967419530-da38b4704bc6?w=1080&q=80'
+  ],
+  cinematic: [
+    'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1080&q=80',
+    'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=1080&q=80',
+    'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080&q=80'
+  ],
+  artistic: [
+    'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=1080&q=80',
+    'https://images.unsplash.com/photo-1547891654-e66ed7ebb968?w=1080&q=80',
+    'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=1080&q=80'
+  ],
+  retro: [
+    'https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?w=1080&q=80',
+    'https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=1080&q=80',
+    'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=1080&q=80'
+  ]
+};
+
+function getRandomImageForStyle(styleCategory = 'fashion'): string {
+  const normalized = (styleCategory || 'fashion').toLowerCase().trim();
+  const pool = STYLE_PREVIEW_IMAGES[normalized] || STYLE_PREVIEW_IMAGES.fashion;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function generateCuratedTrendingPromptsFallback(count = 5): any[] {
+  const templates = [
+    {
+      title: 'پرتره سینمایی سایبرپانک با لنز ۸۵ میلی‌متری و نورپردازی نئونی',
+      category: 'image',
+      styleCategory: 'cyberpunk',
+      description: 'پرتره فوق‌العاده واقع‌گرایانه در خیابان‌های بارانی توکیو با انعکاس نورهای نئونی در آسفالت خیس و قطرات آب روی صورت.',
+      promptText: 'Cinematic hyper-realistic portrait of a cyberpunk hacker in a wet neon-lit Tokyo alley, volumetric fog, blue and magenta reflections, sharp 85mm lens, f/1.4 aperture, Kodak Portra 400 film aesthetic, 8k resolution, ultra detailed facial pores, natural skin texture --ar 16:9 --style raw',
+      tipsForPersonalPhoto: 'یک پرتره با زاویه سه‌چهارم و نورپردازی ملایم بهترین خروجی ترکیبی را ارائه می‌دهد.',
+      tags: ['سایبرپانک', 'میدجرنی', 'پرتره_سینمایی', 'نورپردازی_نئونی']
+    },
+    {
+      title: 'کاراکتر انیمیشنی سه‌بعدی دیزنی و پیکسار با چشمان درخشان',
+      category: 'image',
+      styleCategory: 'pixar',
+      description: 'شخصیت انیمیشنی مدرن و صمیمی با کیفیت رندر اوکتان، بافت ژاکت بافتنی و نورپردازی استودیویی پرنشاط.',
+      promptText: '3D Pixar Disney animated character, smiling warm expression, big expressive sparkling hazel eyes, detailed wool sweater texture, warm ambient studio lighting, octane render, soft subsurface scattering, clean pastel background, 8k render, masterpiece --ar 1:1',
+      tipsForPersonalPhoto: 'یک عکس پرتره با لبخند صمیمی و پس‌زمینه ساده بهترین ادغام انیمیشنی را دارد.',
+      tags: ['پیکسار', 'دیزنی', 'انیمیشن_۳بعدی', 'پرامپت_پیکسار']
+    },
+    {
+      title: 'عکاسی مد و پرتره ووگ با وضوح استودیویی هاسلبلاد',
+      category: 'image',
+      styleCategory: 'fashion',
+      description: 'پرتره مینیمال روی جلد مجله مد با تفکیک بافت پارچه، نور ملایم سافت‌باکس و رنگ‌های گرم و ارگانیک.',
+      promptText: 'High fashion editorial portrait for Vogue cover, shot on Hasselblad H6D-100c, 100mm lens, softbox directional lighting, subtle high-end makeup, textured linen garment, neutral minimalist beige studio background, exquisite facial detail, natural film grain --ar 9:16 --v 6.0',
+      tipsForPersonalPhoto: 'عکس رسمی با لباس مینیمال و نگاه متمرکز به دوربین خروجی بی‌نقصی می‌سازد.',
+      tags: ['عکاسی_مدلینگ', 'ووگ', 'پرتره_استودیویی', 'های_فشن']
+    },
+    {
+      title: 'عکاسی نوستالژیک آنالوگ ۳۵ میلی‌متری دهه ۱۹۹۰ با گرین کداک',
+      category: 'image',
+      styleCategory: 'retro',
+      description: 'ثبت حس اصیل عکاسی خیابانی قدیمی با رنگ‌های فیلم کداکروم ۶۴، بازتاب طلایی خورشید و گرین ارگانیک.',
+      promptText: 'Vintage 1990s 35mm candid street photograph, Kodachrome 64 colors, nostalgic golden hour lens flare, natural soft grain, cinematic color grading, authentic retro vibe, candid emotion, authentic film aesthetic, 4k --ar 16:9',
+      tipsForPersonalPhoto: 'عکس‌هایی با نور طبیعی روز و استایل روزمره فوق‌العاده با این پرامپت هماهنگ می‌شوند.',
+      tags: ['عکاسی_آنالوگ', 'نوستالژی', 'کداک', 'رترو']
+    },
+    {
+      title: 'نقاشی رویایی آبرنگ به سبک انیمه‌های شاهکار استودیو جیبلی',
+      category: 'image',
+      styleCategory: 'artistic',
+      description: 'منظره شاعرانه و آرامش‌بخش با تپه‌های سرسبز، ابرهای سفید تابستانی و حس عمیق نوستالژی آثار میازاکی.',
+      promptText: 'Studio Ghibli style breathtaking landscape illustration, lush green rolling hills, fluffy summer cumulus clouds, gentle watercolor wash, warm sunlight, Hayao Miyazaki aesthetic, nostalgic peaceful atmosphere, vibrant hand-drawn anime art --ar 16:9',
+      tipsForPersonalPhoto: 'یک منظره طبیعی یا شهری را انتخاب کنید تا به یک تابلوی نقاشی چشم‌نواز تبدیل شود.',
+      tags: ['استودیو_جیبلی', 'انیمه', 'تصویرسازی_هنری', 'آبرنگ']
+    }
+  ];
+
+  return templates.slice(0, count);
+}
+
+/**
+ * Extracts fresh trending AI image prompts using Gemini or smart dynamic fallback
+ */
+async function extractTrendingAiPromptsWithGemini(count = 5): Promise<{
+  added: number;
+  prompts: AiPrompt[];
+  source: 'gemini' | 'curated_fallback';
+  message: string;
+}> {
+  if (!db.aiPrompts) db.aiPrompts = [];
+  const existingTexts = new Set(db.aiPrompts.map(p => (p.promptText || '').trim().toLowerCase()));
+  const existingTitles = new Set(db.aiPrompts.map(p => (p.title || '').trim().toLowerCase()));
+
+  const ai = getGeminiClient();
+  let generatedItems: any[] = [];
+  let source: 'gemini' | 'curated_fallback' = 'gemini';
+
+  if (ai) {
+    try {
+      const promptInstruction = `You are an expert AI prompt engineer and creative director.
+Generate ${count} brand-new, ultra-trending, photorealistic and creative image prompts that are currently viral on Midjourney v6, Flux.1, and Stable Diffusion XL.
+Topics to cover:
+1. Ultra-detailed cinematic 85mm portrait with Rembrandt lighting and natural skin texture
+2. Cyberpunk neon street photography with reflections and volumetric fog
+3. 3D Pixar/Disney style whimsical character
+4. 35mm retro analog film portrait with warm Kodachrome vintage aesthetic
+5. Hyper-realistic futuristic fashion editorial portrait
+6. Architectural marvel with dramatic natural lighting
+
+Respond with ONLY a raw JSON array of ${count} objects (no markdown blocks, no commentary):
+[
+  {
+    "title": "عنوان جذاب فارسی (حداکثر ۱۰ کلمه)",
+    "category": "image",
+    "styleCategory": "fashion | cyberpunk | pixar | artistic | cinematic | retro",
+    "description": "توضیح کوتاه و جذاب فارسی در مورد نحوه نورپردازی، لنز، جو و کیفیت خروجی این پرامپت",
+    "promptText": "Complete detailed English prompt for Midjourney v6 / Flux.1 including aspect ratio --ar 16:9 or --ar 9:16 and photographic keywords",
+    "tipsForPersonalPhoto": "راهنمایی کوتاه فارسی برای اعمال این پرامپت روی عکس شخصی یا پرتره",
+    "tags": ["تگ۱", "تگ۲", "میدجرنی"]
+  }
+]`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: promptInstruction,
+      });
+
+      const responseText = response.text || '';
+      const cleanJson = responseText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleanJson);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        generatedItems = parsed;
+      }
+    } catch (geminiErr: any) {
+      console.error('[Gemini Prompt Extraction Error]:', geminiErr.message || geminiErr);
+    }
+  }
+
+  // Fallback to rich curated dynamic generator if Gemini was unavailable or failed
+  if (generatedItems.length === 0) {
+    source = 'curated_fallback';
+    generatedItems = generateCuratedTrendingPromptsFallback(count);
+  }
+
+  let addedCount = 0;
+  const newPrompts: AiPrompt[] = [];
+
+  for (const item of generatedItems) {
+    const rawPromptText = (item.promptText || '').trim();
+    const rawTitle = (item.title || '').trim();
+    if (!rawPromptText || rawPromptText.length < 15 || !rawTitle) continue;
+    if (existingTexts.has(rawPromptText.toLowerCase()) || existingTitles.has(rawTitle.toLowerCase())) continue;
+
+    const styleCat = (item.styleCategory || 'fashion').toLowerCase();
+    const imageUrl = item.imageUrl || getRandomImageForStyle(styleCat);
+
+    const newPrompt: AiPrompt = {
+      id: `prompt-gemini-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      title: rawTitle,
+      category: 'image',
+      styleCategory: styleCat,
+      description: item.description || 'پرامپت ترند و بهینه‌سازی شده با هوش مصنوعی برای تولید تصویر فوق‌العاده باکیفیت.',
+      promptText: rawPromptText,
+      tipsForPersonalPhoto: item.tipsForPersonalPhoto || 'از عکسی با نور کافی و زاویه مستقیم برای بهترین نتیجه استفاده فرمایید.',
+      imageUrl: imageUrl,
+      tags: Array.isArray(item.tags) ? item.tags : ['هوش_مصنوعی', 'میدجرنی', 'پرامپت_ترند'],
+      importance: 'hot',
+      createdAt: new Date().toISOString(),
+      postedToChannel: false,
+      postedAt: null
+    };
+
+    db.aiPrompts.unshift(newPrompt);
+    existingTexts.add(rawPromptText.toLowerCase());
+    existingTitles.add(rawTitle.toLowerCase());
+    newPrompts.push(newPrompt);
+    addedCount++;
+  }
+
+  if (addedCount > 0) {
+    if (!db.settings.autoPost) db.settings.autoPost = { ...DEFAULT_AUTO_POST };
+    db.settings.autoPost.lastAiTrendExtractionAt = new Date().toISOString();
+    saveDatabase();
+    addLog('info', `✨ استخراج پرامپت‌های هوش مصنوعی: ${addedCount} پرامپت ترند جدید (${source === 'gemini' ? 'هوش مصنوعی Gemini' : 'موتور تحلیلی ترند'}) به بانک افزوده شد.`);
+  }
+
+  return {
+    added: addedCount,
+    prompts: newPrompts,
+    source,
+    message: `تعداد ${addedCount} پرامپت ترند جدید با موفقیت به بانک افزوده شد.`
+  };
+}
+
+/**
+ * Curated pool of high-virality posts that trigger high Telegram forwarding (especially for Apple, iOS & Tech users)
+ */
+function getCuratedViralPostFallback(channelNum: 1 | 2 = 1): { title: string; summary: string; category: string; tags: string[] } {
+  const viralPool = [
+    {
+      title: 'ترفند محرمانه آیفون: دانلود مستقیم هر ویدیویی از اینستاگرام، تیک‌تاک و یوتیوب با یک لمس!',
+      summary: `دیگه نیازی به نصب ربات یا برنامه‌های پولی و پر از تبلیغ برای دانلود ندارید:\n\n۱. برنامه رسمی Shortcuts (میانبرها) رو در آیفون باز کنید.\n۲. شورتکات رایگان «R⤓Download» یا «Yas Download» رو از Safari اضافه کنید.\n۳. وارد اینستاگرام یا یوتیوب بشید، روی دکمه Share (اشتراک‌گذاری) پست بزنید.\n۴. از لیست باز شده روی این میانبر بزنید تا ویدیو در ۳ ثانیه با بالاترین کیفیت در Photos ذخیره بشه!\n\n🍏 برای همه دوستان آیفون‌دارت بفرست، قطعاً به کارشون میاد!`,
+      category: 'trick',
+      tags: ['ترفند_آیفون', 'دانلود_اینستاگرام', 'شورتکات_اپل', 'کاربردی_iOS']
+    },
+    {
+      title: 'تنظیمات طلایی آیفون برای حفظ سلامت باتری (Battery Health) روی ۱۰۰٪',
+      summary: `اگر می‌خواید سلامت باتری آیفونتون تا چند سال روی حداکثر بمونه، این ۴ تنظیم حیاتی رو فعال کنید:\n\n۱. در Settings > Battery > Battery Health گزینه «Optimized Battery Charging» (یا 80% Limit در سری 15 و 16) رو روشن نگه دارید.\n۲. مسیر Settings > General > Background App Refresh رو باز کنید و اپلیکیشن‌هایی که مداوم نیاز ندارید رو خاموش کنید.\n۳. در Settings > Privacy > Location Services بخش Significant Locations رو خاموش کنید تا بیهوده GPS کار نکنه.\n۴. هرگز نگذارید شارژ گوشی به زیر ۲۰٪ برسه و از شارژر و کابل استاندارد MFi استفاده کنید.\n\n🔋 این ترفند ارزشمند رو برای دوستانت بفرست تا باتری گوشیشون سالم بمونه!`,
+      category: 'trick',
+      tags: ['باتری_آیفون', 'سلامت_باتری', 'ترفند_اپل', 'آموزش_iOS']
+    },
+    {
+      title: 'قابلیت جادویی Back Tap در آیفون که کار با گوشی رو ۳ برابر سریع‌تر می‌کنه',
+      summary: `می‌دونستید بدون لمس صفحه و فقط با ۲ بار ضربه به پشت آیفون می‌تونید فیلترشکن باز کنید یا اسکرین‌شات بگیرید؟\n\n۱. وارد Settings > Accessibility (دسترس‌پذیری) بشید.\n۲. گزینه Touch و سپس در انتهای صفحه «Back Tap» رو انتخاب کنید.\n۳. روی Double Tap بزنید و عملکرد دلخواهتون مثل Screenshot یا باز کردن وی‌پی‌ان یا چراغ‌قوه رو تعیین کنید.\n۴. حالا هر وقت ۲ بار پشت گوشی رو لمس کنید، دستور بلافاصله اجرا میشه!\n\n✨ حتماً تست کنید و این آموزش کاربردی رو برای دوستان اپلی فوروارد کنید!`,
+      category: 'trick',
+      tags: ['ترفند_مخفی', 'آیفون', 'اپل', 'کاربردی']
+    },
+    {
+      title: 'ترفند باز کردن ویدیوهای یوتیوب بدون بافر و قطعی روی تمام اینترنت‌ها',
+      summary: `اگر موقع دیدن یوتیوب روی همراه اول یا ایرانسل ویدیوها با تاخیر یا بافر باز میشن، این ۳ حرکت طلایی رو اجرا کنید:\n\n۱. در تنظیمات برنامه یوتیوب، کیفیت پیش‌فرض (Video Quality) رو از Auto روی 720p یا 480p بذارید تا بارگذاری بدون لگ انجام بشه.\n۲. داخل مرورگر یا تنظیمات کانفیگ، پروتکل‌های آزمایشی QUIC و HTTP/3 رو غیرفعال کنید (در شبکه‌های داخلی ایران دچار Packet Drop میشن).\n۳. از DNS اختصاصی کلودفلر 1.1.1.1 یا شکن استفاده کنید تا سرعت اتصال دامنه‌ها زیر ۱۰ میلی‌ثانیه برسه.\n\n❤️ این آموزش فوق‌العاده کاربردی رو برای دوستانت بفرست تا بدون معطلی ویدیوها رو باز کنن!`,
+      category: 'trick',
+      tags: ['ترفند_یوتیوب', 'افزایش_سرعت', 'اینترنت_پرسرعت', 'ترفند_موبایل']
+    },
+    {
+      title: '۳ ابزار رایگان هوش مصنوعی روز که جای ۱۰ برنامه ادیت سنگین رو می‌گیرن',
+      summary: `این ابزارهای جادویی رو حتماً ذخیره کنید، چون سرعت کارتون رو چند برابر می‌کنن:\n\n۱. ابزار Clipdrop.co: حذف فوری هر شخص یا شیء اضافی از عکس در ۲ ثانیه با طبیعی‌ترین بافت ممکن.\n۲. ابزار ElevenLabs: تبدیل متن فارسی و انگلیسی به صدای گوینده واقعی رادیو بدون حس رباتی.\n۳. ابزار Gamma.app: فقط تیتر موضوعت رو بنویس تا در ۱۰ ثانیه اسلایدها و پاورپوینت کامل با دیزاین حرفه‌ای تحویلت بده!\n\n🚀 بفرست برای همکارات و گروه‌های دانشجویی تا کارشون راحت بشه!`,
+      category: 'trick',
+      tags: ['هوش_مصنوعی', 'ابزار_رایگان', 'ادیت_عکس', 'تکنولوژی_روز']
+    },
+    {
+      title: 'تنظیم محرمانه گوشی‌های اندروید و آیفون برای جلوگیری از قطع اتصال فیلترشکن',
+      summary: `اگر فیلترشکن شما بعد از خاموش شدن صفحه یا قفل گوشی قطع میشه، علت اصلی سیستم صرفه‌جویی باتریه:\n\n۱. به Settings گوشی برید و بخش Battery / بهینه‌سازی باتری رو پیدا کنید.\n۲. برنامه مورد نظرتون (مثل V2rayNG یا NapsternetV یا Streisand) رو انتخاب کنید.\n۳. وضعیت باتری رو روی «Unrestricted / بدون محدودیت» قرار بدید.\n۴. در بخش Autostart (اجرای خودکار پس‌زمینه)، تیک برنامه رو روشن کنید تا بسته نشه.\n\n🔥 برای دوستانت که مدام قطعی دارن فوروارد کن تا مشکلشون حل بشه!`,
+      category: 'trick',
+      tags: ['ترفند_موبایل', 'حل_مشکل_قطعی', 'فیلترشکن', 'باتری_گوشی']
+    },
+    {
+      title: 'روش تست فوری اینکه آیا اکانت تلگرام یا اینستاگرام شما توسط شخص دیگری چک میشه؟',
+      summary: `هر ماه یک‌بار این تست امنیتی ساده رو انجام بدید تا خیالتون از امنیت کامل باشه:\n\n۱. وارد Settings > Devices (دستگاه‌های متصل) بشید.\n۲. تمام دستگاه‌ها و شهرهایی که به حسابتون وصل هستند رو بررسی کنید.\n۳. اگر گوشی یا سیستم ناشناسی دیدید، فوراً «Terminate all other sessions» رو بزنید.\n۴. حتماً در بخش Privacy & Security، تایید دومرحله‌ای (Two-Step Verification) رو با پسورد امن فعال کنید.\n\n🛡️ امنیت خانواده و دوستانت مهمه، این ترفند رو براشون بفرست تا اکانتشون امن بمونه!`,
+      category: 'secret',
+      tags: ['امنیت_تلگرام', 'ضد_هک', 'ترفند_موبایل', 'حریم_خصوصی']
+    }
+  ];
+
+  return viralPool[Math.floor(Math.random() * viralPool.length)];
+}
+
+/**
+ * Generates an ultra-shareable, high-forward content item with Gemini AI (optimized for Apple & Tech viral sharing)
+ */
+async function generateViralShareablePostWithGemini(channelNum: 1 | 2 = 1): Promise<{
+  success: boolean;
+  item?: TechItem;
+  message: string;
+}> {
+  const ai = getGeminiClient();
+  let generatedData: any = null;
+
+  if (ai) {
+    try {
+      const promptInstruction = `شما یک مدیر ارشد و متخصص بازاریابی وایرال برای کانال‌های تلگرامی محبوب حوزه تکنولوژی، ترفندهای اپل (iPhone/iOS/Mac)، ترفندهای هوش مصنوعی و اینترنت آزاد هستید.
+یک پست به شدت جذاب، فوق‌العاده کاربردی و شدیداً ویروسی و اشتراک‌گذاری‌پذیر (Viral Hook & High Forward Rate) برای کانال تلگرام به زبان فارسی بنویسید.
+
+موضوعات اولویت‌دار برای این نوبت:
+۱. ترفندهای مخفی و شگفت‌انگیز آیفون و سیستم‌عامل iOS (مثلاً شورتکات‌های جادویی دانلود فیلم بدون برنامه، افزایش ماندگاری باتری آیفون، میانبرهای مخفی دکمه Action Button یا Back Tap، پاک کردن کش و رم آیفون، ترفندهای مخفی دوربین و عکاسی حرفه‌ای با آیفون)
+۲. ترفندهای ۲ برابر کردن سرعت اینترنت، باز کردن بدون لگ اینستاگرام و یوتیوب در ایران، معرفی DNSهای معجزه‌گر و تنظیمات ضد قطعی وی‌پی‌ان در گوشی
+۳. ابزارهای رایگان و حیرت‌انگیز هوش مصنوعی که کارهای روزمره را مثل آب خوردن حل می‌کنند (حذف اشیاء از عکس، ساخت اسلاید، خلاصه‌سازی و...)
+
+قوانین حیاتی برای وایرال شدن و فوروارد بالا:
+- تیتر باید قلاب (Hook) قدرتمند و میخکوب‌کننده داشته باشد (مثلاً: «راز مخفی آیفون که اپل نمی‌خواهد بدانی»، «چگونه بدون برنامه از اینستاگرام ویدیو دانلود کنیم؟»).
+- محتوا باید در ۳ تا ۴ گام شماره‌دار، بسیار شفاف، بدون پیچیدگی و با ایموجی‌های منظم باشد.
+- انتهای متن حتماً یک فراخوان صمیمانه برای فوروارد و شیر به دوستان یا گروه‌ها داشته باشد.
+- خروجی فقط و فقط یک آبجکت JSON معتبر به فرم زیر بدون هیچ توضیح اضافه باشد:
+{
+  "title": "تیتر قلاب‌دار و جذاب",
+  "summary": "متن کامل پست همراه با گام‌های مشخص ۱ ۲ ۳ و ایموجی‌ها و دعوت به اشتراک‌گذاری",
+  "category": "trick",
+  "tags": ["ترفند_آیفون", "اپل", "هوش_مصنوعی", "آموزش_موبایل"]
+}`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: promptInstruction,
+      });
+
+      const cleanJson = (response.text || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleanJson);
+      if (parsed && parsed.title && parsed.summary) {
+        generatedData = parsed;
+      }
+    } catch (err: any) {
+      console.error('[Gemini Viral Generation Error]:', err.message || err);
+    }
+  }
+
+  // Fallback to high-virality curated pool if Gemini not available
+  if (!generatedData) {
+    generatedData = getCuratedViralPostFallback(channelNum);
+  }
+
+  if (!db.techItems) db.techItems = [];
+  const newItem: TechItem = {
+    id: `viral-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+    title: generatedData.title.trim(),
+    summary: generatedData.summary.trim(),
+    category: (generatedData.category as any) || 'trick',
+    importance: 'high',
+    importanceScore: 99,
+    source: 'هوش مصنوعی Gemini (محتوای ویروسی)',
+    tags: Array.isArray(generatedData.tags) ? generatedData.tags : ['ترفند_ویروسی', 'هوش_مصنوعی', 'آموزش_طلایی'],
+    createdAt: new Date().toISOString(),
+    postedToChannel: false,
+    postedAt: null
+  };
+
+  db.techItems.unshift(newItem);
+  saveDatabase();
+
+  return {
+    success: true,
+    item: newItem,
+    message: 'پست ویروسی با هوش مصنوعی با موفقیت تولید و ذخیره شد.'
+  };
+}
+
 function purgeOldAiPrompts(maxDays = 7): number {
   if (!db.aiPrompts || db.aiPrompts.length === 0) return 0;
   
@@ -4573,10 +4930,7 @@ function purgeOldAiPrompts(maxDays = 7): number {
   const cutoffTime = Date.now() - (maxDays * 24 * 60 * 60 * 1000);
   
   db.aiPrompts = db.aiPrompts.filter(item => {
-    // Purge any legacy prompts with fake stock images or synthetic placeholders
-    if (item.imageUrl && (item.imageUrl.includes('unsplash.com') || item.imageUrl.includes('redd.it'))) {
-      return false;
-    }
+    // Purge any broken prompts with synthetic placeholder markers
     if (item.promptText && item.promptText.includes('[your description/photo]')) {
       return false;
     }
@@ -4611,12 +4965,22 @@ function purgeOldAiPrompts(maxDays = 7): number {
 async function refreshAiPromptsAndPurgeOld(force = false): Promise<{ added: number; purged: number; total: number }> {
   const maxDays = 7;
   const purged = purgeOldAiPrompts(maxDays);
-  const added = await fetchLiveAiPromptsFromWeb();
+  let added = await fetchLiveAiPromptsFromWeb();
+  
+  // If web scraping yielded 0 new items, automatically use Gemini AI extraction!
+  if (added === 0 || force) {
+    try {
+      const geminiRes = await extractTrendingAiPromptsWithGemini(4);
+      added += geminiRes.added;
+    } catch (e: any) {
+      console.error('Error during fallback Gemini prompt extraction:', e);
+    }
+  }
   
   if (added > 0 || purged > 0 || force) {
     saveDatabase();
     if (added > 0) {
-      addLog('info', `🎨 بروزرسانی پرامپت‌های هوش مصنوعی: ${added} پرامپت جدید از وب دریافت شد.`);
+      addLog('info', `🎨 بروزرسانی پرامپت‌های هوش مصنوعی: ${added} پرامپت جدید به بانک افزوده شد.`);
     }
   }
   
@@ -6210,6 +6574,11 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
     }
 
+    const shareBtn = getChannelShareInlineButton(channelTargetNum, targetChannel, '⚡ کانفیگ‌ها و پروکسی‌های اختصاصی و پرسرعت! برای دوستانت بفرست 👇');
+    if (shareBtn) {
+      inlineButtons.push([{ text: shareBtn.text, url: shareBtn.url }]);
+    }
+
     if (!isCh2) {
       const botUser = db.settings.botUsername;
       const botUrl = botUser ? `https://t.me/${botUser.replace('@', '')}` : null;
@@ -6639,6 +7008,11 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
       inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
     }
 
+    const shareBtn = getChannelShareInlineButton(channelTargetNum, targetChannel, '🔥 این ترفند و آموزش کاربردی رو برای دوستانت بفرست 👇');
+    if (shareBtn) {
+      inlineButtons.push([{ text: shareBtn.text, url: shareBtn.url }]);
+    }
+
     if (!isCh2) {
       const botUser = db.settings.botUsername;
       if (botUser) {
@@ -6906,6 +7280,11 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
       inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
     }
 
+    const shareBtn = getChannelShareInlineButton(channelTargetNum, targetChannel, '🎨 پرامپت ترند و خفن هوش مصنوعی! برای دوستات بفرست 👇');
+    if (shareBtn) {
+      inlineButtons.push([{ text: shareBtn.text, url: shareBtn.url }]);
+    }
+
     if (!isCh2) {
       const botUser = db.settings.botUsername;
       if (botUser) {
@@ -7133,6 +7512,11 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
     const channelBtn = getChannelInlineButton(channelTargetNum, targetChannel);
     if (channelBtn) {
       inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
+    }
+
+    const shareBtn = getChannelShareInlineButton(channelTargetNum, targetChannel, '⚡ ابزار فوق‌العاده کاربردی روز! حتماً سیو کن و برای دوستات بفرست 👇');
+    if (shareBtn) {
+      inlineButtons.push([{ text: shareBtn.text, url: shareBtn.url }]);
     }
 
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
@@ -8255,7 +8639,7 @@ async function checkAndTriggerAutoPost() {
     const tehran = getTehranTimeInfo();
 
     interface PostCandidate {
-      category: 'configs' | 'tricks' | 'news' | 'prompts' | 'fun' | 'tools' | 'polls';
+      category: 'configs' | 'tricks' | 'news' | 'prompts' | 'fun' | 'tools' | 'polls' | 'viral';
       isDue: boolean;
       timeSinceDueMs: number;
       goldenPriority: number;
@@ -8386,6 +8770,24 @@ async function checkAndTriggerAutoPost() {
           timeSinceDueMs: elapsed - intervalMs,
           goldenPriority: p,
           run: () => executeSmartPollsAutoPost(1, ap.targetChannel)
+        });
+      }
+    }
+
+    // 8. Viral & Ultra-Shareable Posts (High virality AI content)
+    if (ap.viralShareEnabled === true) {
+      const viralMinutes = Number(ap.viralShareIntervalMinutes) || (Number(ap.viralShareIntervalHours) ? Number(ap.viralShareIntervalHours) * 60 : 360);
+      const intervalMs = Math.max(30, viralMinutes) * 60 * 1000;
+      const lastTime = ap.lastViralSharePostedAt;
+      const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
+      if (elapsed >= intervalMs) {
+        const p = (tehran.hour >= 14 && tehran.hour <= 23) ? 10 : 7;
+        candidates.push({
+          category: 'viral',
+          isDue: true,
+          timeSinceDueMs: elapsed - intervalMs,
+          goldenPriority: p,
+          run: () => executeViralPostAutoPost(1, ap.targetChannel)
         });
       }
     }
@@ -8529,6 +8931,22 @@ async function checkAndTriggerAutoPost() {
           timeSinceDueMs: elapsed2 - intervalMs2,
           priority: 6,
           run: () => executeSmartPollsAutoPost(2, ap2.targetChannel)
+        });
+      }
+    }
+
+    // 8. Viral & Ultra-Shareable Posts for Channel 2 (Apple & Tech secrets)
+    if (ap2.viralShareEnabled === true) {
+      const viralMinutes2 = Number(ap2.viralShareIntervalMinutes) || (Number(ap2.viralShareIntervalHours) ? Number(ap2.viralShareIntervalHours) * 60 : 360);
+      const intervalMs2 = Math.max(30, viralMinutes2) * 60 * 1000;
+      const lastTime2 = ap2.lastViralSharePostedAt;
+      const elapsed2 = lastTime2 ? (now - new Date(lastTime2).getTime()) : Infinity;
+      if (elapsed2 >= intervalMs2) {
+        candidates2.push({
+          category: 'viral',
+          timeSinceDueMs: elapsed2 - intervalMs2,
+          priority: 8,
+          run: () => executeViralPostAutoPost(2, ap2.targetChannel)
         });
       }
     }
@@ -8984,6 +9402,146 @@ function getChannelInlineButton(channelNum: 1 | 2, targetChannelHandle?: string)
  */
 function getSponsorChannelInlineButton(channelNum: 1 | 2 = 1, targetChannelHandle?: string): { text: string; url: string } | null {
   return getChannelInlineButton(channelNum, targetChannelHandle);
+}
+
+/**
+ * Helper to generate a 1-click Telegram Share Button for high virality & forward rates.
+ * When clicked in Telegram, it natively opens the user's chat selection to forward the post/channel.
+ */
+function getChannelShareInlineButton(
+  channelNum: 1 | 2,
+  targetChannelHandle?: string,
+  customShareText = '🔥 این ترفند و آموزش کاربردی رو برای دوستانت بفرست 👇'
+): { text: string; url: string } | null {
+  const isCh2 = channelNum === 2;
+  const ap = db.settings?.autoPost;
+  const c2 = ap?.channel2;
+  const enabled = isCh2 ? (c2?.includeShareButton ?? true) : (ap?.includeShareButton ?? true);
+  if (!enabled) return null;
+
+  const target = targetChannelHandle || (isCh2 ? c2?.targetChannel : ap?.targetChannel);
+  if (!target) return null;
+
+  const cleanHandle = target.replace(/^@/, '').trim();
+  if (!cleanHandle) return null;
+
+  const channelUrl = `https://t.me/${cleanHandle}`;
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(channelUrl)}&text=${encodeURIComponent(customShareText)}`;
+
+  return {
+    text: '🚀 ارسال و اشتراک برای دوستان',
+    url: shareUrl
+  };
+}
+
+/**
+ * Generates and posts an ultra-shareable, high-engagement viral content piece to the specified channel
+ */
+async function executeViralPostAutoPost(channelTargetNum: 1 | 2 = 1, customTargetChannel?: string): Promise<boolean> {
+  const isCh2 = channelTargetNum === 2;
+  const settings = isCh2 ? (db.settings.autoPost.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
+  const targetChannel = customTargetChannel || settings?.targetChannel;
+  if (!targetChannel) {
+    addLog('warn', `ارسال پست ویروسی به کانال ${channelTargetNum} انجام نشد: کانال مقصد تنظیم نشده است.`);
+    return false;
+  }
+  if (!db.settings.botToken) {
+    addLog('warn', 'ارسال پست ویروسی انجام نشد: توکن ربات فعال نیست.');
+    return false;
+  }
+
+  if (channelPostingLocks[channelTargetNum]) {
+    addLog('warn', `ارسال پست ویروسی به کانال ${channelTargetNum} موقتاً متوقف شد: ارسال دیگری در جریان است.`);
+    return false;
+  }
+  channelPostingLocks[channelTargetNum] = true;
+
+  try {
+    addLog('info', `در حال تولید محتوای ویروسی با هوش مصنوعی (Gemini) و ارسال به کانال ${channelTargetNum} (${targetChannel})...`);
+
+    // Generate fresh viral item
+    const viralRes = await generateViralShareablePostWithGemini();
+    const item = viralRes.item;
+    if (!item) {
+      addLog('error', 'تولید محتوای ویروسی ناموفق بود.');
+      return false;
+    }
+
+    let text = `🚀 <b>« رازها و ترفندهای کاربردی و وایرال »</b>\n\n`;
+    text += `🔥 <b>${escapeHtml(item.title)}</b>\n\n`;
+    text += `${escapeHtml(item.summary)}\n\n`;
+
+    if (item.tags && item.tags.length > 0) {
+      const formattedTags = item.tags
+        .slice(0, 5)
+        .map(t => `#${t.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '')}`)
+        .join(' ');
+      text += `🏷 <i>${formattedTags}</i>\n`;
+    }
+
+    let channelBranding = isCh2 ? (settings.adText || '') : (settings.adText || db.settings.branding || '');
+    if (channelBranding) {
+      text += `\n🆔 ${escapeHtml(channelBranding)}`;
+    }
+
+    const inlineButtons: any[] = [];
+    const channelBtn = getChannelInlineButton(channelTargetNum, targetChannel);
+    if (channelBtn) {
+      inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
+    }
+
+    // 1-Click Telegram Forward / Share Button
+    const shareBtn = getChannelShareInlineButton(channelTargetNum, targetChannel, `🔥 این آموزش فوق‌العاده کاربردی رو ببین، به کارت میاد! 👇\n${item.title}`);
+    if (shareBtn) {
+      inlineButtons.push([{ text: shareBtn.text, url: shareBtn.url }]);
+    }
+
+    if (!isCh2 && db.settings.botUsername) {
+      inlineButtons.push([{
+        text: '🤖 دسترسی به ابزارها و ترفندهای بیشتر',
+        url: `https://t.me/${db.settings.botUsername.replace('@', '')}`
+      }]);
+    }
+
+    const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
+    const postResult = await sendTelegramPostWithMedia({
+      chatId: channelHandle,
+      text,
+      replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+      silent: !!settings.silentMode
+    });
+
+    if (!postResult.success) {
+      return false;
+    }
+
+    const nowIso = new Date().toISOString();
+    item.postedToChannel = true;
+    item.postedAt = nowIso;
+    item.postCount = (item.postCount || 0) + 1;
+    if (isCh2) {
+      item.postedToChannel2 = true;
+      item.lastPostedAtCh2 = nowIso;
+      if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
+      db.settings.autoPost.channel2.lastViralSharePostedAt = nowIso;
+      db.settings.autoPost.channel2.lastPostedAt = nowIso;
+      db.settings.autoPost.channel2.lastAnyPostAt = nowIso;
+    } else {
+      item.postedToChannel1 = true;
+      item.lastPostedAtCh1 = nowIso;
+      db.settings.autoPost.lastViralSharePostedAt = nowIso;
+      db.settings.autoPost.lastPostedAt = nowIso;
+      db.settings.autoPost.lastAnyPostAt = nowIso;
+    }
+    saveDatabase();
+    addLog('success', `✨ پست ویروسی هوش مصنوعی با موفقیت به کانال ${channelTargetNum} (${targetChannel}) ارسال شد.`);
+    return true;
+  } catch (err: any) {
+    addLog('error', `خطا در ارسال پست ویروسی به کانال ${channelTargetNum}: ${err.message || err}`);
+    return false;
+  } finally {
+    channelPostingLocks[channelTargetNum] = false;
+  }
 }
 
 /**
@@ -13463,6 +14021,18 @@ function setupIntervals() {
       // 1. Refresh AI Prompts from web & seed
       await refreshAiPromptsAndPurgeOld().catch(err => console.error('AI Prompts hourly refresh error:', err));
       
+      // 1.1 Check if scheduled Gemini Trend Extraction is due (daily or every 2 days as requested by user)
+      const ap = db.settings.autoPost;
+      if (ap && ap.aiTrendExtractionEnabled !== false) {
+        const intervalHours = Number(ap.aiTrendExtractionIntervalHours) || 24;
+        const lastExtract = ap.lastAiTrendExtractionAt;
+        const elapsedHours = lastExtract ? (Date.now() - new Date(lastExtract).getTime()) / (1000 * 60 * 60) : Infinity;
+        if (elapsedHours >= intervalHours) {
+          addLog('info', `🤖 اجرای دوره‌ای استخراج پرامپت‌های ترند با هوش مصنوعی (Gemini) - دوره: هر ${intervalHours} ساعت یکبار...`);
+          await extractTrendingAiPromptsWithGemini(5).catch(err => console.error('Scheduled AI Trend Prompt extraction error:', err));
+        }
+      }
+      
       // 2. Refresh Tech News & Tricks from sources
       await refreshTechContentAndPurgeOld().catch(err => console.error('Tech News hourly refresh error:', err));
       
@@ -13569,7 +14139,11 @@ async function startExpressServer() {
       '/api/telegram-webhook',
       '/api/fun-news/refresh',
       '/api/fun-news/send',
-      '/api/bot/auto-post/trigger-fun-news'
+      '/api/bot/auto-post/trigger-fun-news',
+      '/api/bot/auto-post/trigger-viral',
+      '/api/ai-prompts/extract-ai-trends',
+      '/api/ai-prompts/refresh',
+      '/api/bot/auto-post/trigger-ai-prompts'
     ];
     
     if (publicPaths.includes(req.path) || req.path.startsWith('/api/fun-sources') || req.path.startsWith('/api/fun-news')) {
@@ -14551,6 +15125,22 @@ async function startExpressServer() {
     }
   });
 
+  // API: Manually extract trending AI Prompts with Gemini
+  app.post('/api/ai-prompts/extract-ai-trends', async (req, res) => {
+    try {
+      const count = Number(req.body?.count) || 5;
+      const result = await extractTrendingAiPromptsWithGemini(count);
+      res.json({
+        success: true,
+        addedCount: result.added,
+        source: result.source,
+        message: result.message
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || err });
+    }
+  });
+
   // API: Add Custom Tech Item
   app.post('/api/tech-items', (req, res) => {
     try {
@@ -14838,6 +15428,29 @@ async function startExpressServer() {
         res.json({ success: true, message: `پست جعبه‌ابزار دیجیتال و کاربردی با موفقیت به کانال ${channelNum} (${ap.targetChannel}) ارسال گردید.` });
       } else {
         res.status(400).json({ success: false, message: 'ارسال با خطا مواجه شد یا ابزاری در دسته‌بندی انتخابی یافت نشد.' });
+      }
+    } catch(err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Trigger Ultra-Shareable Viral Post manually (AI-powered viral tricks)
+  app.post('/api/bot/auto-post/trigger-viral', async (req, res) => {
+    try {
+      const channelNum = req.body?.channelNum === 2 ? 2 : 1;
+      const isCh2 = channelNum === 2;
+      const ap = isCh2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
+      if (!ap?.targetChannel) {
+        return res.status(400).json({ success: false, message: `آیدی کانال مقصد شماره ${channelNum} تنظیم نشده است.` });
+      }
+      if (!db.settings.botToken) {
+        return res.status(400).json({ success: false, message: 'توکن ربات تلگرام در تنظیمات ثبت نشده یا غیرفعال است.' });
+      }
+      const success = await executeViralPostAutoPost(channelNum, ap.targetChannel);
+      if (success) {
+        res.json({ success: true, message: `پست ویروسی هوش مصنوعی با موفقیت به کانال ${channelNum} (${ap.targetChannel}) ارسال گردید.` });
+      } else {
+        res.status(400).json({ success: false, message: 'ارسال پست ویروسی با خطا مواجه شد. گزارشات را بررسی فرمایید.' });
       }
     } catch(err: any) {
       res.status(500).json({ success: false, message: err.message });

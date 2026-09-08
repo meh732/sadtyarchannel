@@ -59,6 +59,32 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'all' | AiPromptCategory>('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [extractingTrends, setExtractingTrends] = useState(false);
+
+  const handleExtractAiTrends = async () => {
+    setExtractingTrends(true);
+    try {
+      const res = await fetch('/api/ai-prompts/extract-ai-trends', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ count: 5 })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || `تعداد ${data.addedCount} پرامپت ترند با هوش مصنوعی استخراج شد.`, 'success');
+        await onRefreshPrompts();
+      } else {
+        showToast(data.message || 'خطا در استخراج پرامپت‌ها با هوش مصنوعی.', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'خطا در ارتباط با سرور', 'error');
+    } finally {
+      setExtractingTrends(false);
+    }
+  };
 
   // Modal State
   const [showModal, setShowModal] = useState(false);
@@ -212,8 +238,18 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
           )}
 
           <button
+            onClick={handleExtractAiTrends}
+            disabled={extractingTrends || actionLoading === 'refresh_prompts'}
+            className="px-3.5 py-2.5 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm shadow-pink-500/20 transition-all cursor-pointer disabled:opacity-50"
+            title="استخراج پرامپت‌های ترند روز با هوش مصنوعی Gemini"
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${extractingTrends ? 'animate-spin' : ''}`} />
+            <span>{extractingTrends ? 'در حال استخراج هوش مصنوعی...' : 'استخراج ترند با هوش مصنوعی'}</span>
+          </button>
+
+          <button
             onClick={onRefreshPrompts}
-            disabled={actionLoading === 'refresh_prompts'}
+            disabled={actionLoading === 'refresh_prompts' || extractingTrends}
             className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${actionLoading === 'refresh_prompts' ? 'animate-spin' : ''}`} />

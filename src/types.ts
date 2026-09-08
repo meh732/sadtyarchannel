@@ -144,6 +144,18 @@ export interface AutoPostSettings {
   smartPollsIntervalMinutes?: number;
   lastSmartPollPostedAt?: string | null;
 
+  // 8. AI Trend Prompt Extraction Schedule (Gemini)
+  aiTrendExtractionEnabled?: boolean; // Toggle for auto-extracting trending prompts using Gemini
+  aiTrendExtractionIntervalHours?: number; // 24 (daily) or 48 (every 2 days)
+  lastAiTrendExtractionAt?: string | null;
+
+  // 9. Viral & High-Share Rate Content (Channel 1 Booster)
+  viralShareEnabled?: boolean; // Toggle for high-virality, high-share content generation & posting
+  viralShareIntervalHours?: number;
+  viralShareIntervalMinutes?: number;
+  lastViralSharePostedAt?: string | null;
+  includeShareButton?: boolean; // Add one-click Telegram share button to posts
+
   // Legacy/Backwards compatibility
   techPostMode?: 'combined' | 'standalone' | 'both';
 
@@ -225,6 +237,13 @@ export interface SecondaryChannelSettings {
   smartPollsIntervalHours?: number;
   smartPollsIntervalMinutes?: number;
   lastSmartPollPostedAt?: string | null;
+
+  // 8. Viral & High-Share Rate Content for Channel 2
+  viralShareEnabled?: boolean;
+  viralShareIntervalHours?: number;
+  viralShareIntervalMinutes?: number;
+  lastViralSharePostedAt?: string | null;
+  includeShareButton?: boolean;
 }
 
 export interface ChannelHealthStatus {
