@@ -4,7 +4,7 @@
   },
   "inbounds": [
     {
-      "port": 23103,
+      "port": 19149,
       "listen": "127.0.0.1",
       "protocol": "socks",
       "settings": {
@@ -18,10 +18,10 @@
       "settings": {
         "servers": [
           {
-            "address": "Irj.jobwebs.ir",
-            "port": 25341,
+            "address": "193.29.139.225",
+            "port": 8080,
             "method": "chacha20-ietf-poly1305",
-            "password": "qb0uRN2r8CACi1tqOsZN3n5j_IcyqcEm"
+            "password": "oZIoA69Q8yhcQV8ka3Pa3A"
           }
         ]
       }

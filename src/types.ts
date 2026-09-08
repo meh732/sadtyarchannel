@@ -7,6 +7,7 @@ export interface ConfigItem {
   remark: string;
   server: string;
   port: number;
+  uuid?: string;
   source: string; // E.g., "@v2ray_channel" or "Github"
   status: 'working' | 'failed' | 'untested' | 'checking';
   latency: number | null;
@@ -450,8 +451,10 @@ export interface DigitalToolItem {
   tags: string[];
   importance: 'essential' | 'trending' | 'normal';
   createdAt: string;
+  postedToChannel?: boolean;
   postedToChannel1?: boolean;
   postedToChannel2?: boolean;
+  lastPostedAt?: string | null;
   lastPostedAtCh1?: string | null;
   lastPostedAtCh2?: string | null;
   postedAt?: string | null;
@@ -508,6 +511,20 @@ export interface PollResultItem {
   settingTarget?: string;
 }
 
+export interface PollAnswerAuditLog {
+  id: string;
+  pollId: string;
+  question: string;
+  channelHandle: string;
+  category?: string;
+  totalVoters: number;
+  options: { text: string; voterCount: number; percentage: number }[];
+  winnerOption: string;
+  winnerPercentage: number;
+  actionableTuningInsight: string;
+  recordedAt: string;
+}
+
 export interface ChannelGrowthAnalytics {
   summary: {
     totalMembersCh1: number;
@@ -519,6 +536,7 @@ export interface ChannelGrowthAnalytics {
   };
   memberEvents: ChannelMemberEvent[];
   pollResults: PollResultItem[];
+  pollAnswerLogs?: PollAnswerAuditLog[];
   churnCorrelation: {
     category: string;
     count: number;
@@ -530,4 +548,32 @@ export interface ChannelGrowthAnalytics {
     delta?: number;
     recordedAt: string;
   }[];
+}
+
+export interface LiveChannelScanItem {
+  channelTarget: 1 | 2;
+  channelHandle: string;
+  accessible: boolean;
+  messagesFound: number;
+  extractedTitlesCount: number;
+  extractedLinksCount: number;
+  extractedServersCount: number;
+  extractedSecretsCount: number;
+  matchedExistingConfigs: number;
+  matchedExistingProxies: number;
+  matchedExistingTech: number;
+  matchedExistingTools: number;
+  sampleRecentPosts: string[];
+  error?: string;
+}
+
+export interface LiveAntiDuplicateReport {
+  success: boolean;
+  timestamp: string;
+  channelsScanned: LiveChannelScanItem[];
+  totalBlacklistedConfigs: number;
+  totalBlacklistedProxies: number;
+  totalBlacklistedTech: number;
+  totalBlacklistedTools: number;
+  message: string;
 }

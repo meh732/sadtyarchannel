@@ -182,9 +182,24 @@ export interface PollResultItem {
   settingTarget?: string;
 }
 
+export interface PollAnswerAuditLog {
+  id: string;
+  pollId: string;
+  question: string;
+  channelHandle: string;
+  category?: string;
+  totalVoters: number;
+  options: { text: string; voterCount: number; percentage: number }[];
+  winnerOption: string;
+  winnerPercentage: number;
+  actionableTuningInsight: string;
+  recordedAt: string;
+}
+
 interface DatabaseSchema {
   channelStats?: ChannelStatItem[];
   pollResults?: PollResultItem[];
+  pollAnswerLogs?: PollAnswerAuditLog[];
   channelMemberEvents?: ChannelMemberEvent[];
   settings: SystemSettings;
   sources: SourceItem[];
@@ -202,6 +217,11 @@ interface DatabaseSchema {
   funSources?: FunNewsSource[];
   digitalTools?: DigitalToolItem[];
   postedPromptHistory?: PostedPromptRecord[];
+  postedConfigSignatures?: { sig: string; ch: 1 | 2; at: string }[];
+  postedProxySignatures?: { sig: string; ch: 1 | 2; at: string }[];
+  postedTechNewsHistory?: { titleNormalized: string; linkUrl?: string; ch: 1 | 2; at: string }[];
+  postedDigitalToolsHistory?: { toolId: string; titleNormalized: string; ch: 1 | 2; at: string }[];
+  postedTricksHistory?: { titleNormalized: string; ch: 1 | 2; at: string }[];
 }
 
 // --- Pre-populated default sources ---
@@ -935,6 +955,58 @@ function loadDatabase() {
       ? loadedDataStore.postedPromptHistory
       : [];
 
+    const finalPostedConfigSignatures: { sig: string; ch: 1 | 2; at: string }[] = Array.isArray(loadedDataStore?.postedConfigSignatures)
+      ? loadedDataStore.postedConfigSignatures
+      : [];
+
+    const finalPostedProxySignatures: { sig: string; ch: 1 | 2; at: string }[] = Array.isArray(loadedDataStore?.postedProxySignatures)
+      ? loadedDataStore.postedProxySignatures
+      : [];
+
+    const finalPostedTechNewsHistory: { titleNormalized: string; linkUrl?: string; ch: 1 | 2; at: string }[] = Array.isArray(loadedDataStore?.postedTechNewsHistory)
+      ? loadedDataStore.postedTechNewsHistory
+      : [];
+
+    const finalPostedDigitalToolsHistory: { toolId: string; titleNormalized: string; ch: 1 | 2; at: string }[] = Array.isArray(loadedDataStore?.postedDigitalToolsHistory)
+      ? loadedDataStore.postedDigitalToolsHistory
+      : [];
+
+    const finalPostedTricksHistory: { titleNormalized: string; ch: 1 | 2; at: string }[] = Array.isArray(loadedDataStore?.postedTricksHistory)
+      ? loadedDataStore.postedTricksHistory
+      : [];
+
+    // Bootstrap config signatures from already-posted configs
+    for (const c of finalConfigs) {
+      if (c.postedToChannel1 && c.server && c.port) {
+        const sig = `${c.server.toLowerCase().trim()}:${c.port}`;
+        if (!finalPostedConfigSignatures.some(s => s.ch === 1 && s.sig === sig)) {
+          finalPostedConfigSignatures.push({ sig, ch: 1, at: c.lastPostedAtCh1 || c.postedAt || new Date().toISOString() });
+        }
+      }
+      if (c.postedToChannel2 && c.server && c.port) {
+        const sig = `${c.server.toLowerCase().trim()}:${c.port}`;
+        if (!finalPostedConfigSignatures.some(s => s.ch === 2 && s.sig === sig)) {
+          finalPostedConfigSignatures.push({ sig, ch: 2, at: c.lastPostedAtCh2 || c.postedAt || new Date().toISOString() });
+        }
+      }
+    }
+
+    // Bootstrap proxy signatures from already-posted proxies
+    for (const p of finalProxies) {
+      if (p.postedToChannel1 && p.server && p.port) {
+        const sig = `${p.server.toLowerCase().trim()}:${p.port}:${(p.secret || '').trim()}`;
+        if (!finalPostedProxySignatures.some(s => s.ch === 1 && s.sig === sig)) {
+          finalPostedProxySignatures.push({ sig, ch: 1, at: p.lastPostedAtCh1 || p.postedAt || new Date().toISOString() });
+        }
+      }
+      if (p.postedToChannel2 && p.server && p.port) {
+        const sig = `${p.server.toLowerCase().trim()}:${p.port}:${(p.secret || '').trim()}`;
+        if (!finalPostedProxySignatures.some(s => s.ch === 2 && s.sig === sig)) {
+          finalPostedProxySignatures.push({ sig, ch: 2, at: p.lastPostedAtCh2 || p.postedAt || new Date().toISOString() });
+        }
+      }
+    }
+
     const finalFunSources = Array.isArray(loadedSettings?.funSources)
       ? loadedSettings.funSources
       : (Array.isArray(loadedDataStore?.funSources) ? loadedDataStore.funSources : DEFAULT_FUN_SOURCES);
@@ -1008,6 +1080,7 @@ function loadDatabase() {
       sources: finalSources,
       channelStats: loadedDataStore?.channelStats || [],
       pollResults: loadedDataStore?.pollResults || [],
+      pollAnswerLogs: loadedDataStore?.pollAnswerLogs || [],
       channelMemberEvents: loadedDataStore?.channelMemberEvents || [],
       forceJoinChannels: finalForceJoin,
       configs: finalConfigs,
@@ -1022,7 +1095,12 @@ function loadDatabase() {
       funNewsItems: finalFunNewsItems,
       funSources: finalFunSources,
       digitalTools: finalDigitalTools,
-      postedPromptHistory: finalPostedPromptHistory
+      postedPromptHistory: finalPostedPromptHistory,
+      postedConfigSignatures: finalPostedConfigSignatures,
+      postedProxySignatures: finalPostedProxySignatures,
+      postedTechNewsHistory: finalPostedTechNewsHistory,
+      postedDigitalToolsHistory: finalPostedDigitalToolsHistory,
+      postedTricksHistory: finalPostedTricksHistory
     };
 
     // Migration: Update any stale or dead sources to modern active verified sources
@@ -1120,7 +1198,13 @@ function saveDatabase(immediate = false) {
         postedPromptHistory: db.postedPromptHistory || [],
         channelStats: db.channelStats || [],
         pollResults: db.pollResults || [],
-        channelMemberEvents: db.channelMemberEvents || []
+        pollAnswerLogs: db.pollAnswerLogs || [],
+        channelMemberEvents: db.channelMemberEvents || [],
+        postedConfigSignatures: db.postedConfigSignatures || [],
+        postedProxySignatures: db.postedProxySignatures || [],
+        postedTechNewsHistory: db.postedTechNewsHistory || [],
+        postedDigitalToolsHistory: db.postedDigitalToolsHistory || [],
+        postedTricksHistory: db.postedTricksHistory || []
       };
       writeJsonAtomic(DB_FILE, storeData);
     } catch (err) {
@@ -1498,8 +1582,13 @@ function stripHtmlTags(html: string): string {
     .replace(/<[^>]+>/g, ' ');
 }
 
-function parseConfigHostPort(rawConfig: string): { host: string; port: number; protocol: ProtocolType; remark: string } {
-  const result = { host: '', port: 0, protocol: 'unknown' as ProtocolType, remark: 'کانفیگ استخراج‌شده' };
+function parseConfigHostPort(rawConfig: string): { host: string; port: number; protocol: ProtocolType; remark: string; uuid?: string } {
+  const result: { host: string; port: number; protocol: ProtocolType; remark: string; uuid?: string } = { 
+    host: '', 
+    port: 0, 
+    protocol: 'unknown' as ProtocolType, 
+    remark: 'کانفیگ استخراج‌شده' 
+  };
   if (!rawConfig) return result;
   const trimmed = rawConfig.trim();
 
@@ -1516,6 +1605,7 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
           result.host = json.address || json.v2rayAddress || json.host || json.v2rayHost || json.sshHost || json.server || json.sni || json.domain || json.remote_host || json.ip || '';
           result.port = Number(json.port || json.v2rayPort || json.sshPort || json.server_port || json.remote_port) || 0;
           result.remark = json.remarks || json.configName || json.ps || 'NapsternetV Config';
+          if (json.id || json.uuid) result.uuid = String(json.id || json.uuid);
           
           if (json.protocol) {
             result.protocol = json.protocol;
@@ -1553,6 +1643,7 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
       result.host = parsed.add || '';
       result.port = Number(parsed.port) || 0;
       result.remark = parsed.ps || 'vmess config';
+      if (parsed.id || parsed.uuid) result.uuid = String(parsed.id || parsed.uuid);
       return result;
     }
 
@@ -1573,6 +1664,11 @@ function parseConfigHostPort(rawConfig: string): { host: string; port: number; p
     // Standard parse: look for @ followed by host:port
     const atIndex = urlPart.lastIndexOf('@');
     if (atIndex !== -1) {
+      const schemeIndex = urlPart.indexOf('://');
+      if (schemeIndex !== -1) {
+        const userInfo = urlPart.substring(schemeIndex + 3, atIndex);
+        if (userInfo) result.uuid = userInfo.trim();
+      }
       const hostPortPart = urlPart.substring(atIndex + 1);
       const colonIndex = hostPortPart.indexOf(':');
       if (colonIndex !== -1) {
@@ -3162,6 +3258,12 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
       continue;
     }
 
+    const srvPortSig = `${info.host.toLowerCase().trim()}:${info.port}`;
+    const uuidSig = info.uuid ? info.uuid.toLowerCase().trim() : '';
+
+    const wasPostedCh1 = (db.postedConfigSignatures || []).some(s => s.ch === 1 && (s.sig === srvPortSig || (uuidSig && s.sig === uuidSig)));
+    const wasPostedCh2 = (db.postedConfigSignatures || []).some(s => s.ch === 2 && (s.sig === srvPortSig || (uuidSig && s.sig === uuidSig)));
+
     extracted.push({
       id: generateId(),
       raw: rawConfig,
@@ -3174,6 +3276,9 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
       latency: null,
       lastChecked: null,
       isNpv: isNpvFormat,
+      postedToChannel1: wasPostedCh1,
+      postedToChannel2: wasPostedCh2,
+      postedToChannel: wasPostedCh1 || wasPostedCh2,
       createdAt: new Date().toISOString()
     });
   }
@@ -3272,6 +3377,10 @@ function extractProxiesFromText(text: string, sourceName: string): ProxyItem[] {
 
     if (!server || !port) continue;
 
+    const proxySig = `${server.toLowerCase().trim()}:${port}:${(secret || '').trim()}`;
+    const wasPostedCh1 = (db.postedProxySignatures || []).some(s => s.ch === 1 && (s.sig === proxySig || (secret && s.sig.includes(secret))));
+    const wasPostedCh2 = (db.postedProxySignatures || []).some(s => s.ch === 2 && (s.sig === proxySig || (secret && s.sig.includes(secret))));
+
     extracted.push({
       id: generateId(),
       raw: rawProxy,
@@ -3283,6 +3392,9 @@ function extractProxiesFromText(text: string, sourceName: string): ProxyItem[] {
       status: 'untested',
       latency: null,
       lastChecked: null,
+      postedToChannel1: wasPostedCh1,
+      postedToChannel2: wasPostedCh2,
+      postedToChannel: wasPostedCh1 || wasPostedCh2,
       createdAt: new Date().toISOString()
     });
   }
@@ -5297,6 +5409,606 @@ function parseCustomIntervalText(text: string): number | null {
 }
 
 // ----------------------------------------------------
+// TELEGRAM CHANNEL LIVE INSPECTION & ANTI-DUPLICATE SHIELD
+// ----------------------------------------------------
+interface ChannelLiveSnapshot {
+  channelHandle: string;
+  accessible: boolean;
+  fetchedAt: number;
+  messagesCount: number;
+  extractedServers: Set<string>;
+  extractedSecrets: Set<string>;
+  extractedUuids: Set<string>;
+  extractedLinks: Set<string>;
+  extractedTitles: Set<string>;
+  rawMessageTexts: string[];
+  normalizedTexts: string[];
+  sampleRecentPosts: string[];
+  error?: string;
+}
+
+const channelLiveContentCache: Record<string, ChannelLiveSnapshot> = {};
+
+function normalizeTechTitle(title: string): string {
+  if (!title) return '';
+  return title
+    .toLowerCase()
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[📌💡🔥🚀🔮🧠▫️🔹🔻«»\(\)\[\]#\-–—_|:؛!؟?]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseMessageIntoSnapshot(text: string, snapshot: ChannelLiveSnapshot) {
+  if (!text) return;
+  snapshot.rawMessageTexts.push(text);
+  const norm = text.toLowerCase().replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  snapshot.normalizedTexts.push(norm);
+
+  // 1. Extract Proxy Servers & Secrets
+  const proxyServerRegex = /(?:server)=([^&\s"<>]+)/gi;
+  let pMatch;
+  while ((pMatch = proxyServerRegex.exec(text)) !== null) {
+    if (pMatch[1]) {
+      snapshot.extractedServers.add(pMatch[1].toLowerCase().trim());
+    }
+  }
+  const secretRegex = /(?:secret)=([^&\s"<>]+)/gi;
+  let sMatch;
+  while ((sMatch = secretRegex.exec(text)) !== null) {
+    if (sMatch[1]) {
+      snapshot.extractedSecrets.add(sMatch[1].toLowerCase().trim());
+    }
+  }
+
+  // 2. Extract V2Ray Configs (vless, trojan, ss, vmess)
+  const v2rayUriRegex = /(?:vless|trojan|ss):\/\/(?:[^@\s]+@)?([a-zA-Z0-9.\-_]+):(\d+)/gi;
+  let vMatch;
+  while ((vMatch = v2rayUriRegex.exec(text)) !== null) {
+    if (vMatch[1]) snapshot.extractedServers.add(vMatch[1].toLowerCase().trim());
+  }
+
+  // Extract VMess base64
+  const vmessRegex = /vmess:\/\/([a-zA-Z0-9+/=]+)/gi;
+  let vmMatch;
+  while ((vmMatch = vmessRegex.exec(text)) !== null) {
+    try {
+      const decoded = Buffer.from(vmMatch[1], 'base64').toString('utf8');
+      const json = JSON.parse(decoded);
+      if (json.add) snapshot.extractedServers.add(String(json.add).toLowerCase().trim());
+      if (json.id) snapshot.extractedUuids.add(String(json.id).toLowerCase().trim());
+    } catch {}
+  }
+
+  // Extract UUIDs
+  const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  let uMatch;
+  while ((uMatch = uuidRegex.exec(text)) !== null) {
+    snapshot.extractedUuids.add(uMatch[0].toLowerCase().trim());
+  }
+
+  // 3. Extract Links & Domains
+  const linkRegex = /https?:\/\/([^\s"<>'()]+)/gi;
+  let lMatch;
+  while ((lMatch = linkRegex.exec(text)) !== null) {
+    const rawUrl = lMatch[0];
+    try {
+      const parsed = new URL(rawUrl);
+      const hostname = parsed.hostname.toLowerCase().replace(/^www\./, '');
+      snapshot.extractedLinks.add(hostname);
+      snapshot.extractedLinks.add(parsed.origin.toLowerCase());
+    } catch {
+      snapshot.extractedLinks.add(rawUrl.toLowerCase());
+    }
+  }
+
+  // 4. Extract Titles (from emojis, quotes, or headers)
+  const lines = text.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (
+      trimmed.startsWith('📌') || 
+      trimmed.startsWith('💡') || 
+      trimmed.startsWith('🔥') || 
+      trimmed.startsWith('🚀') || 
+      trimmed.startsWith('🔮') || 
+      trimmed.startsWith('🧠') ||
+      trimmed.startsWith('🌐')
+    ) {
+      const cleanTitle = normalizeTechTitle(trimmed);
+      if (cleanTitle.length >= 6) {
+        snapshot.extractedTitles.add(cleanTitle);
+      }
+    }
+    const quoteMatch = trimmed.match(/«([^»]+)»/);
+    if (quoteMatch && quoteMatch[1]) {
+      const cleanTitle = normalizeTechTitle(quoteMatch[1]);
+      if (cleanTitle.length >= 5) {
+        snapshot.extractedTitles.add(cleanTitle);
+      }
+    }
+  }
+}
+
+async function inspectChannelLiveContent(channelHandleOrUrl: string, forceRefresh = false): Promise<ChannelLiveSnapshot> {
+  const cleanHandle = (channelHandleOrUrl || '')
+    .replace(/^https?:\/\/t\.me\/(?:s\/)?/i, '')
+    .replace(/^@/, '')
+    .trim()
+    .toLowerCase();
+
+  const emptySnapshot: ChannelLiveSnapshot = {
+    channelHandle: cleanHandle || 'unknown',
+    accessible: false,
+    fetchedAt: Date.now(),
+    messagesCount: 0,
+    extractedServers: new Set(),
+    extractedSecrets: new Set(),
+    extractedUuids: new Set(),
+    extractedLinks: new Set(),
+    extractedTitles: new Set(),
+    rawMessageTexts: [],
+    normalizedTexts: [],
+    sampleRecentPosts: []
+  };
+
+  if (!cleanHandle) return emptySnapshot;
+
+  const now = Date.now();
+  const cached = channelLiveContentCache[cleanHandle];
+  if (!forceRefresh && cached && (now - cached.fetchedAt < 120000)) {
+    return cached;
+  }
+
+  const snapshot: ChannelLiveSnapshot = {
+    channelHandle: cleanHandle,
+    accessible: false,
+    fetchedAt: now,
+    messagesCount: 0,
+    extractedServers: new Set(),
+    extractedSecrets: new Set(),
+    extractedUuids: new Set(),
+    extractedLinks: new Set(),
+    extractedTitles: new Set(),
+    rawMessageTexts: [],
+    normalizedTexts: [],
+    sampleRecentPosts: []
+  };
+
+  // 1. Populate snapshot from our own internal channel post history and posted messages
+  if (Array.isArray(db.postedMessages)) {
+    for (const msg of db.postedMessages) {
+      const msgCh = String(msg.chatId || '').replace(/^@/, '').toLowerCase().trim();
+      if (!msgCh || msgCh === cleanHandle) {
+        if (msg.originalText) {
+          parseMessageIntoSnapshot(msg.originalText, snapshot);
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(db.channelPostHistory)) {
+    for (const hist of db.channelPostHistory) {
+      const histCh = (hist.channelHandle || '').replace(/^@/, '').toLowerCase().trim();
+      if (!histCh || histCh === cleanHandle) {
+        if (hist.previewText) {
+          parseMessageIntoSnapshot(hist.previewText, snapshot);
+        }
+        if (hist.topicTitle) {
+          snapshot.extractedTitles.add(normalizeTechTitle(hist.topicTitle));
+        }
+      }
+    }
+  }
+
+  // 2. Fetch live web view from Telegram: https://t.me/s/{cleanHandle}
+  try {
+    const url = `https://t.me/s/${cleanHandle}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'fa,en;q=0.9',
+        'Cache-Control': 'no-cache'
+      }
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const html = await res.text();
+      snapshot.accessible = true;
+
+      // Extract message containers
+      const msgRegex = /<div class="tgme_widget_message_text[^>]*>([\s\S]*?)<\/div>/gi;
+      let match;
+      let count = 0;
+      while ((match = msgRegex.exec(html)) !== null) {
+        const rawHtmlMsg = match[1];
+        if (rawHtmlMsg) {
+          count++;
+          const decoded = safeDecodeText(rawHtmlMsg);
+          const plainText = stripHtmlTags(decoded);
+          parseMessageIntoSnapshot(plainText, snapshot);
+          if (snapshot.sampleRecentPosts.length < 5) {
+            snapshot.sampleRecentPosts.push(plainText.slice(0, 120).replace(/\s+/g, ' ').trim());
+          }
+        }
+      }
+      snapshot.messagesCount = count;
+    } else {
+      snapshot.error = `Telegram Web HTTP ${res.status}`;
+    }
+  } catch (err: any) {
+    snapshot.error = err.message || 'Telegram Web fetch error';
+  }
+
+  channelLiveContentCache[cleanHandle] = snapshot;
+  return snapshot;
+}
+
+// Verification functions: 100% Anti-Duplicate Verification
+function isConfigAlreadyOnChannelOrHistory(c: ConfigItem, snapshot: ChannelLiveSnapshot, channelNum: 1 | 2): boolean {
+  if (!c) return true;
+  // 1. Check persistent signatures
+  if (c.server && c.port) {
+    const sig = `${c.server.toLowerCase().trim()}:${c.port}`;
+    if (db.postedConfigSignatures?.some(s => s.ch === channelNum && s.sig === sig)) return true;
+  }
+  if (c.uuid) {
+    const uuidSig = c.uuid.toLowerCase().trim();
+    if (db.postedConfigSignatures?.some(s => s.ch === channelNum && s.sig === uuidSig)) return true;
+  }
+  // 2. Check snapshot from Telegram web view and internal post history
+  if (c.server) {
+    const cleanHost = c.server.toLowerCase().trim();
+    if (snapshot.extractedServers.has(cleanHost)) return true;
+  }
+  if (c.uuid) {
+    const cleanUuid = c.uuid.toLowerCase().trim();
+    if (snapshot.extractedUuids.has(cleanUuid)) return true;
+  }
+  if (c.raw) {
+    const cleanRaw = c.raw.trim().toLowerCase();
+    if (snapshot.normalizedTexts.some(txt => txt.includes(cleanRaw))) return true;
+  }
+  return false;
+}
+
+function isProxyAlreadyOnChannelOrHistory(p: ProxyItem, snapshot: ChannelLiveSnapshot, channelNum: 1 | 2): boolean {
+  if (!p) return true;
+  // 1. Check persistent signatures
+  if (p.server && p.port) {
+    const sig = `${p.server.toLowerCase().trim()}:${p.port}:${(p.secret || '').trim()}`;
+    if (db.postedProxySignatures?.some(s => s.ch === channelNum && (s.sig === sig || (p.secret && s.sig.includes(p.secret))))) return true;
+  }
+  // 2. Check snapshot from Telegram web view and internal post history
+  if (p.server) {
+    const cleanHost = p.server.toLowerCase().trim();
+    if (snapshot.extractedServers.has(cleanHost)) return true;
+  }
+  if (p.secret) {
+    const cleanSecret = p.secret.toLowerCase().trim();
+    if (snapshot.extractedSecrets.has(cleanSecret)) return true;
+  }
+  return false;
+}
+
+function isTechNewsAlreadyOnChannelOrHistory(item: TechItem, snapshot: ChannelLiveSnapshot, channelNum: 1 | 2): boolean {
+  if (!item) return true;
+  const normTitle = normalizeTechTitle(item.title);
+  // 1. Check persistent history
+  if (db.postedTechNewsHistory?.some(h => h.ch === channelNum && (h.titleNormalized === normTitle || (item.sourceUrl && h.linkUrl === item.sourceUrl)))) {
+    return true;
+  }
+  // 2. Check snapshot extracted titles
+  if (snapshot.extractedTitles.has(normTitle)) return true;
+
+  // 3. Substring match on normalized message texts (first 30 chars of title)
+  if (normTitle.length >= 12) {
+    const sample = normTitle.slice(0, 30);
+    if (snapshot.normalizedTexts.some(txt => txt.includes(sample))) return true;
+  }
+
+  // 4. Source URL link match
+  if (item.sourceUrl) {
+    try {
+      const url = new URL(item.sourceUrl);
+      const host = url.hostname.toLowerCase().replace(/^www\./, '');
+      if (snapshot.extractedLinks.has(host) && normTitle.length >= 10 && snapshot.normalizedTexts.some(txt => txt.includes(normTitle.slice(0, 20)))) {
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
+function isDigitalToolAlreadyOnChannelOrHistory(tool: DigitalToolItem, snapshot: ChannelLiveSnapshot, channelNum: 1 | 2): boolean {
+  if (!tool) return true;
+  const normTitle = normalizeTechTitle(tool.title);
+  // 1. Check persistent history
+  if (db.postedDigitalToolsHistory?.some(h => h.ch === channelNum && (h.toolId === tool.id || h.titleNormalized === normTitle))) {
+    return true;
+  }
+  // 2. Check snapshot extracted titles
+  if (snapshot.extractedTitles.has(normTitle)) return true;
+
+  // 3. Domain or link match
+  if (tool.linkUrl) {
+    try {
+      const url = new URL(tool.linkUrl);
+      const host = url.hostname.toLowerCase().replace(/^www\./, '');
+      if (snapshot.extractedLinks.has(host)) return true;
+    } catch {}
+  }
+
+  // 4. Substring match
+  if (normTitle.length >= 10) {
+    const sample = normTitle.slice(0, 25);
+    if (snapshot.normalizedTexts.some(txt => txt.includes(sample))) return true;
+  }
+  return false;
+}
+
+function isTrickAlreadyOnChannelOrHistory(item: TechItem, snapshot: ChannelLiveSnapshot, channelNum: 1 | 2): boolean {
+  if (!item) return true;
+  const normTitle = normalizeTechTitle(item.title);
+  if (db.postedTricksHistory?.some(h => h.ch === channelNum && h.titleNormalized === normTitle)) {
+    return true;
+  }
+  if (snapshot.extractedTitles.has(normTitle)) return true;
+  if (normTitle.length >= 12) {
+    const sample = normTitle.slice(0, 30);
+    if (snapshot.normalizedTexts.some(txt => txt.includes(sample))) return true;
+  }
+  return false;
+}
+
+function isPromptAlreadyOnLiveChannel(prompt: AiPrompt, snapshot: ChannelLiveSnapshot): boolean {
+  if (!prompt) return true;
+  const normTitle = normalizeTechTitle(prompt.title);
+  if (snapshot.extractedTitles.has(normTitle)) return true;
+  if (prompt.promptText && prompt.promptText.length > 20) {
+    const sample = prompt.promptText.slice(0, 30).toLowerCase();
+    if (snapshot.normalizedTexts.some(txt => txt.includes(sample))) return true;
+  }
+  return false;
+}
+
+// Record success functions: Add items to persistent signatures & history
+function recordConfigPostSuccess(c: ConfigItem, channelNum: 1 | 2) {
+  if (!db.postedConfigSignatures) db.postedConfigSignatures = [];
+  const nowIso = new Date().toISOString();
+  if (channelNum === 2) {
+    c.postedToChannel2 = true;
+    c.lastPostedAtCh2 = nowIso;
+  } else {
+    c.postedToChannel1 = true;
+    c.lastPostedAtCh1 = nowIso;
+  }
+  c.postedToChannel = true;
+  c.lastPostedAt = nowIso;
+
+  if (c.server && c.port) {
+    const sig = `${c.server.toLowerCase().trim()}:${c.port}`;
+    if (!db.postedConfigSignatures.some(s => s.ch === channelNum && s.sig === sig)) {
+      db.postedConfigSignatures.unshift({ sig, ch: channelNum, at: nowIso });
+    }
+  }
+  if (c.uuid) {
+    const uuidSig = c.uuid.toLowerCase().trim();
+    if (!db.postedConfigSignatures.some(s => s.ch === channelNum && s.sig === uuidSig)) {
+      db.postedConfigSignatures.unshift({ sig: uuidSig, ch: channelNum, at: nowIso });
+    }
+  }
+  if (db.postedConfigSignatures.length > 4000) {
+    db.postedConfigSignatures = db.postedConfigSignatures.slice(0, 4000);
+  }
+}
+
+function recordProxyPostSuccess(p: ProxyItem, channelNum: 1 | 2) {
+  if (!db.postedProxySignatures) db.postedProxySignatures = [];
+  const nowIso = new Date().toISOString();
+  if (channelNum === 2) {
+    p.postedToChannel2 = true;
+    p.lastPostedAtCh2 = nowIso;
+  } else {
+    p.postedToChannel1 = true;
+    p.lastPostedAtCh1 = nowIso;
+  }
+  p.postedToChannel = true;
+  p.lastPostedAt = nowIso;
+
+  if (p.server && p.port) {
+    const sig = `${p.server.toLowerCase().trim()}:${p.port}:${(p.secret || '').trim()}`;
+    if (!db.postedProxySignatures.some(s => s.ch === channelNum && s.sig === sig)) {
+      db.postedProxySignatures.unshift({ sig, ch: channelNum, at: nowIso });
+    }
+  }
+  if (db.postedProxySignatures.length > 2500) {
+    db.postedProxySignatures = db.postedProxySignatures.slice(0, 2500);
+  }
+}
+
+function recordTechNewsPostSuccess(item: TechItem, channelNum: 1 | 2) {
+  if (!db.postedTechNewsHistory) db.postedTechNewsHistory = [];
+  const nowIso = new Date().toISOString();
+  const dbRef = db.techItems?.find(t => t.id === item.id);
+  if (dbRef) {
+    if (channelNum === 2) {
+      dbRef.postedToChannel2 = true;
+      dbRef.lastPostedAtCh2 = nowIso;
+    } else {
+      dbRef.postedToChannel1 = true;
+      dbRef.lastPostedAtCh1 = nowIso;
+    }
+    dbRef.postedToChannel = true;
+    dbRef.postedAt = nowIso;
+    dbRef.postCount = (dbRef.postCount || 0) + 1;
+  }
+
+  const normTitle = normalizeTechTitle(item.title);
+  if (!db.postedTechNewsHistory.some(h => h.ch === channelNum && h.titleNormalized === normTitle)) {
+    db.postedTechNewsHistory.unshift({
+      titleNormalized: normTitle,
+      linkUrl: item.sourceUrl || '',
+      ch: channelNum,
+      at: nowIso
+    });
+  }
+  if (db.postedTechNewsHistory.length > 1500) {
+    db.postedTechNewsHistory = db.postedTechNewsHistory.slice(0, 1500);
+  }
+}
+
+function recordDigitalToolPostSuccess(tool: DigitalToolItem, channelNum: 1 | 2) {
+  if (!db.postedDigitalToolsHistory) db.postedDigitalToolsHistory = [];
+  const nowIso = new Date().toISOString();
+  const dbRef = db.digitalTools?.find(t => t.id === tool.id);
+  if (dbRef) {
+    if (channelNum === 2) {
+      dbRef.postedToChannel2 = true;
+      dbRef.lastPostedAtCh2 = nowIso;
+    } else {
+      dbRef.postedToChannel1 = true;
+      dbRef.lastPostedAtCh1 = nowIso;
+    }
+    dbRef.lastPostedAt = nowIso;
+    dbRef.postCount = (dbRef.postCount || 0) + 1;
+  }
+
+  const normTitle = normalizeTechTitle(tool.title);
+  if (!db.postedDigitalToolsHistory.some(h => h.ch === channelNum && (h.toolId === tool.id || h.titleNormalized === normTitle))) {
+    db.postedDigitalToolsHistory.unshift({
+      toolId: tool.id,
+      titleNormalized: normTitle,
+      ch: channelNum,
+      at: nowIso
+    });
+  }
+  if (db.postedDigitalToolsHistory.length > 1500) {
+    db.postedDigitalToolsHistory = db.postedDigitalToolsHistory.slice(0, 1500);
+  }
+}
+
+function recordTrickPostSuccess(item: TechItem, channelNum: 1 | 2) {
+  if (!db.postedTricksHistory) db.postedTricksHistory = [];
+  const nowIso = new Date().toISOString();
+  const dbRef = db.techItems?.find(t => t.id === item.id);
+  if (dbRef) {
+    if (channelNum === 2) {
+      dbRef.postedToChannel2 = true;
+      dbRef.lastPostedAtCh2 = nowIso;
+    } else {
+      dbRef.postedToChannel1 = true;
+      dbRef.lastPostedAtCh1 = nowIso;
+    }
+    dbRef.postedToChannel = true;
+    dbRef.postedAt = nowIso;
+    dbRef.postCount = (dbRef.postCount || 0) + 1;
+  }
+
+  const normTitle = normalizeTechTitle(item.title);
+  if (!db.postedTricksHistory.some(h => h.ch === channelNum && h.titleNormalized === normTitle)) {
+    db.postedTricksHistory.unshift({
+      titleNormalized: normTitle,
+      ch: channelNum,
+      at: nowIso
+    });
+  }
+  if (db.postedTricksHistory.length > 1500) {
+    db.postedTricksHistory = db.postedTricksHistory.slice(0, 1500);
+  }
+}
+
+function syncDatabaseWithChannelSnapshot(snapshot: ChannelLiveSnapshot, channelNum: 1 | 2): {
+  configsMatched: number;
+  proxiesMatched: number;
+  techMatched: number;
+  toolsMatched: number;
+} {
+  let configsMatched = 0;
+  let proxiesMatched = 0;
+  let techMatched = 0;
+  let toolsMatched = 0;
+
+  // 1. Sync configs
+  for (const c of db.configs) {
+    const isTargetPosted = channelNum === 2 ? c.postedToChannel2 : c.postedToChannel1;
+    if (isTargetPosted) continue;
+
+    const hostMatch = c.server && snapshot.extractedServers.has(c.server.toLowerCase().trim());
+    const uuidMatch = c.uuid && snapshot.extractedUuids.has(c.uuid.toLowerCase().trim());
+    const rawMatch = c.raw && snapshot.normalizedTexts.some(txt => txt.includes(c.raw.trim().toLowerCase()));
+
+    if (hostMatch || uuidMatch || rawMatch) {
+      recordConfigPostSuccess(c, channelNum);
+      configsMatched++;
+    }
+  }
+
+  // 2. Sync proxies
+  for (const p of (db.proxies || [])) {
+    const isTargetPosted = channelNum === 2 ? p.postedToChannel2 : p.postedToChannel1;
+    if (isTargetPosted) continue;
+
+    const hostMatch = p.server && snapshot.extractedServers.has(p.server.toLowerCase().trim());
+    const secretMatch = p.secret && snapshot.extractedSecrets.has(p.secret.toLowerCase().trim());
+
+    if (hostMatch || secretMatch) {
+      recordProxyPostSuccess(p, channelNum);
+      proxiesMatched++;
+    }
+  }
+
+  // 3. Sync tech items
+  for (const t of (db.techItems || [])) {
+    const isTargetPosted = channelNum === 2 ? t.postedToChannel2 : t.postedToChannel1;
+    if (isTargetPosted) continue;
+
+    const norm = normalizeTechTitle(t.title);
+    const titleMatch = snapshot.extractedTitles.has(norm);
+    const sampleMatch = norm.length >= 12 && snapshot.normalizedTexts.some(txt => txt.includes(norm.slice(0, 25)));
+
+    if (titleMatch || sampleMatch) {
+      if (t.category === 'news') {
+        recordTechNewsPostSuccess(t, channelNum);
+      } else {
+        recordTrickPostSuccess(t, channelNum);
+      }
+      techMatched++;
+    }
+  }
+
+  // 4. Sync digital tools
+  for (const tool of (db.digitalTools || [])) {
+    const isTargetPosted = channelNum === 2 ? tool.postedToChannel2 : tool.postedToChannel1;
+    if (isTargetPosted) continue;
+
+    const norm = normalizeTechTitle(tool.title);
+    const titleMatch = snapshot.extractedTitles.has(norm);
+    let linkMatch = false;
+    if (tool.linkUrl) {
+      try {
+        const u = new URL(tool.linkUrl);
+        linkMatch = snapshot.extractedLinks.has(u.hostname.toLowerCase().replace(/^www\./, ''));
+      } catch {}
+    }
+    const sampleMatch = norm.length >= 10 && snapshot.normalizedTexts.some(txt => txt.includes(norm.slice(0, 20)));
+
+    if (titleMatch || linkMatch || sampleMatch) {
+      recordDigitalToolPostSuccess(tool, channelNum);
+      toolsMatched++;
+    }
+  }
+
+  return { configsMatched, proxiesMatched, techMatched, toolsMatched };
+}
+
+// ----------------------------------------------------
 // 1. DEDICATED EXECUTOR: CONFIGS & PROXIES AUTO-POST
 // ----------------------------------------------------
 async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetChannel?: string): Promise<boolean> {
@@ -5325,15 +6037,27 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
     const rawConfCount = typeof settings.configCount === 'number' ? settings.configCount : parseInt(String(settings.configCount), 10);
     const configLimit = !isNaN(rawConfCount) && rawConfCount >= 0 ? rawConfCount : 5;
     
-    // Anti-duplicate config selection: prioritize unposted configs for target channel
+    // Live channel inspection & Anti-duplicate check
+    const liveSnapshot = await inspectChannelLiveContent(targetChannel);
     const targetChannelKey = isCh2 ? 'postedToChannel2' : 'postedToChannel1';
+
+    const isChConfigValid = (c: ConfigItem) => {
+      if (c[targetChannelKey]) return false;
+      if (isConfigAlreadyOnChannelOrHistory(c, liveSnapshot, channelTargetNum)) return false;
+      return true;
+    };
+
+    const isChProxyValid = (p: ProxyItem) => {
+      if (p[targetChannelKey]) return false;
+      if (isProxyAlreadyOnChannelOrHistory(p, liveSnapshot, channelTargetNum)) return false;
+      return true;
+    };
+
     let selectedConfigs: ConfigItem[] = [];
 
     if (configLimit > 0) {
-      // 1. Unposted working configs
-      let unpostedWorking = db.configs.filter(c => c.status === 'working' && !c[targetChannelKey]);
-      // 2. Unposted untested configs
-      let unpostedUntested = db.configs.filter(c => c.status === 'untested' && !c[targetChannelKey]);
+      let unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
+      let unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
       let allUnposted = [...unpostedWorking, ...unpostedUntested];
 
       // If available unposted configs are low, scrape fresh configs immediately from all sources
@@ -5344,8 +6068,8 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
         } catch (scrapeErr) {
           console.error('Auto scrape on low unposted configs error:', scrapeErr);
         }
-        unpostedWorking = db.configs.filter(c => c.status === 'working' && !c[targetChannelKey]);
-        unpostedUntested = db.configs.filter(c => c.status === 'untested' && !c[targetChannelKey]);
+        unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
+        unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
         allUnposted = [...unpostedWorking, ...unpostedUntested];
       }
 
@@ -5364,8 +6088,8 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
 
     if (proxyLimit > 0) {
       const allProxies = db.proxies || [];
-      const unpostedWorkingProxies = allProxies.filter(p => p.status === 'working' && !p[targetChannelKey]);
-      const unpostedUntestedProxies = allProxies.filter(p => p.status === 'untested' && !p[targetChannelKey]);
+      const unpostedWorkingProxies = allProxies.filter(p => p.status === 'working' && isChProxyValid(p));
+      const unpostedUntestedProxies = allProxies.filter(p => p.status === 'untested' && isChProxyValid(p));
       const allUnpostedProxies = [...unpostedWorkingProxies, ...unpostedUntestedProxies];
 
       if (allUnpostedProxies.length > 0) {
@@ -5618,6 +6342,7 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
 
     const nowIso = new Date().toISOString();
     for (const c of selectedConfigs) {
+      recordConfigPostSuccess(c, channelTargetNum);
       const dbConf = db.configs.find(item => item.id === c.id || item.raw === c.raw);
       if (dbConf) {
         if (isCh2) {
@@ -5633,6 +6358,7 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       }
     }
     for (const p of selectedProxies) {
+      recordProxyPostSuccess(p, channelTargetNum);
       const dbProxy = db.proxies.find(item => item.id === p.id || item.raw === p.raw);
       if (dbProxy) {
         if (isCh2) {
@@ -5695,16 +6421,24 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست اخبار روز تکنولوژی به کانال ${channelTargetNum} (${targetChannel})...`);
 
+    // Live channel inspection & Anti-duplicate check
+    const liveSnapshot = await inspectChannelLiveContent(targetChannel);
+
     seedCuratedTechItems();
     const count = settings.techNewsCount && settings.techNewsCount > 0 ? settings.techNewsCount : 2;
     const allTech = db.techItems || [];
 
-    // Filter news items that have NEVER been posted to this specific channel
+    // Filter news items that have NEVER been posted to this specific channel (via flags, live channel & persistent history)
     const targetChannelKey = isCh2 ? 'postedToChannel2' : 'postedToChannel1';
-    const eligibleNews = allTech.filter(i => i.category === 'news' && !i[targetChannelKey]);
+    const eligibleNews = allTech.filter(i => {
+      if (i.category !== 'news') return false;
+      if (i[targetChannelKey]) return false;
+      if (isTechNewsAlreadyOnChannelOrHistory(i, liveSnapshot, channelTargetNum)) return false;
+      return true;
+    });
 
     if (eligibleNews.length === 0) {
-      addLog('warn', `تمامی اخبار تکنولوژی موجود قبلاً به کانال ${channelTargetNum} ارسال شده‌اند. جهت پیشگیری قاطع از ارسال تکراری، ارسال متوقف گردید.`);
+      addLog('warn', `تمامی اخبار تکنولوژی موجود قبلاً به کانال ${channelTargetNum} ارسال شده یا در کانال موجود است. جهت پیشگیری قاطع از ارسال تکراری، ارسال متوقف گردید.`);
       return false;
     }
 
@@ -5777,6 +6511,7 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
 
     const nowIso = new Date().toISOString();
     for (const it of selectedNews) {
+      recordTechNewsPostSuccess(it, channelTargetNum);
       const dbRef = db.techItems.find(t => t.id === it.id);
       if (dbRef) {
         if (isCh2) {
@@ -5846,16 +6581,24 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست رازها و ترفندهای موبایل به کانال ${channelTargetNum} (${targetChannel})...`);
 
+    // Live channel inspection & Anti-duplicate check
+    const liveSnapshot = await inspectChannelLiveContent(targetChannel);
+
     seedCuratedTechItems();
     const count = settings.techTricksCount && settings.techTricksCount > 0 ? settings.techTricksCount : 2;
     const allTech = db.techItems || [];
 
-    // Filter tricks & secrets that have NEVER been posted to this specific channel
+    // Filter tricks & secrets that have NEVER been posted to this specific channel (via flags, live channel & persistent history)
     const targetChannelKey = isCh2 ? 'postedToChannel2' : 'postedToChannel1';
-    const eligibleTricks = allTech.filter(i => (i.category === 'trick' || i.category === 'secret') && !i[targetChannelKey]);
+    const eligibleTricks = allTech.filter(i => {
+      if (i.category !== 'trick' && i.category !== 'secret') return false;
+      if (i[targetChannelKey]) return false;
+      if (isTrickAlreadyOnChannelOrHistory(i, liveSnapshot, channelTargetNum)) return false;
+      return true;
+    });
 
     if (eligibleTricks.length === 0) {
-      addLog('warn', `تمامی ترفندها و رازهای تکنولوژی موجود قبلاً به کانال ${channelTargetNum} ارسال شده‌اند. جهت پیشگیری قاطع از ارسال تکراری، ارسال متوقف گردید.`);
+      addLog('warn', `تمامی ترفندها و رازهای تکنولوژی موجود قبلاً به کانال ${channelTargetNum} ارسال شده یا در کانال موجود است. جهت پیشگیری قاطع از ارسال تکراری، ارسال متوقف گردید.`);
       return false;
     }
 
@@ -5928,6 +6671,7 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
 
     const nowIso = new Date().toISOString();
     for (const it of selectedTricks) {
+      recordTrickPostSuccess(it, channelTargetNum);
       const dbRef = db.techItems.find(t => t.id === it.id);
       if (dbRef) {
         if (isCh2) {
@@ -5983,12 +6727,25 @@ function normalizePromptFingerprint(text: string): string {
     .slice(0, 80);
 }
 
-function isPromptAlreadyPostedToChannel(prompt: AiPrompt, channelNum: 1 | 2): boolean {
+function isPromptAlreadyPostedToChannel(prompt: AiPrompt, channelNum: 1 | 2, liveSnapshot?: ChannelLiveSnapshot): boolean {
   // 1. Check direct object flags
   if (channelNum === 2 && prompt.postedToChannel2) return true;
   if (channelNum === 1 && prompt.postedToChannel1) return true;
 
-  // 2. Check persistent posted history by ID or text fingerprint
+  // 2. Check live channel snapshot
+  if (liveSnapshot && Array.isArray(liveSnapshot.normalizedTexts) && liveSnapshot.normalizedTexts.length > 0) {
+    const tFp = normalizePromptFingerprint(prompt.title);
+    if (tFp && tFp.length >= 8) {
+      for (const lt of liveSnapshot.normalizedTexts) {
+        const liveNorm = normalizePromptFingerprint(lt);
+        if (liveNorm && liveNorm.includes(tFp.slice(0, 30))) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // 3. Check persistent posted history by ID or text fingerprint
   if (!db.postedPromptHistory) db.postedPromptHistory = [];
   const pFp = normalizePromptFingerprint(prompt.promptText);
   const tFp = normalizePromptFingerprint(prompt.title);
@@ -6001,7 +6758,7 @@ function isPromptAlreadyPostedToChannel(prompt: AiPrompt, channelNum: 1 | 2): bo
     }
   }
 
-  // 3. Check recent channel post history previews
+  // 4. Check recent channel post history previews
   if (Array.isArray(db.channelPostHistory)) {
     for (const ch of db.channelPostHistory) {
       if (ch.channelTarget === channelNum && ch.category === 'prompts') {
@@ -6090,6 +6847,9 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست پرامپت‌های ترند هوش مصنوعی به کانال ${channelTargetNum} (${targetChannel})...`);
 
+    // Live channel inspection & Anti-duplicate check
+    const liveSnapshot = await inspectChannelLiveContent(targetChannel);
+
     if (!db.aiPrompts || db.aiPrompts.length === 0) {
       db.aiPrompts = [...DEFAULT_AI_PROMPTS];
       saveDatabase();
@@ -6099,10 +6859,10 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
     const allPrompts = db.aiPrompts || [];
 
     // Filter prompts that have NEVER been posted to this specific channel using strict deduplication
-    const eligiblePrompts = allPrompts.filter(p => !isPromptAlreadyPostedToChannel(p, channelTargetNum));
+    const eligiblePrompts = allPrompts.filter(p => !isPromptAlreadyPostedToChannel(p, channelTargetNum, liveSnapshot));
 
     if (eligiblePrompts.length === 0) {
-      addLog('warn', `تمامی پرامپت‌های هوش مصنوعی موجود قبلاً به کانال ${channelTargetNum} ارسال شده‌اند. جهت پیشگیری قاطع از ارسال تکراری، ارسال متوقف گردید.`);
+      addLog('warn', `تمامی پرامپت‌های هوش مصنوعی موجود قبلاً به کانال ${channelTargetNum} ارسال شده یا در کانال موجود است. جهت پیشگیری قاطع از ارسال تکراری، ارسال متوقف گردید.`);
       return false;
     }
 
@@ -6292,6 +7052,9 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
   try {
     addLog('info', `در حال آماده‌سازی و ارسال ابزارها و ترفندهای کاربردی به کانال ${channelTargetNum} (${targetChannel})...`);
 
+    // Live channel inspection & Anti-duplicate check
+    const liveSnapshot = await inspectChannelLiveContent(targetChannel);
+
     if (!db.digitalTools || db.digitalTools.length === 0) {
       db.digitalTools = [...DEFAULT_DIGITAL_TOOLS];
       saveDatabase();
@@ -6310,23 +7073,12 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
     let eligibleTools = allTools.filter(t => {
       const matchCat = allowedCategories.includes(t.category);
       const notPosted = !t[targetChannelKey];
-      return matchCat && notPosted;
+      const notOnLiveOrHistory = !isDigitalToolAlreadyOnChannelOrHistory(t, liveSnapshot, channelTargetNum);
+      return matchCat && notPosted && notOnLiveOrHistory;
     });
 
     if (eligibleTools.length === 0) {
-      // If all tools in selected categories were posted, reset posted flag for oldest posted tools to maintain rotation
-      addLog('info', `تمامی ابزارهای دسته‌بندی انتخابی به کانال ${channelTargetNum} ارسال شده‌اند. بازنشانی هوشمند نوبتی برای محتوای مفید...`);
-      for (const t of allTools) {
-        if (allowedCategories.includes(t.category)) {
-          if (isCh2) t.postedToChannel2 = false;
-          else t.postedToChannel1 = false;
-        }
-      }
-      eligibleTools = allTools.filter(t => allowedCategories.includes(t.category));
-    }
-
-    if (eligibleTools.length === 0) {
-      addLog('warn', `هیچ ابزار دیجیتالی در دسته‌بندی‌های انتخابی یافت نشد.`);
+      addLog('warn', `تمامی ابزارهای دیجیتال موجود قبلاً به کانال ${channelTargetNum} ارسال شده یا در کانال موجود است. جهت پیشگیری قاطع از ارسال تکراری، ارسال متوقف گردید.`);
       return false;
     }
 
@@ -6398,6 +7150,7 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
 
     const nowIso = new Date().toISOString();
     for (const it of selectedTools) {
+      recordDigitalToolPostSuccess(it, channelTargetNum);
       const dbRef = db.digitalTools?.find(t => t.id === it.id);
       if (dbRef) {
         if (isCh2) {
@@ -6407,6 +7160,7 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
           dbRef.postedToChannel1 = true;
           dbRef.lastPostedAtCh1 = nowIso;
         }
+        dbRef.postedToChannel = true;
         dbRef.postedAt = nowIso;
         dbRef.postCount = (dbRef.postCount || 0) + 1;
       }
@@ -6663,6 +7417,136 @@ async function executeSmartPollsAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
   }
 }
 
+export function computePollTuningInsight(question: string, winnerOption: string, category?: string): string {
+  const q = (question || '').toLowerCase();
+  const w = (winnerOption || '').toLowerCase();
+
+  if (category === 'post_frequency' || q.includes('فاصله') || q.includes('تعداد')) {
+    if (w.includes('زیاد است') || w.includes('شلوغ')) {
+      return 'پیشنهاد بهینه‌سازی بات: افزایش فاصله زمانی پست‌ها (minPostSpacingMinutes) به ۱۸۰ الی ۲۴۰ دقیقه و کاهش سقف روزانه به ۴ الی ۵ پست جهت جلوگیری از لفت و ریزش اعضا.';
+    } else if (w.includes('کم است') || w.includes('بیشتری')) {
+      return 'پیشنهاد بهینه‌سازی بات: کاهش فاصله زمانی پست‌ها به ۱۲۰ دقیقه و افزایش سقف مجاز روزانه به ۸ پست.';
+    } else if (w.includes('شب') || w.includes('خواب')) {
+      return 'پیشنهاد بهینه‌سازی بات: فعال‌سازی قطعی sleepHoursProtection (سکوت و توقف کامل ارسال پست در ساعات ۰۰:۳۰ تا ۰۸:۳۰ بامداد).';
+    } else {
+      return 'پیشنهاد بهینه‌سازی بات: حفظ بازه‌های فعلی با اولویت انتشار پست‌های بسیار پایدار.';
+    }
+  }
+
+  if (category === 'protocol_preference' || q.includes('پروتکل') || q.includes('کانفیگ')) {
+    if (w.includes('vless') || w.includes('reality')) {
+      return 'پیشنهاد بهینه‌سازی بات: تخصیص حداقل ۷۰٪ سهم کانفیگ‌های ارسالی به Vless Reality و غربال‌گری پروتکل‌های ضعیف‌تر.';
+    } else if (w.includes('پروکسی') || w.includes('mtproto')) {
+      return 'پیشنهاد بهینه‌سازی بات: افزایش تعداد پروکسی‌های تلگرام به ۳ الی ۵ عدد در هر پست کانفیگ.';
+    } else if (w.includes('vmess') || w.includes('trojan')) {
+      return 'پیشنهاد بهینه‌سازی بات: تنوع‌بخشی به پروتکل‌های Trojan و VMess در کنار Vless.';
+    }
+  }
+
+  if (category === 'content_type' || q.includes('مطالب') || q.includes('محتوا')) {
+    if (w.includes('هوش مصنوعی') || w.includes('ابزار')) {
+      return 'پیشنهاد بهینه‌سازی بات: فعال‌سازی انتشار خودکار ابزارهای دیجیتال و هوش مصنوعی (digitalToolsEnabled) با بازه هر ۲۴۰ دقیقه.';
+    } else if (w.includes('ترفند') || w.includes('گوشی')) {
+      return 'پیشنهاد بهینه‌سازی بات: فعال‌سازی خودکار ترفندهای تکنولوژی (techTricksEnabled) هر ۳۶۰ دقیقه.';
+    } else if (w.includes('امنیت')) {
+      return 'پیشنهاد بهینه‌سازی بات: درج دوره‌ای ترفندهای امنیت سایبری و پیشگیری از نفوذ به اکانت‌ها.';
+    } else if (w.includes('فقط کانفیگ')) {
+      return 'پیشنهاد بهینه‌سازی بات: توقف ارسال سایر محتواها در کانال اصلی و اختصاص ۱۰۰٪ ظرفیت به کانفیگ و پروکسی.';
+    }
+  }
+
+  if (category === 'isp_network' || q.includes('اپراتور') || q.includes('اینترنت')) {
+    if (w.includes('همراه اول')) {
+      return 'پیشنهاد بهینه‌سازی بات: اولویت‌بندی کانفیگ‌های تست‌شده و سازگار با شبکه همراه اول (MCI).';
+    } else if (w.includes('ایرانسل')) {
+      return 'پیشنهاد بهینه‌سازی بات: اولویت‌بندی پورت‌های ۴۴۳ و ۸۰ و دامنه کلودفلر برای ایرانسل (MTN).';
+    } else if (w.includes('خانگی') || w.includes('مخابرات')) {
+      return 'پیشنهاد بهینه‌سازی بات: درج کانفیگ‌های با پینگ پایدار برای اینترنت‌های ثابت خانگی (ADSL/FTTH).';
+    }
+  }
+
+  if (category === 'issues' || q.includes('مشکل')) {
+    if (w.includes('قطع') || w.includes('پایدار')) {
+      return 'پیشنهاد بهینه‌سازی بات: کاهش بازه تست خودکار پینگ (autoTestInterval) به ۳۰ دقیقه جهت غربال سریع کانفیگ‌های قطع‌شده.';
+    } else if (w.includes('سرعت')) {
+      return 'پیشنهاد بهینه‌سازی بات: فیلتر کردن کانفیگ‌ها با سقف پینگ زیر ۸۰۰ میلی‌ثانیه قبل از ارسال به کانال.';
+    }
+  }
+
+  return `پیشنهاد بهینه‌سازی بات: انطباق با ترجیح اکثریت اعضا (${winnerOption || 'در حال دریافت بازخورد'}).`;
+}
+
+export function applyPollRecommendationsToSettings(): { applied: string[]; settingsSummary: any } {
+  const applied: string[] = [];
+  const logs = db.pollAnswerLogs || [];
+  const ap = db.settings.autoPost;
+
+  for (const log of logs) {
+    if (!log.winnerOption || log.totalVoters < 1) continue;
+    const w = log.winnerOption.toLowerCase();
+    const q = (log.question || '').toLowerCase();
+
+    // Frequency & Fatigue
+    if (q.includes('فاصله') || q.includes('تعداد')) {
+      if (w.includes('زیاد است') || w.includes('شلوغ')) {
+        if ((ap.minPostSpacingMinutes || 180) < 240) {
+          ap.minPostSpacingMinutes = 240;
+          applied.push('افزایش حداقل فاصله بین دو پست به ۲۴۰ دقیقه (۴ ساعت)');
+        }
+        if ((ap.maxDailyPosts || 6) > 4) {
+          ap.maxDailyPosts = 4;
+          applied.push('کاهش سقف ارسال پست‌های روزانه به ۴ پست');
+        }
+      } else if (w.includes('کم است') || w.includes('بیشتری')) {
+        if ((ap.minPostSpacingMinutes || 180) > 120) {
+          ap.minPostSpacingMinutes = 120;
+          applied.push('کاهش حداقل فاصله بین دو پست به ۱۲۰ دقیقه (۲ ساعت)');
+        }
+        if ((ap.maxDailyPosts || 6) < 8) {
+          ap.maxDailyPosts = 8;
+          applied.push('افزایش سقف ارسال روزانه به ۸ پست');
+        }
+      }
+      if (w.includes('شب') || w.includes('خواب')) {
+        if (ap.sleepHoursProtection !== true) {
+          ap.sleepHoursProtection = true;
+          applied.push('فعال‌سازی حالت محافظت از ساعات خواب (سکوت ۰۰:۳۰ تا ۰۸:۳۰ بامداد)');
+        }
+      }
+    }
+
+    // Content preference
+    if (q.includes('مطالب') || q.includes('محتوا') || log.category === 'content_type') {
+      if (w.includes('هوش مصنوعی') || w.includes('ابزار')) {
+        if (ap.digitalToolsEnabled !== true) {
+          ap.digitalToolsEnabled = true;
+          applied.push('فعال‌سازی ارسال خودکار ابزارهای دیجیتال و هوش مصنوعی');
+        }
+      } else if (w.includes('فقط کانفیگ')) {
+        if (ap.digitalToolsEnabled !== false) {
+          ap.digitalToolsEnabled = false;
+          applied.push('غیرفعال‌سازی ابزارهای دیجیتال جهت تمرکز ۱۰۰٪ روی کانفیگ');
+        }
+        if (ap.techNewsEnabled !== false) {
+          ap.techNewsEnabled = false;
+          applied.push('غیرفعال‌سازی اخبار تکنولوژی جهت تمرکز روی کانفیگ');
+        }
+      }
+    }
+
+    // Protocols
+    if (q.includes('پروکسی') || w.includes('پروکسی') || w.includes('mtproto')) {
+      if ((ap.proxyCount || 2) < 3) {
+        ap.proxyCount = 3;
+        applied.push('افزایش تعداد پروکسی‌های همراه به ۳ عدد در هر پست کانفیگ');
+      }
+    }
+  }
+
+  saveDatabase();
+  return { applied, settingsSummary: ap };
+}
+
 // ----------------------------------------------------
 // 5. DEDICATED EXECUTOR: FUN & GENERAL NEWS AUTO-POST
 // ----------------------------------------------------
@@ -6893,6 +7777,9 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست فان و اخبار به کانال ${channelTargetNum} (${targetChannel})...`);
 
+    // Live channel inspection & Anti-duplicate check
+    const liveSnapshot = await inspectChannelLiveContent(targetChannel);
+
     if (!db.funNewsItems) {
       db.funNewsItems = [];
     }
@@ -6901,9 +7788,23 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       .filter(s => s.enabled)
       .map(s => s.urlOrHandle.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim());
 
+    const isFunNewsOnLiveOrHistory = (item: any) => {
+      if (liveSnapshot && Array.isArray(liveSnapshot.normalizedTexts)) {
+        const titleNorm = (item.title || '').replace(/[^\u0600-\u06FFa-zA-Z0-9]/g, '').slice(0, 30);
+        if (titleNorm && titleNorm.length >= 8) {
+          for (const lt of liveSnapshot.normalizedTexts) {
+            const ltNorm = lt.replace(/[^\u0600-\u06FFa-zA-Z0-9]/g, '');
+            if (ltNorm.includes(titleNorm)) return true;
+          }
+        }
+      }
+      return false;
+    };
+
     // Filter unposted items for this specific channel
     let eligible = (db.funNewsItems || []).filter(item => {
       if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
+      if (isFunNewsOnLiveOrHistory(item)) return false;
       if (item.sourceChannel) {
         const handle = item.sourceChannel.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim();
         if (activeHandles.length > 0 && !activeHandles.includes(handle)) return false;
@@ -6918,6 +7819,7 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       
       eligible = (db.funNewsItems || []).filter(item => {
         if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
+        if (isFunNewsOnLiveOrHistory(item)) return false;
         if (item.sourceChannel) {
           const handle = item.sourceChannel.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim();
           if (activeHandles.length > 0 && !activeHandles.includes(handle)) return false;
@@ -6927,7 +7829,7 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
     }
 
     if (eligible.length === 0) {
-      addLog('warn', `هیچ مطلب جدید و منتشرنشده‌ای برای کانال ${channelTargetNum} در منابع یافت نشد. جهت پیشگیری از ارسال پست تکراری، ارسال متوقف گردید.`);
+      addLog('warn', `هیچ مطلب جدید و منتشرنشده‌ای برای کانال ${channelTargetNum} در منابع یا کانال یافت نشد. جهت پیشگیری از ارسال پست تکراری، ارسال متوقف گردید.`);
       return false;
     }
 
@@ -8647,17 +9549,16 @@ async function handleBotUpdate(update: any) {
     if (update.poll) {
       const poll = update.poll;
       if (!db.pollResults) db.pollResults = [];
-      const existing = db.pollResults.find(p => p.pollId === poll.id);
-      if (existing) {
-        existing.options = poll.options.map(opt => ({ text: opt.text, voterCount: opt.voter_count }));
-        existing.totalVoterCount = poll.total_voter_count;
-        existing.isClosed = poll.is_closed;
-        existing.lastUpdatedAt = new Date().toISOString();
-        saveDatabase();
+      let targetPoll = db.pollResults.find(p => p.pollId === poll.id);
+      if (targetPoll) {
+        targetPoll.options = poll.options.map(opt => ({ text: opt.text, voterCount: opt.voter_count }));
+        targetPoll.totalVoterCount = poll.total_voter_count;
+        targetPoll.isClosed = poll.is_closed;
+        targetPoll.lastUpdatedAt = new Date().toISOString();
       } else {
-        db.pollResults.push({
+        targetPoll = {
           pollId: poll.id,
-          messageId: 0, // We don't get message_id in update.poll
+          messageId: 0,
           channelHandle: 'Unknown',
           question: poll.question,
           options: poll.options.map(opt => ({ text: opt.text, voterCount: opt.voter_count })),
@@ -8665,9 +9566,60 @@ async function handleBotUpdate(update: any) {
           isClosed: poll.is_closed,
           postedAt: new Date().toISOString(),
           lastUpdatedAt: new Date().toISOString()
-        });
-        saveDatabase();
+        };
+        db.pollResults.push(targetPoll);
       }
+
+      // Automatically store formatted answer logs for AI analysis & bot re-tuning
+      if (!db.pollAnswerLogs) db.pollAnswerLogs = [];
+      const totalV = poll.total_voter_count;
+      let winnerOpt = '';
+      let maxVotes = -1;
+      const optsWithPct = poll.options.map(opt => {
+        const pct = totalV > 0 ? Number(((opt.voter_count / totalV) * 100).toFixed(1)) : 0;
+        if (opt.voter_count > maxVotes) {
+          maxVotes = opt.voter_count;
+          winnerOpt = opt.text;
+        }
+        return { text: opt.text, voterCount: opt.voter_count, percentage: pct };
+      });
+
+      const winnerPct = totalV > 0 && maxVotes > 0 ? Number(((maxVotes / totalV) * 100).toFixed(1)) : 0;
+      const tuningInsight = computePollTuningInsight(poll.question, winnerOpt, targetPoll.category);
+
+      const auditLogItem: PollAnswerAuditLog = {
+        id: 'pal-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+        pollId: poll.id,
+        question: poll.question,
+        channelHandle: targetPoll.channelHandle || 'Unknown',
+        category: targetPoll.category,
+        totalVoters: totalV,
+        options: optsWithPct,
+        winnerOption: winnerOpt,
+        winnerPercentage: winnerPct,
+        actionableTuningInsight: tuningInsight,
+        recordedAt: new Date().toISOString()
+      };
+
+      const existingLogIdx = db.pollAnswerLogs.findIndex(l => l.pollId === poll.id);
+      if (existingLogIdx >= 0) {
+        db.pollAnswerLogs[existingLogIdx] = auditLogItem;
+      } else {
+        db.pollAnswerLogs.unshift(auditLogItem);
+      }
+      if (db.pollAnswerLogs.length > 200) {
+        db.pollAnswerLogs = db.pollAnswerLogs.slice(0, 200);
+      }
+
+      saveDatabase();
+      addLog('info', `[ثبت نتایج نظرسنجی] پاسخ‌ها بروزرسانی شد: "${poll.question.slice(0, 30)}..." | آرا: ${totalV} | پیشتاز: "${winnerOpt}" (${winnerPct}%)`);
+      return;
+    }
+
+    if (update.poll_answer) {
+      const pa = update.poll_answer;
+      const voterName = pa.user?.username ? `@${pa.user.username}` : (pa.user?.first_name || String(pa.user?.id || 'کاربر'));
+      addLog('info', `[پاسخ نظرسنجی تلگرام] کاربر ${voterName} در نظرسنجی (${pa.poll_id}) شرکت کرد.`);
       return;
     }
     
@@ -14516,11 +15468,213 @@ Please analyze the data above and provide a professional, structured executive r
         },
         memberEvents: events.slice(0, 100),
         pollResults: polls,
+        pollAnswerLogs: db.pollAnswerLogs || [],
         churnCorrelation,
         recentStats: stats.slice(-30)
       };
 
       res.json({ success: true, analytics });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  function generateEntryExitAiPrompt(): string {
+    const stats = db.channelStats || [];
+    const events = db.channelMemberEvents || [];
+    const ap = db.settings.autoPost;
+    const ap2 = ap.channel2 || DEFAULT_CHANNEL2_SETTINGS;
+
+    const totalJoins = events.filter(e => e.eventType === 'join').length;
+    const totalLeaves = events.filter(e => e.eventType === 'leave').length;
+    const netGrowth = totalJoins - totalLeaves;
+
+    const churnsWithPost = events.filter(e => e.eventType === 'leave' && e.precedingPost);
+    const churnByPostCategory: Record<string, number> = {};
+    for (const c of churnsWithPost) {
+      const cat = c.precedingPost?.category || 'unknown';
+      churnByPostCategory[cat] = (churnByPostCategory[cat] || 0) + 1;
+    }
+
+    const churnWithin30Min = churnsWithPost.filter(c => (c.precedingPost?.elapsedMinutes || 999) <= 30).length;
+    const churn30to60Min = churnsWithPost.filter(c => {
+      const m = c.precedingPost?.elapsedMinutes || 999;
+      return m > 30 && m <= 60;
+    }).length;
+
+    const hourlyJoins: Record<number, number> = {};
+    const hourlyLeaves: Record<number, number> = {};
+    for (const ev of events) {
+      try {
+        const d = new Date(ev.timestamp);
+        const hour = (d.getUTCHours() + 3 + (d.getUTCMinutes() + 30 >= 60 ? 1 : 0)) % 24;
+        if (ev.eventType === 'join') {
+          hourlyJoins[hour] = (hourlyJoins[hour] || 0) + 1;
+        } else {
+          hourlyLeaves[hour] = (hourlyLeaves[hour] || 0) + 1;
+        }
+      } catch (e) {}
+    }
+
+    let p = `# پرامپت تحلیل تخصصی آمار ورود، خروج و ریزش مخاطبان کانال تلگرام (Audience Retention & Churn Analysis)
+به عنوان متخصص ارشد تحلیل داده و رشد کانال‌های تلگرام، داده‌های تلمتری ورود و خروج کاربران را بررسی کرده و علل ریزش (لفت) را ریشه‌یابی کن.
+
+=======================================================
+۱. خلاصه وضعیت رشد و ریزش کانال
+=======================================================
+- کانال اصلی (۱): ${ap.targetChannel || 'تنظیم نشده'}
+- کانال فرعی (۲): ${ap2.targetChannel || 'تنظیم نشده'}
+- کل ورودها (Joins): ${totalJoins}
+- کل خروج‌ها و لفت‌ها (Leaves): ${totalLeaves}
+- رشد خالص (Net Growth): ${netGrowth > 0 ? '+' : ''}${netGrowth}
+- لفت‌های بلافاصله پس از ارسال پست (زیر ۳۰ دقیقه): ${churnWithin30Min} نفر (${totalLeaves > 0 ? ((churnWithin30Min / totalLeaves) * 100).toFixed(1) : 0}%)
+- لفت‌ها بین ۳۰ الی ۶۰ دقیقه پس از پست: ${churn30to60Min} نفر
+
+=======================================================
+۲. توزیع ریزش بر اساس دسته پست قبلی (Churn Correlation by Preceding Post)
+=======================================================
+${Object.keys(churnByPostCategory).length === 0 ? 'هنوز داده‌ای ثبت نشده است.' : Object.entries(churnByPostCategory).map(([cat, count]) => ` - دسته [${cat}]: ${count} مورد لفت (${totalLeaves > 0 ? ((count / totalLeaves) * 100).toFixed(1) : 0}% کل خروجی‌ها)`).join('\n')}
+
+=======================================================
+۳. توزیع ساعتی ورود و خروج (بر اساس ساعت رسمی ایران)
+=======================================================
+ساعات اوج ورود اعضا:
+${Object.entries(hourlyJoins).sort((a, b) => (b[1] as number) - (a[1] as number)).slice(0, 5).map(([h, c]) => ` - ساعت ${h}:00 با ${c} ورود جدید`).join('\n') || 'داده کافی نیست'}
+
+ساعات اوج لفت و خروج اعضا:
+${Object.entries(hourlyLeaves).sort((a, b) => (b[1] as number) - (a[1] as number)).slice(0, 5).map(([h, c]) => ` - ساعت ${h}:00 با ${c} لفت`).join('\n') || 'داده کافی نیست'}
+
+=======================================================
+۴. نمونه رویدادهای اخیر خروج و مشخصات دقیق پست پیش از خروج
+=======================================================
+${events.filter(e => e.eventType === 'leave').slice(0, 25).map(e => ` - کاربر: ${e.username || e.firstName || e.userId || 'ناشناس'} | ساعت: ${e.timestamp} | کانال: ${e.channelHandle}${e.precedingPost ? ` | پست قبلی: دسته ${e.precedingPost.category} (${e.precedingPost.elapsedMinutes} دقیقه قبل از لفت: "${e.precedingPost.summary}")` : ' | بدون پست نزدیک'}`).join('\n') || 'موردی ثبت نشده است.'}
+
+=======================================================
+۵. دستورات تحلیلی برای هوش مصنوعی
+=======================================================
+لطفاً بر اساس آمار بالا:
+۱. تحلیل کن که کاربران به چه دلیلی بیشتر لفت می‌دهند؟ (آیا محتوای پست‌های اخیر نامناسب بوده، کانفیگ‌ها قطع بوده‌اند، نوتیفیکیشن‌ها در ساعات استراحت آزاردهنده بوده، یا فاصله پست‌ها کم بوده است؟)
+۲. بهترین ساعات برای ارسال پست در طول ۲۴ ساعت کدامند؟
+۳. ساعات ممنوعه ارسال پست جهت جلوگیری از ریزش را مشخص کن.
+۴. اقدامات مشخص و عملی برای کاهش نرخ ریزش زیر ۳۰ دقیقه ارائه بده.
+`;
+    return p;
+  }
+
+  function generatePollsAndTuningAiPrompt(): string {
+    const polls = db.pollResults || [];
+    const pollLogs = db.pollAnswerLogs || [];
+    const ap = db.settings.autoPost;
+
+    let p = `# پرامپت تحلیل نظرسنجی‌های مخاطبان و تنظیم مجدد پارامترهای ربات (Telegram Bot Poll Analysis & Auto-Tuning)
+شما معمار ارشد اتوماسیون تلگرام و مهندس تنظیم هوشمند ربات هستید. نتایج نظرسنجی‌های انجام‌شده در کانال را تحلیل کن و تنظیمات جدید ربات را دقیقاً تعیین نما.
+
+=======================================================
+۱. نتایج و لاگ‌های ثبت‌شده نظرسنجی‌های کاربران
+=======================================================
+${pollLogs.length === 0 && polls.length === 0 ? 'هنوز نظرسنجی ثبت نشده است.' : (pollLogs.length > 0 ? pollLogs : polls).map((item: any, idx: number) => {
+  let res = `[نظرسنجی شماره ${idx + 1}] دسته: ${item.category || 'عمومی'}\n`;
+  res += `سوال: ${item.question}\n`;
+  res += `کانال: ${item.channelHandle} | کل شرکت‌کنندگان: ${item.totalVoters || item.totalVoterCount || 0} نفر\n`;
+  if (item.winnerOption) {
+    res += `🏆 گزینه پیشتاز (برنده): "${item.winnerOption}" با ${item.winnerPercentage || 0}% آرا\n`;
+  }
+  if (item.actionableTuningInsight) {
+    res += `💡 تحلیل سیستمی اولیه: ${item.actionableTuningInsight}\n`;
+  }
+  res += `گزینه‌ها و توزیع آرا:\n`;
+  for (const opt of item.options || []) {
+    const pct = opt.percentage !== undefined ? opt.percentage : (item.totalVoterCount > 0 ? ((opt.voterCount / item.totalVoterCount) * 100).toFixed(1) : 0);
+    res += `  - ${opt.text}: ${opt.voterCount} رای (${pct}%)\n`;
+  }
+  return res;
+}).join('\n\n')}
+
+=======================================================
+۲. پیکربندی فعلی ربات (Current Active Bot Settings)
+=======================================================
+- ارسال خودکار کانفیگ (configsEnabled): ${ap.configsEnabled !== false ? 'فعال' : 'غیرفعال'}
+- فاصله ارسال کانفیگ: هر ${ap.configIntervalHours || 6} ساعت (${ap.configIntervalMinutes || 360} دقیقه)
+- تعداد کانفیگ در هر پست: ${ap.configCount || 5} عدد
+- تعداد پروکسی در هر پست: ${ap.proxyCount || 2} عدد
+- سقف مجاز پست‌های روزانه (maxDailyPosts): ${ap.maxDailyPosts || 6} پست
+- حداقل فاصله زمانی مجاز بین هر دو پست (minPostSpacingMinutes): ${ap.minPostSpacingMinutes || 180} دقیقه
+- ارسال ابزارهای دیجیتال و AI (digitalToolsEnabled): ${ap.digitalToolsEnabled !== false ? 'فعال' : 'غیرفعال'} (هر ${ap.digitalToolsIntervalMinutes || 240} دقیقه)
+- ترفندهای تکنولوژی (techTricksEnabled): ${ap.techTricksEnabled === true ? 'فعال' : 'غیرفعال'}
+- اخبار تکنولوژی (techNewsEnabled): ${ap.techNewsEnabled === true ? 'فعال' : 'غیرفعال'}
+- ساعات طلایی تهران (smartGoldenHours): ${ap.smartGoldenHours !== false ? 'فعال' : 'غیرفعال'}
+- محافظت از ساعات خواب ۰۰:۳۰ تا ۰۸:۳۰ (sleepHoursProtection): ${ap.sleepHoursProtection !== false ? 'فعال' : 'غیرفعال'}
+
+=======================================================
+۳. ماموریت هوش مصنوعی جهت تنظیم مجدد ربات
+=======================================================
+بر اساس خواسته و نظرات اکثریت اعضای کانال در نظرسنجی‌های فوق:
+۱. تحلیل کن مخاطبان چه نوع محتوایی، چه پروتکل‌هایی و چه فرکانس ارسالی را ترجیح می‌دهند.
+۲. آیا نیاز است ارسال ابزارهای هوش مصنوعی یا ترفندها روشن یا خاموش شود؟
+۳. آیا نیاز است فاصله زمانی پست‌ها تغییر کند تا از خستگی مخاطب جلوگیری شود؟
+۴. یک بلوک JSON معتبر از تنظیمات پیشنهادی تولید کن تا مستقیماً در ربات اعمال گردد:
+
+\`\`\`json
+{
+  "recommendedSettings": {
+    "configsEnabled": true,
+    "configIntervalMinutes": 360,
+    "configCount": 5,
+    "proxyCount": 2,
+    "maxDailyPosts": 5,
+    "minPostSpacingMinutes": 180,
+    "digitalToolsEnabled": true,
+    "digitalToolsIntervalMinutes": 240,
+    "techTricksEnabled": true,
+    "sleepHoursProtection": true,
+    "smartGoldenHours": true,
+    "rationale": "توضیح کوتاه در مورد علت این تغییرات..."
+  }
+}
+\`\`\`
+`;
+    return p;
+  }
+
+  // API: Get Entry/Exit Dedicated AI Prompt
+  app.get('/api/bot/entry-exit-ai-prompt', (req, res) => {
+    try {
+      const prompt = generateEntryExitAiPrompt();
+      res.json({ success: true, prompt });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Get Poll Tuning Dedicated AI Prompt
+  app.get('/api/bot/poll-tuning-prompt', (req, res) => {
+    try {
+      const prompt = generatePollsAndTuningAiPrompt();
+      res.json({ success: true, prompt });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Get Poll Answer Audit Logs
+  app.get('/api/bot/poll-answer-logs', (req, res) => {
+    try {
+      res.json({ success: true, logs: db.pollAnswerLogs || [] });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Apply Poll Recommendations Directly to Bot Settings
+  app.post('/api/bot/apply-poll-recommendations', (req, res) => {
+    try {
+      const result = applyPollRecommendationsToSettings();
+      if (result.applied.length > 0) {
+        addLog('success', `تنظیمات ربات بر اساس نظرسنجی‌ها بروز شد: ${result.applied.join(' | ')}`);
+        res.json({ success: true, applied: result.applied, message: `بهینه‌سازی‌ها با موفقیت اعمال شدند: ${result.applied.join('، ')}` });
+      } else {
+        res.json({ success: true, applied: [], message: 'تعداد آرای نظرسنجی‌ها برای تغییر خودکار تنظیمات کافی نیست یا تنظیمات فعلی از قبل بهینه‌سازی شده‌اند.' });
+      }
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }

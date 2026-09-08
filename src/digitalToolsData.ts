@@ -260,6 +260,166 @@ export const DEFAULT_DIGITAL_TOOLS: DigitalToolItem[] = [
     tags: ['امنیت_رمز_عبور', 'دارک_وب', 'تست_نفوذ', 'هک_ایمیل'],
     importance: 'trending',
     createdAt: new Date().toISOString()
+  },
+
+  // --- E. Must-Have Apps & Open-Source Masterpieces (اپلیکیشن‌های شاهکار و ضروری موبایل و کامپیوتر) ---
+  {
+    id: 'tool-app-localsend',
+    title: 'LocalSend | سریع‌ترین و امن‌ترین ابزار انتقال فایل بدون اینترنت بین تمام پلتفرم‌ها',
+    summary: 'شاهکار دنیای متن‌باز! انتقال فوق‌العاده سریع فایل، عکس و پوشه بین اندروید، آیفون، مک و ویندوز روی وای‌فای خانگی یا هات‌اسپات، بدون مصرف حتی ۱ کیلوبایت اینترنت و بدون افت کیفیت.',
+    howToUse: 'برنامه را در هر دو گوشی یا لپ‌تاپ نصب کنید. در یک دستگاه Send را بزنید و فایلتان را انتخاب کنید؛ بلافاصله دستگاه دوم شناسایی شده و انتقال با سرعت فوق‌العاده انجام می‌شود.',
+    linkUrl: 'https://localsend.org',
+    buttonLabel: '📥 دانلود رایگان LocalSend',
+    category: 'must_apps',
+    tags: ['انتقال_فایل', 'متن_باز', 'اندروید', 'ویندوز', 'آیفون', 'بدون_اینترنت'],
+    importance: 'essential',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'tool-app-bitwarden',
+    title: 'Bitwarden | امن‌ترین گاوصندوق مدیریت رمزهای عبور دنیا با همگام‌سازی ابری رایگان',
+    summary: 'دیگر نیازی به حفظ کردن ده‌ها پسورد یا استفاده از رمزهای تکراری و ناامن ندارید! با بیت‌واردن برای هر سایت پسوردی پیچیده و ضد هک بسازید و با یک لمس اثرانگشت در سایت‌ها وارد شوید.',
+    howToUse: 'اپلیکیشن موبایل یا افزونه مرورگر آن را نصب کنید. یک رمز مادر قوی تعیین کرده و تایید دومرحله‌ای را فعال کنید. تمام رمزهای شما با رمزنگاری سرتاسری ۲۵۶ بیتی محافظت می‌شوند.',
+    linkUrl: 'https://bitwarden.com',
+    buttonLabel: '🔐 نصب گاوصندوق Bitwarden',
+    category: 'must_apps',
+    tags: ['مدیریت_پسورد', 'امنیت', 'ضد_هک', 'رمز_عبور', 'اپلیکیشن_ضروری'],
+    importance: 'essential',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'tool-app-seal',
+    title: 'Seal Downloader | دانلودر همه‌فن‌حریف ویدیو و صوت با کیفیت 4K از ۱۰۰۰ سایت',
+    summary: 'یکی از تمیزترین و پرامکانات‌ترین اپلیکیشن‌های اندروید بر پایه yt-dlp. دانلود بی‌نقص ویدیوها و آهنگ‌ها از اینستاگرام، یوتیوب، توییتر، تیک‌تاک و صدها سایت با انتخاب کیفیت و بدون هیچ تبلیغاتی.',
+    howToUse: 'لینک ویدیوی مدنظر را کپی کرده یا از منوی Share دکمه Seal را بزنید تا رزولوشن دلخواه یا فرمت صوتی MP3 را بلافاصله برای دانلود تحویل دهد.',
+    linkUrl: 'https://github.com/JunkFood02/Seal',
+    buttonLabel: '⚡ دریافت اپلیکیشن Seal',
+    category: 'must_apps',
+    tags: ['دانلودر_ویدیو', 'اینستاگرام', 'یوتیوب', 'متن_باز', 'کیفیت_بالا'],
+    importance: 'essential',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'tool-app-shizuku',
+    title: 'Shizuku | باز کردن قدرت‌های پنهان اندروید بدون نیاز به روت کردن گوشی',
+    summary: 'ابزاری معجزه‌آسا برای دسترسی به دسترسی‌های سطح سیستمی (ADB) در اندروید. با شیزوکو می‌توانید برنامه‌های سیستمی غیرقابل حذف را حذف کنید، باتری را کالیبره کنید و کنترل کامل گوشی را در دست بگیرید.',
+    howToUse: 'از طریق تنظیمات Developer options و قابلیت Wireless Debugging در اندروید ۱۱ به بالا، در کمتر از ۱ دقیقه شیزوکو را فعال کرده و به برنامه‌های حرفه‌ای مجوز دهید.',
+    linkUrl: 'https://shizuku.rikka.app',
+    buttonLabel: '🛠️ راهنمای فعال‌سازی Shizuku',
+    category: 'must_apps',
+    tags: ['اندروید', 'شیزوکو', 'بدون_روت', 'شخصی_سازی', 'ترفند_حرفه_ای'],
+    importance: 'trending',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'tool-app-protonmail',
+    title: 'Proton Mail | ایمیل رمزنگاری‌شده سوئیسی غیرقابل نفوذ و ضد ردیابی',
+    summary: 'ایمیلی که هیچ سازمان یا شرکتی حتی خود سازندگان پروتون امکان خواندن نامه‌های شما را ندارند! بدون نیاز به ثبت شماره تلفن، با امنیت کوانتومی و حریم خصوصی مطلق.',
+    howToUse: 'با یک نام کاربری دلخواه بدون ثبت مشخصات واقعی ثبت نام کنید و برای ارتباطات حساس، صرافی‌ها و کارهای مهم از این ایمیل امن استفاده فرمایید.',
+    linkUrl: 'https://proton.me/mail',
+    buttonLabel: '🛡️ ساخت ایمیل امن در Proton',
+    category: 'must_apps',
+    tags: ['ایمیل_امن', 'حریم_خصوصی', 'رمزنگاری', 'سوئیس', 'ضد_جاسوسی'],
+    importance: 'essential',
+    createdAt: new Date().toISOString()
+  },
+
+  // --- F. Additional Top-Tier AI & Creative Engines ---
+  {
+    id: 'tool-ai-notebooklm',
+    title: 'Google NotebookLM | تبدیل فوری جزوه، کتاب و مقالات به پادکست گفتگوی صوتی',
+    summary: 'هوش مصنوعی انقلابی گوگل! چندین مقاله، فایل متنی یا کتاب PDF را آپلود کنید تا یک پادکست صوتی فوق‌العاده جذاب و طبیعی با مکالمه دو گوینده آقا و خانم از متن شما بسازد و نکات کلیدی را توضیح دهد.',
+    howToUse: 'وارد سایت notebooklm.google.com شوید، اسناد مدنظر را آپلود کنید و در کادر Audio Overview روی دکمه Generate کلیک کنید.',
+    linkUrl: 'https://notebooklm.google.com',
+    buttonLabel: '🎧 ساخت پادکست صوتی با NotebookLM',
+    category: 'ai_tools',
+    tags: ['گوگل', 'پادکست_هوش_مصنوعی', 'خلاصه_کتاب', 'دانشجویی', 'تولید_محتوا'],
+    importance: 'essential',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'tool-ai-suno',
+    title: 'Suno AI | ساخت آهنگ، ترانه و موسیقی حرفه‌ای با متن و سبک دلخواه',
+    summary: 'شگفت‌انگیزترین هوش مصنوعی خلق موسیقی جهان! کافیست شعر یا موضوع دلخواهتان را بنویسید و سبک موسیقی (پاپ، راک، سنتی، هیپ‌هاپ) را انتخاب کنید تا آهنگی کامل با صدای خواننده و سازهای زنده تحویل دهد.',
+    howToUse: 'در سایت suno.com روی Create کلیک کنید، مود Custom را بزنید و شعر و سبک مورد علاقه خود را بنویسید.',
+    linkUrl: 'https://suno.com',
+    buttonLabel: '🎵 ساخت موزیک در Suno AI',
+    category: 'ai_tools',
+    tags: ['ساخت_آهنگ', 'موسیقی_هوش_مصنوعی', 'ترانه', 'خلاقیت', 'هنر_دیجیتال'],
+    importance: 'trending',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'tool-ai-claude',
+    title: 'Claude 3.5 Sonnet | قوی‌ترین هوش مصنوعی جهان برای تحلیل و نگارش عمیق',
+    summary: 'مدل برتر کمپانی Anthropic که در درک مفاهیم انسانی، ظرافت‌های زبان فارسی، حل مسائل ریاضی و کدنویسی دقیق و بدون خطا بالاترین رتبه را در بنچمارک‌های جهانی دارد.',
+    howToUse: 'برای نگارش مقالات علمی، نامه‌های اداری، ترجمه متون با لحن طبیعی یا اشکال‌زدایی کدهای برنامه‌نویسی مستقیماً از کلود استفاده نمایید.',
+    linkUrl: 'https://claude.ai',
+    buttonLabel: '🧠 ورود به هوش مصنوعی Claude',
+    category: 'ai_tools',
+    tags: ['هوش_مصنوعی', 'کلود', 'برنامه‌نویسی', 'نگارش_مقاله', 'ترجمه'],
+    importance: 'essential',
+    createdAt: new Date().toISOString()
+  },
+
+  // --- G. Additional Secret Websites & Utilities ---
+  {
+    id: 'tool-web-tempmail',
+    title: 'Temp Mail | ساخت ایمیل موقت ۱۰ دقیقه‌ای جهت جلوگیری از اسپم و تبلیغات',
+    summary: 'هر زمان سایتی برای دانلود فایل یا مشاهده محتوا از شما ایمیل خواست، از این ایمیل یکبار مصرف استفاده کنید تا صندوق ورودی ایمیل اصلی شما با صدها پیام تبلیغاتی بمباران نشود.',
+    howToUse: 'وارد سایت temp-mail.org شوید. ایمیل موقت تولیدشده را کپی کنید؛ کد تاییدیه سایت در همان صفحه در کمتر از ۵ ثانیه نمایش داده می‌شود.',
+    linkUrl: 'https://temp-mail.org',
+    buttonLabel: '✉️ دریافت ایمیل موقت فوری',
+    category: 'cool_websites',
+    tags: ['ایمیل_موقت', 'ضد_اسپم', 'امنیت_وب', 'ثبت_نام_سریع', 'ابزار_رایگان'],
+    importance: 'essential',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'tool-web-privnote',
+    title: 'Privnote | ارسال پیام‌های محرمانه خودتخریب‌شونده پس از خوانده شدن',
+    summary: 'ارسال اطلاعات بسیار حساس، پسوردها یا شماره حساب‌ها با اطمینان کامل! به محض اینکه گیرنده لینک پیام را باز کند، پیام نمایش داده شده و برای همیشه از سرور پاک می‌شود.',
+    howToUse: 'متن یادداشت را بنویسید و Create Note را بزنید. لینک اختصاصی ایجادشده را برای مخاطب بفرستید. همچنین می‌توانید برای باز شدن پیام رمز عبور تعیین کنید.',
+    linkUrl: 'https://privnote.com',
+    buttonLabel: '📨 ساخت یادداشت خودتخریب‌شونده',
+    category: 'cool_websites',
+    tags: ['پیام_محرمانه', 'حریم_خصوصی', 'امنیت_اطلاعات', 'خودتخریبی'],
+    importance: 'trending',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'tool-web-radiogarden',
+    title: 'Radio Garden | سفر صوتی به تمام شهرهای جهان و گوش دادن به رادیوهای زنده',
+    summary: 'یکی از جذاب‌ترین سایت‌های اینترنت! با چرخاندن کره سه‌بعدی زمین به هر کشور و شهری که دوست دارید سفر کنید و رادیوی زنده محلی آن منطقه را با کیفیت بالا بشنوید.',
+    howToUse: 'کره زمین را با انگشت بچرخانید و روی نقاط سبز رنگ (شهرهای مختلف) زوم کنید تا رادیوی آن منطقه فوراً پخش شود.',
+    linkUrl: 'https://radio.garden',
+    buttonLabel: '🌍 چرخش کره زمین در Radio Garden',
+    category: 'cool_websites',
+    tags: ['رادیو_زنده', 'کره_زمین', 'موسیقی_جهان', 'سرگرمی_ناب', 'فرهنگ'],
+    importance: 'normal',
+    createdAt: new Date().toISOString()
+  },
+
+  // --- H. Essential Mobile & Privacy Hacks ---
+  {
+    id: 'tool-hack-private-dns',
+    title: '🛡️ ترفند حذف ۹۹٪ تبلیغات آزاردهنده بازی‌ها و وبسایت‌ها با فعال‌سازی Private DNS',
+    summary: 'بدون نصب هیچ اپلیکیشن ضد تبلیغات، با تغییر یک خط تنظیمات در اندروید، تمام بنرها و پاپ‌آپ‌های اعصاب‌خردکن برنامه‌ها و سایت‌ها را مسدود کنید و سرعت وبگردی را ۲ برابر کنید.',
+    howToUse: 'به Settings > Connections > More connection settings > Private DNS بروید. گزینه Private DNS provider hostname را انتخاب کرده و عبارت dns.adguard-dns.com را وارد و ذخیره کنید.',
+    category: 'mobile_hacks',
+    tags: ['حذف_تبلیغات', 'دی_ان_اس_شخصی', 'افزایش_سرعت_اینترنت', 'اندروید', 'ترفند_طلایی'],
+    importance: 'essential',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'tool-hack-telegram-privacy',
+    title: '🚫 ترفند ضد نفوذ: جلوگیری قطعی از اضافه شدن ناخواسته به کانال‌ها و گروه‌های تبلیغاتی',
+    summary: 'آیا مدام متوجه می‌شوید بدون اجازه در کانال‌های ناشناس عضو شده‌اید؟ با بستن این سه دسترسی در تنظیمات تلگرام، حریم خصوصی‌تان را کاملاً نفوذناپذیر کنید.',
+    howToUse: 'در تلگرام به Settings > Privacy and Security بروید: ۱. بخش Groups & Channels را روی My Contacts بگذارید. ۲. بخش Phone Number را روی Nobody قرار دهید. ۳. در بخش Forwarded Messages گزینه Nobody را فعال کنید تا کسی نتواند با فوروارد پیام به پروفایل شما برسد.',
+    category: 'cyber_security',
+    tags: ['حریم_خصوصی_تلگرام', 'ضد_تبلیغات', 'امنیت_اکانت', 'ترفند_موبایل'],
+    importance: 'essential',
+    createdAt: new Date().toISOString()
   }
 ];
 

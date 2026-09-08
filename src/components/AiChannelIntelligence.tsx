@@ -29,12 +29,13 @@ interface AiChannelIntelligenceProps {
 export const AiChannelIntelligence: React.FC<AiChannelIntelligenceProps> = ({ onSettingsRefresh }) => {
   const [data, setData] = useState<ChannelGrowthAnalytics | null>(null);
   const [loading, setLoading] = useState(false);
-  const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [copiedType, setCopiedType] = useState<'full' | 'entryExit' | 'polls' | null>(null);
   const [promptLoading, setPromptLoading] = useState(false);
   const [triggeringPoll, setTriggeringPoll] = useState(false);
+  const [applyingTuning, setApplyingTuning] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState<1 | 2>(1);
-  const [activeSubTab, setActiveSubTab] = useState<'polls' | 'churn' | 'guide'>('polls');
-  const [pollSuccessMsg, setPollSuccessMsg] = useState<string | null>(null);
+  const [activeSubTab, setActiveSubTab] = useState<'polls' | 'pollLogs' | 'churn' | 'guide'>('polls');
+  const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
 
   const fetchAnalytics = async () => {
     try {
@@ -57,15 +58,19 @@ export const AiChannelIntelligence: React.FC<AiChannelIntelligenceProps> = ({ on
     return () => clearInterval(interval);
   }, []);
 
-  const handleCopyPrompt = async () => {
+  const handleCopyPrompt = async (type: 'full' | 'entryExit' | 'polls') => {
     try {
       setPromptLoading(true);
-      const res = await fetch('/api/bot/ai-telemetry-prompt');
+      let endpoint = '/api/bot/ai-telemetry-prompt';
+      if (type === 'entryExit') endpoint = '/api/bot/entry-exit-ai-prompt';
+      if (type === 'polls') endpoint = '/api/bot/poll-tuning-prompt';
+
+      const res = await fetch(endpoint);
       const json = await res.json();
       if (json.success && json.prompt) {
         await navigator.clipboard.writeText(json.prompt);
-        setCopiedPrompt(true);
-        setTimeout(() => setCopiedPrompt(false), 3000);
+        setCopiedType(type);
+        setTimeout(() => setCopiedType(null), 3000);
       }
     } catch (err) {
       console.error('Failed to copy prompt:', err);
@@ -74,10 +79,30 @@ export const AiChannelIntelligence: React.FC<AiChannelIntelligenceProps> = ({ on
     }
   };
 
+  const handleApplyPollTuning = async () => {
+    try {
+      setApplyingTuning(true);
+      const res = await fetch('/api/bot/apply-poll-recommendations', { method: 'POST' });
+      const json = await res.json();
+      if (json.success) {
+        setActionSuccessMsg(json.message || 'تنظیمات با موفقیت اعمال شدند');
+        fetchAnalytics();
+        if (onSettingsRefresh) onSettingsRefresh();
+        setTimeout(() => setActionSuccessMsg(null), 6000);
+      } else {
+        alert(json.message || 'خطا در اعمال تنظیمات');
+      }
+    } catch (err: any) {
+      alert('خطا در ارتباط با سرور: ' + (err.message || err));
+    } finally {
+      setApplyingTuning(false);
+    }
+  };
+
   const handleTriggerPoll = async () => {
     try {
       setTriggeringPoll(true);
-      setPollSuccessMsg(null);
+      setActionSuccessMsg(null);
       const res = await fetch('/api/bot/trigger-smart-poll', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,10 +110,10 @@ export const AiChannelIntelligence: React.FC<AiChannelIntelligenceProps> = ({ on
       });
       const json = await res.json();
       if (json.success) {
-        setPollSuccessMsg(json.message || 'نظرسنجی با موفقیت ارسال شد');
+        setActionSuccessMsg(json.message || 'نظرسنجی با موفقیت ارسال شد');
         fetchAnalytics();
         if (onSettingsRefresh) onSettingsRefresh();
-        setTimeout(() => setPollSuccessMsg(null), 5000);
+        setTimeout(() => setActionSuccessMsg(null), 5000);
       } else {
         alert(json.message || 'خطا در ارسال نظرسنجی');
       }
@@ -153,27 +178,76 @@ export const AiChannelIntelligence: React.FC<AiChannelIntelligenceProps> = ({ on
         </div>
 
         {/* Global Control Buttons */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Prompt 1: Entry/Exit & Churn */}
           <button
             type="button"
-            onClick={handleCopyPrompt}
+            onClick={() => handleCopyPrompt('entryExit')}
             disabled={promptLoading}
-            className={`px-4 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 transition-all shadow-md cursor-pointer ${
-              copiedPrompt
+            className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all shadow-md cursor-pointer ${
+              copiedType === 'entryExit'
                 ? 'bg-emerald-600 text-white shadow-emerald-600/30'
-                : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-indigo-600/30'
+                : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-blue-600/30'
             }`}
-            title="تولید خودکار پرامپت استاندارد حاوی تمام لاگ‌ها، آمار ورود/خروج و نظرسنجی‌ها برای ارسال مستقیم به چت‌بات‌ها"
+            title="کپی پرامپت تحلیلی متمرکز بر آمار ورود، خروج، ساعات اوج و علل ریزش اعضا"
           >
-            {copiedPrompt ? (
+            {copiedType === 'entryExit' ? (
               <>
-                <Check className="w-4 h-4" />
-                <span>پرامپت تحلیل کپی شد!</span>
+                <Check className="w-3.5 h-3.5" />
+                <span>کپی شد!</span>
               </>
             ) : (
               <>
-                <Copy className="w-4 h-4" />
-                <span>📋 کپی پرامپت آماده هوش مصنوعی</span>
+                <TrendingUp className="w-3.5 h-3.5 text-blue-200" />
+                <span>📊 پرامپت آمار ورود و خروج</span>
+              </>
+            )}
+          </button>
+
+          {/* Prompt 2: Polls & Bot Tuning */}
+          <button
+            type="button"
+            onClick={() => handleCopyPrompt('polls')}
+            disabled={promptLoading}
+            className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all shadow-md cursor-pointer ${
+              copiedType === 'polls'
+                ? 'bg-emerald-600 text-white shadow-emerald-600/30'
+                : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white shadow-purple-600/30'
+            }`}
+            title="کپی پرامپت تحلیلی پاسخ‌های نظرسنجی و دریافت تنظیمات پیشنهادی ربات"
+          >
+            {copiedType === 'polls' ? (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                <span>کپی شد!</span>
+              </>
+            ) : (
+              <>
+                <BarChart3 className="w-3.5 h-3.5 text-purple-200" />
+                <span>🗳️ پرامپت نظرسنجی و تنظیم ربات</span>
+              </>
+            )}
+          </button>
+
+          {/* Prompt 3: Full Comprehensive */}
+          <button
+            type="button"
+            onClick={() => handleCopyPrompt('full')}
+            disabled={promptLoading}
+            className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer ${
+              copiedType === 'full' ? 'border-emerald-500 text-emerald-400' : ''
+            }`}
+            title="کپی پرامپت جامع شامل تمام آمارها، نظرسنجی‌ها و پیکربندی فعلی"
+          >
+            {copiedType === 'full' ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <span>کپی شد</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5 text-slate-400" />
+                <span>گزارش جامع</span>
               </>
             )}
           </button>
@@ -181,18 +255,17 @@ export const AiChannelIntelligence: React.FC<AiChannelIntelligenceProps> = ({ on
           <button
             type="button"
             onClick={handleDownloadReport}
-            className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-all border border-slate-700 cursor-pointer"
-            title="دانلود گزارش کامل متنی"
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all border border-slate-700 cursor-pointer"
+            title="دانلود فایل لاگ کامل متنی (.txt)"
           >
             <Download className="w-4 h-4 text-indigo-400" />
-            <span>دانلود لاگ (.txt)</span>
           </button>
 
           <button
             type="button"
             onClick={fetchAnalytics}
             disabled={loading}
-            className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all border border-slate-700 cursor-pointer"
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all border border-slate-700 cursor-pointer"
             title="بروزرسانی داده‌ها"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-400' : ''}`} />
@@ -200,10 +273,10 @@ export const AiChannelIntelligence: React.FC<AiChannelIntelligenceProps> = ({ on
         </div>
       </div>
 
-      {pollSuccessMsg && (
-        <div className="p-3 bg-emerald-500/20 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs flex items-center gap-2 animate-fadeIn">
-          <Check className="w-4 h-4 text-emerald-400" />
-          <span>{pollSuccessMsg}</span>
+      {actionSuccessMsg && (
+        <div className="p-3 bg-emerald-500/20 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs flex items-center gap-2 animate-fadeIn relative z-10">
+          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{actionSuccessMsg}</span>
         </div>
       )}
 
@@ -345,45 +418,89 @@ export const AiChannelIntelligence: React.FC<AiChannelIntelligenceProps> = ({ on
         </div>
       </div>
 
+      {/* Auto-Tuning Action Card */}
+      <div className="bg-gradient-to-r from-purple-950/40 via-indigo-950/40 to-slate-900 border border-purple-800/40 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 relative z-10">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center shrink-0">
+            <Sparkles className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-xs font-black text-white flex items-center gap-2">
+              <span>تنظیم هوشمند ربات بر اساس نتایج نظرسنجی‌ها:</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] bg-purple-500/20 text-purple-300 font-mono">
+                {data?.pollAnswerLogs?.length || 0} لاگ ثبت‌شده
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              سیستم به صورت خودکار نتایج نظرسنجی‌ها را واکاوی کرده و فواصل زمانی، پروتکل‌های اولویت‌دار و فرکانس پست‌ها را روی ربات اعمال می‌کند.
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleApplyPollTuning}
+          disabled={applyingTuning}
+          className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-black flex items-center gap-2 transition-all shadow-lg shadow-purple-900/30 cursor-pointer disabled:opacity-50 shrink-0"
+          title="بررسی نتایج نظرسنجی‌ها و اعمال فوری روی تنظیمات ارسال خودکار ربات"
+        >
+          <Sparkles className={`w-3.5 h-3.5 ${applyingTuning ? 'animate-spin' : ''}`} />
+          <span>{applyingTuning ? 'در حال اعمال...' : '⚡ اعمال بهینه‌سازی‌ها بر اساس نظرسنجی'}</span>
+        </button>
+      </div>
+
       {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2 relative z-10">
+      <div className="flex items-center gap-2 border-b border-slate-800 pb-2 relative z-10 overflow-x-auto">
         <button
           type="button"
           onClick={() => setActiveSubTab('polls')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
             activeSubTab === 'polls'
               ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
           }`}
         >
           <BarChart3 className="w-4 h-4" />
-          <span>نتایج نظرسنجی‌های هوشمند ({data?.pollResults?.length || 0})</span>
+          <span>نظرسنجی‌های فعال ({data?.pollResults?.length || 0})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('pollLogs')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
+            activeSubTab === 'pollLogs'
+              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-purple-400" />
+          <span>لاگ و تحلیل نتایج نظرسنجی ({data?.pollAnswerLogs?.length || 0})</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveSubTab('churn')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
             activeSubTab === 'churn'
               ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
           }`}
         >
           <TrendingUp className="w-4 h-4" />
-          <span>تحلیل علل ریزش و رویدادها ({data?.memberEvents?.length || 0})</span>
+          <span>تحلیل علل ریزش و ورود/خروج ({data?.memberEvents?.length || 0})</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveSubTab('guide')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
             activeSubTab === 'guide'
               ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
           }`}
         >
           <HelpCircle className="w-4 h-4" />
-          <span>چرخه تحلیل با هوش مصنوعی و تنظیم مجدد</span>
+          <span>چرخه تحلیل با هوش مصنوعی</span>
         </button>
       </div>
 
@@ -460,6 +577,112 @@ export const AiChannelIntelligence: React.FC<AiChannelIntelligenceProps> = ({ on
                       {new Date(poll.postedAt).toLocaleDateString('fa-IR')}
                     </span>
                   </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab: Poll Answer Audit Logs & Auto-Tuning Archive */}
+      {activeSubTab === 'pollLogs' && (
+        <div className="space-y-4 relative z-10">
+          {(!data?.pollAnswerLogs || data.pollAnswerLogs.length === 0) ? (
+            <div className="p-8 text-center bg-slate-800/40 rounded-2xl border border-dashed border-slate-700 text-slate-400 text-xs space-y-2">
+              <Sparkles className="w-8 h-8 text-purple-400 mx-auto opacity-70" />
+              <div className="font-bold text-slate-300">هنوز لاگ تحلیلی برای نظرسنجی‌ها ذخیره نشده است.</div>
+              <div className="text-[11px] text-slate-500 max-w-md mx-auto">
+                به محض ثبت رای توسط کاربران در کانال تلگرام، سیستم تلگرام رویداد را به ربات اعلام کرده و ربات گزینه برنده و تنظیمات پیشنهادی را در این لاگ ثبت می‌کند تا بتوانید به هوش مصنوعی تحویل داده یا با یک کلیک روی ربات اعمال کنید.
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {data.pollAnswerLogs.map((log, idx) => (
+                <div
+                  key={log.id || idx}
+                  className="bg-slate-850 border border-slate-800 hover:border-slate-700 rounded-2xl p-4 space-y-3.5 transition-all shadow-sm"
+                >
+                  {/* Header */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                          {log.category || 'نظرسنجی هوشمند'}
+                        </span>
+                        <span className="text-[11px] font-mono text-slate-400" dir="ltr">
+                          {log.channelHandle}
+                        </span>
+                      </div>
+                      <h4 className="text-xs sm:text-sm font-black text-white leading-relaxed">
+                        {log.question}
+                      </h4>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <div className="text-xs font-mono font-black text-indigo-400" dir="ltr">
+                        {log.totalVoters} رای
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        {new Date(log.recordedAt).toLocaleDateString('fa-IR')}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Winner Option Highlight */}
+                  {log.winnerOption && (
+                    <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-3 flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                        🏆
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[10px] text-emerald-400/80 font-bold">گزینه برنده (انتخاب اکثریت کاربران):</div>
+                        <div className="text-xs font-black text-emerald-200 truncate">
+                          {log.winnerOption} ({log.winnerPercentage}% آرا)
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Actionable Tuning Insight */}
+                  {log.actionableTuningInsight && (
+                    <div className="bg-indigo-950/40 border border-indigo-500/30 rounded-xl p-3 flex items-start gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0 mt-0.5">
+                        💡
+                      </div>
+                      <div className="flex-1 text-xs">
+                        <div className="text-[10px] text-indigo-300 font-bold mb-0.5">تنظیم و بهینه‌سازی پیشنهادی ربات:</div>
+                        <div className="text-indigo-100 font-medium leading-relaxed">
+                          {log.actionableTuningInsight}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Options Breakdown */}
+                  {log.options && log.options.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      {log.options.map((opt, oIdx) => (
+                        <div key={oIdx} className="space-y-1">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="text-slate-300 text-[11px] truncate">{opt.text}</span>
+                            <span className="font-mono text-slate-400 text-[11px] shrink-0" dir="ltr">
+                              {opt.voterCount} ({opt.percentage}%)
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all ${
+                                opt.text === log.winnerOption
+                                  ? 'bg-emerald-500'
+                                  : 'bg-indigo-600/70'
+                              }`}
+                              style={{ width: `${opt.percentage}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
