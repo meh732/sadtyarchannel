@@ -215,6 +215,8 @@ interface DatabaseSchema {
   aiPrompts?: AiPrompt[];
   funNewsItems?: FunNewsItem[];
   funSources?: FunNewsSource[];
+  lastPostedFunSourceMap?: Record<number, string>;
+  sourceRoundRobinPointer?: Record<number, number>;
   digitalTools?: DigitalToolItem[];
   postedPromptHistory?: PostedPromptRecord[];
   postedConfigSignatures?: { sig: string; ch: 1 | 2; at: string }[];
@@ -764,6 +766,9 @@ const DEFAULT_CHANNEL2_SETTINGS: SecondaryChannelSettings = {
   inlineButtonText: '',
   inlineButtonUrl: '',
 
+  // Dedicated Source Channels for Channel 2
+  sourceChannels: [],
+
   // 1. Fun & General News Schedule for Channel 2 (Default Active for Channel 2)
   funNewsEnabled: true,
   funNewsIntervalHours: 2,
@@ -1150,6 +1155,19 @@ function loadDatabase() {
       finalSettings.autoPost.channel2.digitalToolsCount = 1;
     }
 
+    const loadedLastPostedFunSourceMap: Record<number, string> = 
+      (loadedSettings?.lastPostedFunSourceMap && typeof loadedSettings.lastPostedFunSourceMap === 'object')
+        ? loadedSettings.lastPostedFunSourceMap
+        : { 1: '', 2: '' };
+    const loadedSourceRoundRobinPointer: Record<number, number> = 
+      (loadedSettings?.sourceRoundRobinPointer && typeof loadedSettings.sourceRoundRobinPointer === 'object')
+        ? loadedSettings.sourceRoundRobinPointer
+        : { 1: 0, 2: 0 };
+    lastPostedFunSourceMap[1] = loadedLastPostedFunSourceMap[1] || '';
+    lastPostedFunSourceMap[2] = loadedLastPostedFunSourceMap[2] || '';
+    sourceRoundRobinPointer[1] = loadedSourceRoundRobinPointer[1] || 0;
+    sourceRoundRobinPointer[2] = loadedSourceRoundRobinPointer[2] || 0;
+
     db = {
       settings: finalSettings,
       sources: finalSources,
@@ -1169,6 +1187,8 @@ function loadDatabase() {
       aiPrompts: finalAiPrompts,
       funNewsItems: finalFunNewsItems,
       funSources: finalFunSources,
+      lastPostedFunSourceMap: loadedLastPostedFunSourceMap,
+      sourceRoundRobinPointer: loadedSourceRoundRobinPointer,
       digitalTools: finalDigitalTools,
       postedPromptHistory: finalPostedPromptHistory,
       postedConfigSignatures: finalPostedConfigSignatures,
@@ -1255,7 +1275,9 @@ function saveDatabase(immediate = false) {
         sources: db.sources,
         forceJoinChannels: db.forceJoinChannels,
         users: db.users,
-        funSources: db.funSources || []
+        funSources: db.funSources || [],
+        lastPostedFunSourceMap: db.lastPostedFunSourceMap || lastPostedFunSourceMap,
+        sourceRoundRobinPointer: db.sourceRoundRobinPointer || sourceRoundRobinPointer
       };
       writeJsonAtomic(SETTINGS_FILE, systemData);
 
@@ -6431,6 +6453,134 @@ function recordTrickPostSuccess(item: TechItem, channelNum: 1 | 2) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ROUND-ROBIN SOURCE ROTATION & MULTI-CHANNEL CONTENT SELECTOR
+// Ensures consecutive posts cycle through DIFFERENT source channels
+// and picks the LATEST unposted post of each distinct channel in rotation.
+// ---------------------------------------------------------------------------
+const lastPostedFunSourceMap: Record<number, string> = { 1: '', 2: '' };
+const sourceRoundRobinPointer: Record<number, number> = { 1: 0, 2: 0 };
+
+function selectFunNewsItemsWithRoundRobin(
+  eligibleItems: FunNewsItem[],
+  count: number,
+  channelNum: 1 | 2
+): FunNewsItem[] {
+  if (!eligibleItems || eligibleItems.length === 0) return [];
+  if (count <= 0) return [];
+
+  // Sync with persistent database state if available
+  if (!db.lastPostedFunSourceMap) db.lastPostedFunSourceMap = { 1: '', 2: '' };
+  if (!db.sourceRoundRobinPointer) db.sourceRoundRobinPointer = { 1: 0, 2: 0 };
+
+  const lastSource = (db.lastPostedFunSourceMap[channelNum] || lastPostedFunSourceMap[channelNum] || '').toLowerCase().trim();
+
+  // Group unposted eligible items by their source channel handle
+  const itemsBySource: Record<string, FunNewsItem[]> = {};
+  for (const item of eligibleItems) {
+    const src = (item.sourceChannel || 'unknown')
+      .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
+      .replace(/^@+/, '')
+      .toLowerCase()
+      .trim();
+    if (!itemsBySource[src]) itemsBySource[src] = [];
+    itemsBySource[src].push(item);
+  }
+
+  // Sort each source's items chronologically descending so index 0 is strictly the LATEST unposted post of that channel
+  // This directly fulfills: "همش به اخرین پست ها بسنده نکنه یعنی اخرین پست هر کانال متفاوت رو ورداره"
+  for (const src of Object.keys(itemsBySource)) {
+    itemsBySource[src].sort((a, b) => {
+      const msgA = a.sourceMessageId || 0;
+      const msgB = b.sourceMessageId || 0;
+      if (msgB !== msgA) return msgB - msgA;
+      const timeA = new Date(a.createdAt || 0).getTime();
+      const timeB = new Date(b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
+  }
+
+  const distinctSources = Object.keys(itemsBySource);
+  if (distinctSources.length === 0) return [];
+
+  // Deterministically sort distinct sources
+  distinctSources.sort();
+
+  const currentPtr = ((db.sourceRoundRobinPointer[channelNum] ?? sourceRoundRobinPointer[channelNum]) || 0) % distinctSources.length;
+  const rotatedSources = [
+    ...distinctSources.slice(currentPtr),
+    ...distinctSources.slice(0, currentPtr)
+  ];
+
+  // Strictly prioritize channels that are DIFFERENT from the immediate lastSource posted to this channel
+  const differentSources = rotatedSources.filter(s => s !== lastSource);
+  const candidateSources = differentSources.length > 0 
+    ? [...differentSources, ...rotatedSources.filter(s => s === lastSource)]
+    : rotatedSources;
+
+  const selected: FunNewsItem[] = [];
+  const usedSourcesInThisBatch = new Set<string>();
+
+  // Pass 1: Select 1 item from distinct channels (taking strictly the latest unposted post of that channel)
+  for (const src of candidateSources) {
+    if (selected.length >= count) break;
+    const available = itemsBySource[src];
+    if (!available || available.length === 0) continue;
+
+    // Pick strictly the latest unposted post of this channel (index 0 via shift())
+    const picked = available.shift();
+    if (picked) {
+      selected.push(picked);
+      usedSourcesInThisBatch.add(src);
+    }
+  }
+
+  // Pass 2: If more items requested than distinct channels available, round-robin through candidate sources
+  while (selected.length < count) {
+    let pickedAny = false;
+    for (const src of candidateSources) {
+      if (selected.length >= count) break;
+      const available = itemsBySource[src];
+      if (available && available.length > 0) {
+        const picked = available.shift();
+        if (picked) {
+          selected.push(picked);
+          usedSourcesInThisBatch.add(src);
+          pickedAny = true;
+        }
+      }
+    }
+    if (!pickedAny) break;
+  }
+
+  // Advance pointer & update last posted source for this channel to guarantee consecutive rotation
+  if (selected.length > 0) {
+    const lastItem = selected[selected.length - 1];
+    if (lastItem?.sourceChannel) {
+      const recordedSource = lastItem.sourceChannel
+        .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
+        .replace(/^@+/, '')
+        .toLowerCase()
+        .trim();
+
+      lastPostedFunSourceMap[channelNum] = recordedSource;
+      db.lastPostedFunSourceMap[channelNum] = recordedSource;
+      
+      const foundIdx = distinctSources.indexOf(recordedSource);
+      const nextPointer = foundIdx !== -1 
+        ? (foundIdx + 1) % distinctSources.length 
+        : (currentPtr + 1) % distinctSources.length;
+
+      sourceRoundRobinPointer[channelNum] = nextPointer;
+      db.sourceRoundRobinPointer[channelNum] = nextPointer;
+
+      saveDatabase();
+    }
+  }
+
+  return selected;
+}
+
 function syncDatabaseWithChannelSnapshot(snapshot: ChannelLiveSnapshot, channelNum: 1 | 2): {
   configsMatched: number;
   proxiesMatched: number;
@@ -6636,17 +6786,98 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
     }
     const countryFlagsStr = countryBadges.slice(0, 4).join(' ');
 
+    // Check if Fun + Config combined mode is active (channel 1 or 2)
+    const isFunWithConfig = settings.funWithConfigEnabled === true;
+    let attachedFunItem: FunNewsItem | null = null;
+
+    if (isFunWithConfig) {
+      // Check if Channel 2 has dedicated source channels configured by user
+      const ch2DedicatedSources = (isCh2 && Array.isArray(db.settings.autoPost?.channel2?.sourceChannels) && db.settings.autoPost.channel2.sourceChannels.length > 0)
+        ? db.settings.autoPost.channel2.sourceChannels
+            .map(s => s.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim())
+            .filter(Boolean)
+        : [];
+
+      let funChannelHandles: string[] = [];
+      if (isCh2 && ch2DedicatedSources.length > 0) {
+        // Strictly use user-specified Channel 2 source channels
+        funChannelHandles = ch2DedicatedSources;
+      } else {
+        const enabledFunSources = (db.funSources || []).filter(s => s.enabled);
+        funChannelHandles = enabledFunSources
+          .filter(s => s.category === 'fun')
+          .map(s => s.urlOrHandle.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim())
+          .filter(Boolean);
+      }
+
+      let eligibleFun = (db.funNewsItems || []).filter(item => {
+        if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
+        const itemSrc = (item.sourceChannel || '')
+          .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
+          .replace(/^@+/, '')
+          .toLowerCase()
+          .trim();
+        if (funChannelHandles.length > 0 && !funChannelHandles.includes(itemSrc)) return false;
+        if (ch2DedicatedSources.length === 0 && item.category !== 'fun') return false;
+        return true;
+      });
+
+      // If available unposted fun items are low (< 3), automatically scrape fresh items from the sources
+      if (eligibleFun.length < 3) {
+        try {
+          await extractFunNewsFromSources(undefined, ch2DedicatedSources.length > 0 ? ch2DedicatedSources : undefined);
+          eligibleFun = (db.funNewsItems || []).filter(item => {
+            if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
+            const itemSrc = (item.sourceChannel || '')
+              .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
+              .replace(/^@+/, '')
+              .toLowerCase()
+              .trim();
+            if (funChannelHandles.length > 0 && !funChannelHandles.includes(itemSrc)) return false;
+            if (ch2DedicatedSources.length === 0 && item.category !== 'fun') return false;
+            return true;
+          });
+        } catch (e) {
+          // ignore extraction error
+        }
+      }
+
+      if (eligibleFun.length > 0) {
+        // Rotates through distinct fun channels and picks the latest unposted post of each channel
+        const pickedList = selectFunNewsItemsWithRoundRobin(eligibleFun, 1, channelTargetNum);
+        if (pickedList.length > 0) {
+          attachedFunItem = pickedList[0];
+        }
+      }
+    }
+
     let dynamicHeadline = settings.customText && !settings.customText.includes('کانفیگ جدید منتشر شد')
       ? settings.customText
-      : `${countryFlagsStr || '🚀'} سرورهای پرسرعت V2Ray [ضدفیلتر و پایدار]`;
+      : (attachedFunItem?.title 
+          ? `⚡ ${attachedFunItem.title}` 
+          : `${countryFlagsStr || '🚀'} سرورهای پرسرعت V2Ray [ضدفیلتر و پایدار]`);
 
-    let text = `⚡ <b>${escapeHtml(dynamicHeadline)}</b>\n`;
-    text += `━━━━━━━━━━━━━━━━━━━━\n`;
-    text += `📶 <b>تست‌شده روی: همراه اول 🟢 | ایرانسل 🟢 | مخابرات 🟢</b>\n`;
-    text += `🎯 <i>مناسب اینستاگرام، یوتیوب ۴K و وب‌گردی بدون قطعی</i>\n\n`;
+    let text = '';
+    if (attachedFunItem) {
+      text += `🎭 <b>${escapeHtml(attachedFunItem.title || 'لبخند روزانه')}</b>\n`;
+      text += `━━━━━━━━━━━━━━━━━━━━\n`;
+      if (attachedFunItem.text && attachedFunItem.text !== attachedFunItem.title) {
+        text += `${escapeHtml(attachedFunItem.text.slice(0, 400))}\n\n`;
+      }
+      text += `🎁 <b>کانفیگ هدیه همراه با این پست 👇</b>\n`;
+      text += `📶 <b>تست‌شده روی تمام اپراتورها 🟢</b>\n\n`;
+    } else {
+      text += `⚡ <b>${escapeHtml(dynamicHeadline)}</b>\n`;
+      text += `━━━━━━━━━━━━━━━━━━━━\n`;
+      text += `📶 <b>تست‌شده روی: همراه اول 🟢 | ایرانسل 🟢 | مخابرات 🟢</b>\n`;
+      text += `🎯 <i>مناسب اینستاگرام، یوتیوب ۴K و وب‌گردی بدون قطعی</i>\n\n`;
+    }
 
     let needsFullPackFile = false;
     let fullPackConfigsContent = '';
+
+    // Show simulated ping only if explicitly enabled (default is false because ping varies per user connection)
+    const showPing = settings.displayPingInPosts === true;
 
     if (selectedConfigs.length > 0) {
       text += `🚀 <b>پک ${selectedConfigs.length} کانفیگ اختصاصی V2Ray:</b>\n\n`;
@@ -6655,7 +6886,9 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
         const conf = selectedConfigs[i];
         const loc = await getIpLocation(conf.server || '');
         const flag = getFlagEmoji(loc.countryCode);
-        const pingText = conf.latency ? `⚡ <code>${conf.latency}ms</code>` : '🟢 فعال';
+        const pingText = showPing 
+          ? (conf.latency ? `⚡ <code>${conf.latency}ms</code>` : '🟢 فعال')
+          : '🟢 فعال';
         const proto = (conf.protocol || 'V2RAY').toUpperCase();
         text += `▫️ <b>[${proto}]</b> ${loc.country} ${flag} ╶─╴ ${pingText}\n`;
       }
@@ -6700,7 +6933,9 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
         const proxy = selectedProxies[i];
         const loc = await getIpLocation(proxy.server || '');
         const flag = getFlagEmoji(loc.countryCode);
-        const pingText = proxy.latency ? `⚡ <code>${proxy.latency}ms</code>` : '🟢 فعال';
+        const pingText = showPing
+          ? (proxy.latency ? `⚡ <code>${proxy.latency}ms</code>` : '🟢 فعال')
+          : '🟢 فعال';
         const pType = (proxy.type || 'MTPROTO').toUpperCase();
         text += `▫️ <b>[${pType}]</b> ${loc.country} ${flag} ╶─╴ ${pingText}\n`;
       }
@@ -6753,13 +6988,56 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
 
     const safeText = safeTelegramHtmlLength(text, 3900);
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
-    const sentMsg = await callTelegramApi('sendMessage', {
-      chat_id: channelHandle,
-      text: safeText,
-      parse_mode: 'HTML',
-      reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-      disable_notification: !!settings.silentMode
-    });
+    
+    let sentMsg: any = null;
+    if (attachedFunItem && (attachedFunItem.imageUrl || attachedFunItem.videoUrl)) {
+      // Send as photo/video with caption when fun item has media
+      const postResult = await sendTelegramPostWithMedia({
+        chatId: channelHandle,
+        text: safeText,
+        videoUrl: attachedFunItem.videoUrl,
+        imageUrl: attachedFunItem.imageUrl,
+        mediaType: attachedFunItem.mediaType,
+        replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+        silent: !!settings.silentMode
+      });
+      if (postResult.success) {
+        sentMsg = { message_id: postResult.messageId };
+        const nowIso = new Date().toISOString();
+        if (isCh2) {
+          attachedFunItem.postedToChannel2 = true;
+        } else {
+          attachedFunItem.postedToChannel1 = true;
+        }
+        attachedFunItem.postedAt = nowIso;
+      } else {
+        // Fallback to plain text message
+        sentMsg = await callTelegramApi('sendMessage', {
+          chat_id: channelHandle,
+          text: safeText,
+          parse_mode: 'HTML',
+          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+          disable_notification: !!settings.silentMode
+        });
+      }
+    } else {
+      sentMsg = await callTelegramApi('sendMessage', {
+        chat_id: channelHandle,
+        text: safeText,
+        parse_mode: 'HTML',
+        reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+        disable_notification: !!settings.silentMode
+      });
+      if (attachedFunItem) {
+        const nowIso = new Date().toISOString();
+        if (isCh2) {
+          attachedFunItem.postedToChannel2 = true;
+        } else {
+          attachedFunItem.postedToChannel1 = true;
+        }
+        attachedFunItem.postedAt = nowIso;
+      }
+    }
 
     recordChannelPostEvent(
       channelTargetNum, 
@@ -8436,9 +8714,17 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       db.funNewsItems = [];
     }
 
-    const activeHandles = db.funSources
-      .filter(s => s.enabled)
-      .map(s => s.urlOrHandle.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim());
+    const ch2DedicatedSources = (isCh2 && Array.isArray(db.settings.autoPost?.channel2?.sourceChannels) && db.settings.autoPost.channel2.sourceChannels.length > 0)
+      ? db.settings.autoPost.channel2.sourceChannels
+          .map(s => s.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim())
+          .filter(Boolean)
+      : [];
+
+    const activeHandles = ch2DedicatedSources.length > 0
+      ? ch2DedicatedSources
+      : db.funSources
+          .filter(s => s.enabled)
+          .map(s => s.urlOrHandle.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim());
 
     const isFunNewsOnLiveOrHistory = (item: any) => {
       if (liveSnapshot && Array.isArray(liveSnapshot.normalizedTexts)) {
@@ -8467,7 +8753,7 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
     // If available unposted items are low (< 5), automatically scrape fresh items from live channels
     if (eligible.length < 5) {
       addLog('info', `موجودی مطالب منتشرنشده فان و اخبار اندک است (${eligible.length} عدد). در حال استخراج و دریافت مطالب تازه از کانال‌های منبع...`);
-      await extractFunNewsFromSources();
+      await extractFunNewsFromSources(undefined, ch2DedicatedSources.length > 0 ? ch2DedicatedSources : undefined);
       
       eligible = (db.funNewsItems || []).filter(item => {
         if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
@@ -8486,7 +8772,8 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
     }
 
     const countToPost = Math.max(1, ap?.funNewsCount || 1);
-    const selected = eligible.slice(0, countToPost);
+    // Use intelligent round-robin across distinct sources rather than slicing top items from one source
+    const selected = selectFunNewsItemsWithRoundRobin(eligible, countToPost, channelTargetNum);
 
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
@@ -8616,7 +8903,7 @@ function cleanTelegramFunText(rawHtml: string): string {
   return sanitizeContentForTelegramPost(text);
 }
 
-async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ added: number; total: number; skipped: number }> {
+async function extractFunNewsFromSources(specificSourceId?: string, extraHandles?: string[]): Promise<{ added: number; total: number; skipped: number }> {
   if (!Array.isArray(db.funSources)) {
     db.funSources = [];
   }
@@ -8631,9 +8918,30 @@ async function extractFunNewsFromSources(specificSourceId?: string): Promise<{ a
     ? specificSourceId.trim()
     : undefined;
 
-  const sourcesToScrape = validSpecificId 
+  let sourcesToScrape = validSpecificId 
     ? db.funSources.filter(s => s.id === validSpecificId)
     : db.funSources.filter(s => s.enabled);
+
+  // If extraHandles (e.g., channels specified for Channel 2) are provided, include them in scraping
+  if (Array.isArray(extraHandles) && extraHandles.length > 0) {
+    const existingHandles = sourcesToScrape.map(s =>
+      s.urlOrHandle.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim()
+    );
+    for (const rawH of extraHandles) {
+      const cleanH = rawH.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim();
+      if (cleanH && !existingHandles.includes(cleanH)) {
+        sourcesToScrape.push({
+          id: `custom-ch2-${cleanH}`,
+          name: `@${cleanH}`,
+          urlOrHandle: cleanH,
+          category: 'fun',
+          enabled: true,
+          extractedCount: 0
+        });
+        existingHandles.push(cleanH);
+      }
+    }
+  }
 
   if (sourcesToScrape.length === 0) {
     addLog('warn', 'هیچ کانال تلگرامی فعالی برای استخراج فان و اخبار یافت نشد. لطفاً در تب فان و اخبار یک کانال فعال تعریف کنید.');
@@ -16102,6 +16410,18 @@ async function startExpressServer() {
         item.postedToChannel1 = true;
       }
       item.postedAt = new Date().toISOString();
+
+      if (item.sourceChannel) {
+        const recordedSource = item.sourceChannel
+          .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
+          .replace(/^@+/, '')
+          .toLowerCase()
+          .trim();
+        lastPostedFunSourceMap[targetNum] = recordedSource;
+        if (!db.lastPostedFunSourceMap) db.lastPostedFunSourceMap = { 1: '', 2: '' };
+        db.lastPostedFunSourceMap[targetNum] = recordedSource;
+      }
+
       saveDatabase();
 
       res.json({ success: true, message: `مطلب با موفقیت به کانال ${targetNum} (${channelHandle}) ارسال شد.` });

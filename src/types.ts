@@ -96,6 +96,8 @@ export interface AutoPostSettings {
   proxyCount: number; // number of proxies (0, 1, 2, 3, 5, 10, 15, 20)
   customText: string; // custom Persian text to add to the config post
   lastConfigsPostedAt?: string | null;
+  funWithConfigEnabled?: boolean; // Embed a fun meme/joke alongside configs in Channel 1 for viral retention & anti-churn
+  displayPingInPosts?: boolean; // When false, removes simulated ping ms from posts (since actual ping depends on user's ISP/net)
 
   // 2. Tech News Schedule (Dedicated/Independent)
   techNewsEnabled?: boolean; // Toggle for tech news auto-posting
@@ -184,6 +186,9 @@ export interface SecondaryChannelSettings {
   inlineButtonText?: string; // Custom button label for Channel 2 (e.g. "عضویت در کانال سرگرمی 🐸")
   inlineButtonUrl?: string; // Custom button link for Channel 2 (e.g. https://t.me/ghourbagheBshort)
 
+  // Dedicated Source Channels for Channel 2
+  sourceChannels?: string[]; // Custom telegram channel handles/links defined specifically for Channel 2
+
   // 1. Configs & Proxies Schedule for Channel 2
   configsEnabled?: boolean;
   postIntervalHours?: number;
@@ -194,6 +199,8 @@ export interface SecondaryChannelSettings {
   postFiles?: boolean; // send NPV/OVPN files alongside configs
   customText?: string;
   lastConfigsPostedAt?: string | null;
+  funWithConfigEnabled?: boolean;
+  displayPingInPosts?: boolean;
 
   // 2. Tech News Schedule for Channel 2
   techNewsEnabled?: boolean;

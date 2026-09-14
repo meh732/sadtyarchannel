@@ -18,7 +18,9 @@ import {
   Trash2,
   AlertCircle,
   CheckCircle2,
-  Layers
+  Layers,
+  Plus,
+  X
 } from 'lucide-react';
 import { AutoPostSettings, SecondaryChannelSettings, DigitalToolCategory } from '../types';
 import { ChannelHealthDashboard } from './ChannelHealthDashboard';
@@ -61,6 +63,29 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
 }) => {
   const [cleaningDuplicates, setCleaningDuplicates] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<{ message: string; isError?: boolean } | null>(null);
+  const [newCh2Source, setNewCh2Source] = useState('');
+
+  const handleAddCh2Source = () => {
+    const handle = newCh2Source.trim();
+    if (!handle) return;
+    const clean = handle
+      .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
+      .replace(/^@+/, '')
+      .trim();
+    if (!clean) return;
+    const current = c2.sourceChannels || [];
+    if (!current.some(s => s.toLowerCase().replace(/^@+/, '') === clean.toLowerCase())) {
+      updateChannel2({ sourceChannels: [...current, `@${clean}`] });
+    }
+    setNewCh2Source('');
+  };
+
+  const handleRemoveCh2Source = (sourceToRemove: string) => {
+    const current = c2.sourceChannels || [];
+    updateChannel2({
+      sourceChannels: current.filter(s => s !== sourceToRemove)
+    });
+  };
 
   const handleCleanDuplicates = async (channelNum: 1 | 2) => {
     setCleaningDuplicates(true);
@@ -603,6 +628,51 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                     <option value="2">۲ عدد</option>
                     <option value="3">۳ عدد</option>
                   </select>
+                </div>
+              </div>
+
+              {/* Combined Fun + Config and Display Ping options */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                <div className="flex items-center justify-between p-3 rounded-xl border border-amber-100 bg-amber-50/40">
+                  <div className="space-y-0.5">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Smile className="w-3.5 h-3.5 text-amber-600" />
+                      <span>پست ترکیبی (فان + کانفیگ هدیه)</span>
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      پیوست یک میم یا متن طنز جذاب از کانال‌های فان به پست کانفیگ جهت افزایش ویو و کاهش لفت
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAutoPostForm(prev => ({ ...prev, funWithConfigEnabled: !prev.funWithConfigEnabled }))}
+                    className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center shrink-0 mr-2 ${
+                      autoPostForm.funWithConfigEnabled ? 'bg-amber-500 justify-end' : 'bg-slate-200 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/60">
+                  <div className="space-y-0.5">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>نمایش پینگ عددی در پست</span>
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      پیش‌فرض خاموش (چون پینگ واقعی به اینترنت هر کاربر بستگی دارد و عدد سرور فریبنده است)
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAutoPostForm(prev => ({ ...prev, displayPingInPosts: !prev.displayPingInPosts }))}
+                    className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center shrink-0 mr-2 ${
+                      autoPostForm.displayPingInPosts ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                  </button>
                 </div>
               </div>
 
@@ -1593,6 +1663,89 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
               </div>
             </div>
 
+            {/* Dedicated Source Channels for Channel 2 */}
+            <div className="bg-white border border-purple-200 rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 border-b border-purple-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+                    <Layers className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <span>کانال‌های تلگرامی منبع اختصاصی کانال دوم (بخش دومی)</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800">
+                        {(c2.sourceChannels || []).length} کانال اختصاصی
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      کانال‌هایی که محتوای ارسالی به کانال دوم و پست‌های ترکیبی با کانفیگ از آن‌ها استخراج می‌شوند.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Add Source Input */}
+              <div className="flex flex-col sm:flex-row items-center gap-2">
+                <div className="relative flex-1 w-full">
+                  <input
+                    type="text"
+                    value={newCh2Source}
+                    onChange={(e) => setNewCh2Source(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddCh2Source();
+                      }
+                    }}
+                    placeholder="آیدی یا لینک کانال منبع (مثال: @MySourceChannel یا t.me/channel)"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-mono text-left focus:border-purple-500 focus:outline-none"
+                    dir="ltr"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddCh2Source}
+                  className="w-full sm:w-auto px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer shrink-0"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>افزودن کانال به لیست</span>
+                </button>
+              </div>
+
+              {/* Sources Badges */}
+              <div className="space-y-2 pt-1">
+                {(c2.sourceChannels || []).length === 0 ? (
+                  <div className="p-4 rounded-xl bg-purple-50/50 border border-dashed border-purple-200 text-center text-xs text-purple-700">
+                    هنوز کانالی برای کانال دوم ثبت نشده است. می‌توانید در کادر بالا آیدی کانال‌ها را وارد کنید یا در چت برای من بفرستید تا سریعاً تنظیم کنم.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {(c2.sourceChannels || []).map((ch) => (
+                      <div
+                        key={ch}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-50 border border-purple-200 text-purple-900 text-xs font-mono font-bold"
+                        dir="ltr"
+                      >
+                        <span>{ch}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveCh2Source(ch)}
+                          className="text-slate-400 hover:text-red-500 p-0.5 rounded cursor-pointer transition-colors"
+                          title="حذف کانال"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="text-[10px] text-slate-500 flex items-center gap-1.5 pt-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span>ربات در هر بار ارسال، به صورت چرخشی (Round-Robin) آخرین پست هر کانال متفاوت از این لیست را برای کانال دوم انتخاب می‌کند.</span>
+                </div>
+              </div>
+            </div>
+
             {/* Other categories for Channel 2 (User requested ability to choose whatever they want on channel 2) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Configs on Channel 2 */}
@@ -1638,6 +1791,41 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                     </select>
                   </div>
                 </div>
+
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-amber-50/60 border border-amber-100">
+                    <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+                      <Smile className="w-3 h-3 text-amber-600" />
+                      <span>پست ترکیبی (فان + کانفیگ)</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => updateChannel2({ funWithConfigEnabled: !c2.funWithConfigEnabled })}
+                      className={`w-8 h-4 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                        c2.funWithConfigEnabled ? 'bg-amber-500 justify-end' : 'bg-slate-200 justify-start'
+                      }`}
+                    >
+                      <span className="w-3 h-3 rounded-full bg-white shadow-sm" />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-100">
+                    <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+                      <Zap className="w-3 h-3 text-indigo-600" />
+                      <span>نمایش پینگ عددی</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => updateChannel2({ displayPingInPosts: !c2.displayPingInPosts })}
+                      className={`w-8 h-4 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                        c2.displayPingInPosts ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                      }`}
+                    >
+                      <span className="w-3 h-3 rounded-full bg-white shadow-sm" />
+                    </button>
+                  </div>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => handleTriggerConfigsAutoPost(2)}
