@@ -6931,7 +6931,8 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       // If available unposted fun items are low (< 3), automatically scrape fresh items from the sources
       if (eligibleFun.length < 3) {
         try {
-          await extractFunNewsFromSources(undefined, ch2DedicatedSources.length > 0 ? ch2DedicatedSources : (funChannelHandles.length > 0 ? funChannelHandles : undefined));
+          const sourcesToExtract = ch2DedicatedSources.length > 0 ? ch2DedicatedSources : (funChannelHandles.length > 0 ? funChannelHandles : undefined);
+          await extractFunNewsFromSources(undefined, sourcesToExtract);
           eligibleFun = (db.funNewsItems || []).filter(item => {
             if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
             if (isTelegramSourceAd(item.text, item.title).isAd) return false;
@@ -6954,7 +6955,7 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
 
       // If all items have already been posted to this channel, recycle clean items so post is never left without fun content
       if (eligibleFun.length === 0) {
-        const cleanRecyclable = (db.funNewsItems || []).filter(item => {
+        let cleanRecyclable = (db.funNewsItems || []).filter(item => {
           if (isTelegramSourceAd(item.text, item.title).isAd) return false;
           const cleanT = sanitizeContentForTelegramPost(item.text, targetChannel);
           if (!cleanT && !item.imageUrl && !item.videoUrl) return false;
@@ -6968,6 +6969,18 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
           if (funChannelHandles.length > 0 && !funChannelHandles.includes(itemSrc)) return false;
           return true;
         });
+
+        // Fallback: if no items found strictly matching Channel 2 handles, recycle any clean fun item in db
+        if (cleanRecyclable.length === 0 && (db.funNewsItems || []).length > 0) {
+          cleanRecyclable = (db.funNewsItems || []).filter(item => {
+            if (isTelegramSourceAd(item.text, item.title).isAd) return false;
+            const cleanT = sanitizeContentForTelegramPost(item.text, targetChannel);
+            if (!cleanT && !item.imageUrl && !item.videoUrl) return false;
+            if (cleanT.length < 12 && !item.imageUrl && !item.videoUrl) return false;
+            return !isTelegramSourceAd(cleanT, item.title).isAd;
+          });
+        }
+
         if (cleanRecyclable.length > 0) {
           cleanRecyclable.forEach(it => {
             if (isCh2) it.postedToChannel2 = false;
@@ -16100,6 +16113,8 @@ async function startExpressServer() {
         smartGoldenHours,
         sleepHoursProtection,
         singlePostMode,
+        funWithConfigEnabled,
+        displayPingInPosts,
         channel2
       } = req.body;
       
@@ -16126,6 +16141,9 @@ async function startExpressServer() {
           adText: channel2.adText || '',
           silentMode: !!channel2.silentMode,
           antiFloodDelayMinutes: Number(channel2.antiFloodDelayMinutes) || updatedChannel2.antiFloodDelayMinutes || 3,
+          sourceChannels: Array.isArray(channel2.sourceChannels) ? channel2.sourceChannels : (updatedChannel2.sourceChannels || []),
+          funWithConfigEnabled: typeof channel2.funWithConfigEnabled !== 'undefined' ? !!channel2.funWithConfigEnabled : (updatedChannel2.funWithConfigEnabled ?? true),
+          displayPingInPosts: typeof channel2.displayPingInPosts !== 'undefined' ? !!channel2.displayPingInPosts : (updatedChannel2.displayPingInPosts ?? false),
 
           inlineButtonEnabled: typeof channel2.inlineButtonEnabled !== 'undefined' ? !!channel2.inlineButtonEnabled : (updatedChannel2.inlineButtonEnabled ?? true),
           inlineButtonText: typeof channel2.inlineButtonText !== 'undefined' ? channel2.inlineButtonText : (updatedChannel2.inlineButtonText || ''),
@@ -16202,6 +16220,8 @@ async function startExpressServer() {
         
         // Granular independent schedule fields for Channel 1
         configsEnabled: typeof configsEnabled !== 'undefined' ? !!configsEnabled : db.settings.autoPost?.configsEnabled ?? true,
+        funWithConfigEnabled: typeof funWithConfigEnabled !== 'undefined' ? !!funWithConfigEnabled : (db.settings.autoPost?.funWithConfigEnabled ?? true),
+        displayPingInPosts: typeof displayPingInPosts !== 'undefined' ? !!displayPingInPosts : (db.settings.autoPost?.displayPingInPosts ?? false),
         configIntervalMinutes: parsedConfigMinutes,
         configIntervalHours: Math.max(1, Math.round(parsedConfigMinutes / 60)),
         lastConfigsPostedAt: db.settings.autoPost?.lastConfigsPostedAt || null,

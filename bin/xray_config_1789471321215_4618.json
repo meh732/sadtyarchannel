@@ -1,0 +1,53 @@
+{
+  "log": {
+    "loglevel": "none"
+  },
+  "inbounds": [
+    {
+      "port": 23548,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vmess",
+      "settings": {
+        "vnext": [
+          {
+            "address": "speed.cloudflare.com",
+            "port": 443,
+            "users": [
+              {
+                "id": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+                "alterId": 0,
+                "security": "auto"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "speed.cloudflare.com",
+          "allowInsecure": true
+        },
+        "wsSettings": {
+          "path": "/vmess",
+          "headers": {
+            "Host": "speed.cloudflare.com"
+          }
+        }
+      }
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    }
+  ]
+}
