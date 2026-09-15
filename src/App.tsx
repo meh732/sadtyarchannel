@@ -1657,6 +1657,24 @@ export default function App() {
     }
   };
 
+  const handlePurgeFunNewsAds = async () => {
+    setActionLoading('purge_fun_news_ads');
+    try {
+      const res = await fetch('/api/fun-news/purge-ads', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || 'پالایش و پاکسازی تبلیغات کانال‌های منبع با موفقیت انجام شد.', 'success');
+        fetchData(true);
+      } else {
+        showToast(data.message || 'خطا در پالایش تبلیغات', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'خطا در ارتباط با سرور', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   // --- Digital Tools (Evergreen Growth Content) Handlers ---
   const handleTriggerDigitalToolsAutoPost = async (channelNum: number = 1) => {
     setActionLoading(`trigger_digital_tools_${channelNum}`);
@@ -4834,6 +4852,7 @@ export default function App() {
                     onToggleSource={handleToggleFunSource}
                     onDeleteSource={handleDeleteFunSource}
                     onRestoreDefaults={handleResetDefaultFunSources}
+                    onPurgeAds={handlePurgeFunNewsAds}
                     onSendItem={handleSendFunNewsItem}
                     onDeleteItem={handleDeleteFunNewsItem}
                   />

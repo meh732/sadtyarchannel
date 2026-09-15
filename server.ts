@@ -748,7 +748,8 @@ const DEFAULT_FUN_NEWS_ITEMS: FunNewsItem[] = [
 const DEFAULT_CHANNEL2_SETTINGS: SecondaryChannelSettings = {
   enabled: false,
   targetChannel: '',
-  adText: 'کانال دوم ما: @MyChannel2',
+  adText: '',
+  skipPostSummary: true,
   silentMode: true,
   antiFloodDelayMinutes: 5,
   lastAnyPostAt: null,
@@ -767,7 +768,7 @@ const DEFAULT_CHANNEL2_SETTINGS: SecondaryChannelSettings = {
   inlineButtonUrl: '',
 
   // Dedicated Source Channels for Channel 2
-  sourceChannels: [],
+  sourceChannels: ['@jokkadeh', '@farsifun', '@khandehabadd', '@GizmizTel', '@Kafiha', '@jokdoni'],
 
   // 1. Fun & General News Schedule for Channel 2 (Default Active for Channel 2)
   funNewsEnabled: true,
@@ -840,6 +841,7 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
 
   // 1. Configs & Proxies Schedule
   configsEnabled: true,
+  funWithConfigEnabled: true, // Embed a fun meme/joke alongside configs in Channel 1 for viral retention
   postIntervalHours: 4,
   configIntervalHours: 4,
   configIntervalMinutes: 240,
@@ -984,6 +986,18 @@ function loadDatabase() {
       adminPassword: envAdminPassword || loadedSettings?.settings?.adminPassword || loadedDataStore?.settings?.adminPassword || 'admin',
       autoPost: { ...DEFAULT_AUTO_POST, ...(loadedSettings?.settings?.autoPost || loadedDataStore?.settings?.autoPost || {}) }
     };
+
+    if (finalSettings.autoPost.funWithConfigEnabled === undefined) {
+      finalSettings.autoPost.funWithConfigEnabled = true;
+    }
+    if (!finalSettings.autoPost.channel2) {
+      finalSettings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
+    } else {
+      finalSettings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS, ...finalSettings.autoPost.channel2 };
+      if (!Array.isArray(finalSettings.autoPost.channel2.sourceChannels) || finalSettings.autoPost.channel2.sourceChannels.length === 0) {
+        finalSettings.autoPost.channel2.sourceChannels = [...DEFAULT_CHANNEL2_SETTINGS.sourceChannels];
+      }
+    }
 
     // Automatically resolve and set the correct public Web panel URL for Telegram WebApp (TWA)
     const detectedUrl = process.env.APP_URL || process.env.DEV_APP_URL || DEFAULT_KNOWN_APP_URL;
@@ -1153,6 +1167,13 @@ function loadDatabase() {
     }
     if (typeof finalSettings.autoPost.channel2.digitalToolsCount === 'undefined') {
       finalSettings.autoPost.channel2.digitalToolsCount = 1;
+    }
+    // Clean any default dummy adText for Channel 2 so it never inherits placeholder or Channel 1 text
+    if (finalSettings.autoPost.channel2.adText === 'کانال دوم ما: @MyChannel2' || (finalSettings.autoPost.channel2.adText && finalSettings.autoPost.channel2.adText.includes('MyChannel2'))) {
+      finalSettings.autoPost.channel2.adText = '';
+    }
+    if (typeof finalSettings.autoPost.channel2.skipPostSummary === 'undefined') {
+      finalSettings.autoPost.channel2.skipPostSummary = true;
     }
 
     const loadedLastPostedFunSourceMap: Record<number, string> = 
@@ -5178,7 +5199,7 @@ async function refreshTechContentAndPurgeOld(force = false): Promise<{ added: nu
 }
 
 // Helper to format a tech item cleanly and beautifully for Telegram
-function formatTechItemForTelegram(item: TechItem, showBadge = true): string {
+function formatTechItemForTelegram(item: TechItem, showBadge = true, skipSummary = false): string {
   let badgeEmoji = '💡';
   let badgeTitle = 'ترفند تکنولوژی';
   let headerBorder = '━━━━━━━━━━━━━━━━━━━━';
@@ -5194,15 +5215,27 @@ function formatTechItemForTelegram(item: TechItem, showBadge = true): string {
   }
 
   let text = '';
-  if (showBadge) {
-    text += `${badgeEmoji} <b>« ${badgeTitle} »</b>\n`;
-    text += `📌 <b>${escapeHtml(item.title)}</b>\n\n`;
-  } else {
+  if (skipSummary) {
     text += `🔹 <b>${escapeHtml(item.title)}</b>\n\n`;
-  }
-  
-  if (item.summary) {
-    text += `<blockquote>${escapeHtml(item.summary)}</blockquote>\n\n`;
+    if (item.fullText) {
+      text += `${escapeHtml(item.fullText)}\n\n`;
+    } else if (item.summary) {
+      text += `${escapeHtml(item.summary)}\n\n`;
+    }
+  } else {
+    if (showBadge) {
+      text += `${badgeEmoji} <b>« ${badgeTitle} »</b>\n`;
+      text += `📌 <b>${escapeHtml(item.title)}</b>\n\n`;
+    } else {
+      text += `🔹 <b>${escapeHtml(item.title)}</b>\n\n`;
+    }
+    
+    if (item.summary) {
+      text += `<blockquote>${escapeHtml(item.summary)}</blockquote>\n\n`;
+    }
+    if (item.fullText && item.fullText !== item.summary) {
+      text += `${escapeHtml(item.fullText)}\n\n`;
+    }
   }
 
   if (item.source) {
@@ -6453,6 +6486,81 @@ function recordTrickPostSuccess(item: TechItem, channelNum: 1 | 2) {
   }
 }
 
+/**
+ * Helper to get all banned handles, brandings, bot usernames, and promotional texts of Channel 1
+ * so they can be strictly stripped from Channel 2 posts.
+ */
+function getChannel2SanitizationBannedHandles(): string[] {
+  const banned: string[] = [];
+  const ap = db.settings?.autoPost;
+
+  // Channel 1 targetChannel
+  const ch1Target = (ap?.targetChannel || '').replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').trim().toLowerCase();
+  if (ch1Target) banned.push(ch1Target);
+
+  // Channel 1 branding
+  const ch1Branding = (db.settings?.branding || '').replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').trim().toLowerCase();
+  if (ch1Branding) banned.push(ch1Branding);
+
+  // Channel 1 adText handles
+  const ch1Ad = (ap?.adText || '').trim();
+  if (ch1Ad) {
+    const handleMatches = ch1Ad.match(/@[a-zA-Z0-9_]+/g);
+    if (handleMatches) {
+      handleMatches.forEach(m => banned.push(m.replace(/^@/, '').toLowerCase()));
+    }
+    const cleanAd = ch1Ad.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').trim().toLowerCase();
+    if (cleanAd && cleanAd.length >= 3) banned.push(cleanAd);
+  }
+
+  // Bot username
+  const botUser = (db.settings?.botUsername || '').replace(/^@/, '').trim().toLowerCase();
+  if (botUser) banned.push(botUser);
+
+  // Force join channels for Channel 1
+  if (db.forceJoinChannels) {
+    db.forceJoinChannels.forEach(c => {
+      const h = (c.username || '').replace(/^@+/, '').trim().toLowerCase();
+      if (h) banned.push(h);
+    });
+  }
+
+  // Also ban default placeholder
+  banned.push('mychannel2');
+
+  return banned;
+}
+
+/**
+ * Returns clean and strictly isolated branding / ad text for a channel.
+ * Guarantees that Channel 2 NEVER inherits Channel 1's branding or ads.
+ */
+function getEffectiveChannelBranding(channelNum: 1 | 2, targetChannel?: string, customAdText?: string): string {
+  const isCh2 = channelNum === 2;
+  const ap = db.settings?.autoPost;
+  const c2 = ap?.channel2;
+
+  if (isCh2) {
+    let rawCh2Ad = (customAdText || c2?.adText || '').trim();
+    const ch1Handle = (ap?.targetChannel || '').replace(/^@/, '').toLowerCase().trim();
+    const ch1Branding = (db.settings?.branding || '').toLowerCase().trim();
+    const ch1Ad = (ap?.adText || '').toLowerCase().trim();
+    const ch1Bot = (db.settings?.botUsername || '').replace(/^@/, '').toLowerCase().trim();
+
+    if (rawCh2Ad.toLowerCase().includes('mychannel2')) rawCh2Ad = '';
+    if (ch1Handle && rawCh2Ad.toLowerCase().includes(ch1Handle)) rawCh2Ad = '';
+    if (ch1Branding && rawCh2Ad.toLowerCase().includes(ch1Branding)) rawCh2Ad = '';
+    if (ch1Ad && rawCh2Ad.toLowerCase().includes(ch1Ad)) rawCh2Ad = '';
+    if (ch1Bot && rawCh2Ad.toLowerCase().includes(ch1Bot)) rawCh2Ad = '';
+
+    if (rawCh2Ad) return rawCh2Ad;
+    const ch2Target = targetChannel || c2?.targetChannel;
+    return ch2Target ? (ch2Target.startsWith('@') ? ch2Target : `@${ch2Target.replace('@', '')}`) : '';
+  }
+
+  return (customAdText || ap?.adText || db.settings?.branding || '').trim();
+}
+
 // ---------------------------------------------------------------------------
 // ROUND-ROBIN SOURCE ROTATION & MULTI-CHANNEL CONTENT SELECTOR
 // Ensures consecutive posts cycle through DIFFERENT source channels
@@ -6761,17 +6869,7 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       return false;
     }
 
-    let channelBranding = '';
-    if (isCh2) {
-      let rawCh2Ad = (settings.adText || '').trim();
-      const ch1Handle = (db.settings.autoPost?.targetChannel || '').replace(/^@/, '').toLowerCase().trim();
-      const ch1Branding = (db.settings.branding || '').toLowerCase().trim();
-      if (ch1Handle && rawCh2Ad.toLowerCase().includes(ch1Handle)) rawCh2Ad = '';
-      if (ch1Branding && rawCh2Ad.toLowerCase().includes(ch1Branding)) rawCh2Ad = '';
-      channelBranding = rawCh2Ad;
-    } else {
-      channelBranding = settings.adText || db.settings.branding || '';
-    }
+    let channelBranding = getEffectiveChannelBranding(channelTargetNum, targetChannel, settings.adText);
 
     // Collect top countries for headline
     const countryBadges: string[] = [];
@@ -6787,20 +6885,24 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
     const countryFlagsStr = countryBadges.slice(0, 4).join(' ');
 
     // Check if Fun + Config combined mode is active (channel 1 or 2)
-    const isFunWithConfig = settings.funWithConfigEnabled === true;
+    // For Channel 1: enabled by default unless explicitly disabled (settings.funWithConfigEnabled !== false)
+    // For Channel 2: enabled if explicitly configured (settings.funWithConfigEnabled === true)
+    const isFunWithConfig = channelTargetNum === 1
+      ? (settings.funWithConfigEnabled !== false)
+      : (settings.funWithConfigEnabled === true);
     let attachedFunItem: FunNewsItem | null = null;
 
     if (isFunWithConfig) {
-      // Check if Channel 2 has dedicated source channels configured by user
-      const ch2DedicatedSources = (isCh2 && Array.isArray(db.settings.autoPost?.channel2?.sourceChannels) && db.settings.autoPost.channel2.sourceChannels.length > 0)
+      // Source channels configured for Channel 2 (dedicated fun/content channels specified by user)
+      const ch2DedicatedSources = (Array.isArray(db.settings.autoPost?.channel2?.sourceChannels) && db.settings.autoPost.channel2.sourceChannels.length > 0)
         ? db.settings.autoPost.channel2.sourceChannels
             .map(s => s.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim())
             .filter(Boolean)
         : [];
 
       let funChannelHandles: string[] = [];
-      if (isCh2 && ch2DedicatedSources.length > 0) {
-        // Strictly use user-specified Channel 2 source channels
+      if (ch2DedicatedSources.length > 0) {
+        // Strictly prioritize channels configured for Channel 2
         funChannelHandles = ch2DedicatedSources;
       } else {
         const enabledFunSources = (db.funSources || []).filter(s => s.enabled);
@@ -6812,33 +6914,66 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
 
       let eligibleFun = (db.funNewsItems || []).filter(item => {
         if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
+        if (isTelegramSourceAd(item.text, item.title).isAd) return false;
+        const cleanT = sanitizeContentForTelegramPost(item.text, targetChannel);
+        if (!cleanT && !item.imageUrl && !item.videoUrl) return false;
+        if (cleanT.length < 12 && !item.imageUrl && !item.videoUrl) return false;
+        if (isTelegramSourceAd(cleanT, item.title).isAd) return false;
         const itemSrc = (item.sourceChannel || '')
           .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
           .replace(/^@+/, '')
           .toLowerCase()
           .trim();
         if (funChannelHandles.length > 0 && !funChannelHandles.includes(itemSrc)) return false;
-        if (ch2DedicatedSources.length === 0 && item.category !== 'fun') return false;
         return true;
       });
 
       // If available unposted fun items are low (< 3), automatically scrape fresh items from the sources
       if (eligibleFun.length < 3) {
         try {
-          await extractFunNewsFromSources(undefined, ch2DedicatedSources.length > 0 ? ch2DedicatedSources : undefined);
+          await extractFunNewsFromSources(undefined, ch2DedicatedSources.length > 0 ? ch2DedicatedSources : (funChannelHandles.length > 0 ? funChannelHandles : undefined));
           eligibleFun = (db.funNewsItems || []).filter(item => {
             if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
+            if (isTelegramSourceAd(item.text, item.title).isAd) return false;
+            const cleanT = sanitizeContentForTelegramPost(item.text, targetChannel);
+            if (!cleanT && !item.imageUrl && !item.videoUrl) return false;
+            if (cleanT.length < 12 && !item.imageUrl && !item.videoUrl) return false;
+            if (isTelegramSourceAd(cleanT, item.title).isAd) return false;
             const itemSrc = (item.sourceChannel || '')
               .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
               .replace(/^@+/, '')
               .toLowerCase()
               .trim();
             if (funChannelHandles.length > 0 && !funChannelHandles.includes(itemSrc)) return false;
-            if (ch2DedicatedSources.length === 0 && item.category !== 'fun') return false;
             return true;
           });
         } catch (e) {
           // ignore extraction error
+        }
+      }
+
+      // If all items have already been posted to this channel, recycle clean items so post is never left without fun content
+      if (eligibleFun.length === 0) {
+        const cleanRecyclable = (db.funNewsItems || []).filter(item => {
+          if (isTelegramSourceAd(item.text, item.title).isAd) return false;
+          const cleanT = sanitizeContentForTelegramPost(item.text, targetChannel);
+          if (!cleanT && !item.imageUrl && !item.videoUrl) return false;
+          if (cleanT.length < 12 && !item.imageUrl && !item.videoUrl) return false;
+          if (isTelegramSourceAd(cleanT, item.title).isAd) return false;
+          const itemSrc = (item.sourceChannel || '')
+            .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
+            .replace(/^@+/, '')
+            .toLowerCase()
+            .trim();
+          if (funChannelHandles.length > 0 && !funChannelHandles.includes(itemSrc)) return false;
+          return true;
+        });
+        if (cleanRecyclable.length > 0) {
+          cleanRecyclable.forEach(it => {
+            if (isCh2) it.postedToChannel2 = false;
+            else it.postedToChannel1 = false;
+          });
+          eligibleFun = cleanRecyclable;
         }
       }
 
@@ -6847,6 +6982,9 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
         const pickedList = selectFunNewsItemsWithRoundRobin(eligibleFun, 1, channelTargetNum);
         if (pickedList.length > 0) {
           attachedFunItem = pickedList[0];
+          if (isTelegramSourceAd(attachedFunItem.text, attachedFunItem.title).isAd) {
+            attachedFunItem = null;
+          }
         }
       }
     }
@@ -6857,15 +6995,30 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
           ? `⚡ ${attachedFunItem.title}` 
           : `${countryFlagsStr || '🚀'} سرورهای پرسرعت V2Ray [ضدفیلتر و پایدار]`);
 
+    const skipSummary = isCh2 || settings?.skipPostSummary === true;
     let text = '';
     if (attachedFunItem) {
-      text += `🎭 <b>${escapeHtml(attachedFunItem.title || 'لبخند روزانه')}</b>\n`;
-      text += `━━━━━━━━━━━━━━━━━━━━\n`;
-      if (attachedFunItem.text && attachedFunItem.text !== attachedFunItem.title) {
-        text += `${escapeHtml(attachedFunItem.text.slice(0, 400))}\n\n`;
+      const cleanFunText = sanitizeContentForTelegramPost(attachedFunItem.text || '', targetChannel);
+      const cleanFunTitle = sanitizePostTitle(attachedFunItem.title || '', targetChannel);
+      if (isTelegramSourceAd(cleanFunText, cleanFunTitle).isAd) {
+        attachedFunItem = null;
+      } else if (skipSummary) {
+        if (cleanFunText) {
+          text += `${escapeHtml(cleanFunText.slice(0, 500))}\n\n`;
+        } else if (cleanFunTitle) {
+          text += `${escapeHtml(cleanFunTitle)}\n\n`;
+        }
+        text += `🎁 <b>کانفیگ هدیه همراه با این پست 👇</b>\n`;
+        text += `📶 <b>تست‌شده روی تمام اپراتورها 🟢</b>\n\n`;
+      } else {
+        text += `🎭 <b>${escapeHtml(cleanFunTitle || 'لبخند روزانه')}</b>\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━\n`;
+        if (cleanFunText && cleanFunText !== cleanFunTitle) {
+          text += `${escapeHtml(cleanFunText.slice(0, 400))}\n\n`;
+        }
+        text += `🎁 <b>کانفیگ هدیه همراه با این پست 👇</b>\n`;
+        text += `📶 <b>تست‌شده روی تمام اپراتورها 🟢</b>\n\n`;
       }
-      text += `🎁 <b>کانفیگ هدیه همراه با این پست 👇</b>\n`;
-      text += `📶 <b>تست‌شده روی تمام اپراتورها 🟢</b>\n\n`;
     } else {
       text += `⚡ <b>${escapeHtml(dynamicHeadline)}</b>\n`;
       text += `━━━━━━━━━━━━━━━━━━━━\n`;
@@ -6898,7 +7051,8 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       }
 
       // Generate all branded configs
-      const allBrandedList = selectedConfigs.map(conf => applyBrandingToConfig(conf.raw, channelBranding || db.settings.branding));
+      const effectiveRemarkBranding = isCh2 ? channelBranding : (channelBranding || db.settings.branding);
+      const allBrandedList = selectedConfigs.map(conf => applyBrandingToConfig(conf.raw, effectiveRemarkBranding));
       fullPackConfigsContent = allBrandedList.join('\n');
 
       let inlineBatch = '';
@@ -7263,16 +7417,29 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
 
     const selectedNews = eligibleNews.slice(0, count);
 
+    const skipSummary = isCh2 || settings?.skipPostSummary === true;
     let text = '';
     if (selectedNews.length === 1) {
       const it = selectedNews[0];
       const isBreaking = it.importance === 'breaking';
       const badge = isBreaking ? 'خبر فوری و مهم' : 'تازه‌های تکنولوژی و هوش مصنوعی';
-      text += `${isBreaking ? '🚨' : '🔥'} <b>${escapeHtml(it.title)}</b>\n`;
-      text += `━━━━━━━━━━━━━━━━━━━━\n`;
-      text += `📰 <i>« ${badge} »</i>\n\n`;
-      if (it.summary) {
-        text += `<blockquote>${escapeHtml(it.summary)}</blockquote>\n\n`;
+      if (skipSummary) {
+        text += `${isBreaking ? '🚨' : '🔥'} <b>${escapeHtml(it.title)}</b>\n\n`;
+        if (it.fullText) {
+          text += `${escapeHtml(it.fullText)}\n\n`;
+        } else if (it.summary) {
+          text += `${escapeHtml(it.summary)}\n\n`;
+        }
+      } else {
+        text += `${isBreaking ? '🚨' : '🔥'} <b>${escapeHtml(it.title)}</b>\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━\n`;
+        text += `📰 <i>« ${badge} »</i>\n\n`;
+        if (it.summary) {
+          text += `<blockquote>${escapeHtml(it.summary)}</blockquote>\n\n`;
+        }
+        if (it.fullText && it.fullText !== it.summary) {
+          text += `${escapeHtml(it.fullText)}\n\n`;
+        }
       }
       if (it.source) {
         text += `🔍 منبع: <i>${escapeHtml(it.source)}</i>\n`;
@@ -7285,22 +7452,12 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
       text = `🔥 <b>تازه‌ترین اخبار دنیای تکنولوژی و هوش مصنوعی:</b>\n\n`;
       for (let i = 0; i < selectedNews.length; i++) {
         const it = selectedNews[i];
-        text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false);
+        text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false, skipSummary);
         if (i < selectedNews.length - 1) text += `\n───────────────\n\n`;
       }
     }
 
-    let channelBranding = '';
-    if (isCh2) {
-      let rawCh2Ad = (settings.adText || '').trim();
-      const ch1Handle = (db.settings.autoPost?.targetChannel || '').replace(/^@/, '').toLowerCase().trim();
-      const ch1Branding = (db.settings.branding || '').toLowerCase().trim();
-      if (ch1Handle && rawCh2Ad.toLowerCase().includes(ch1Handle)) rawCh2Ad = '';
-      if (ch1Branding && rawCh2Ad.toLowerCase().includes(ch1Branding)) rawCh2Ad = '';
-      channelBranding = rawCh2Ad;
-    } else {
-      channelBranding = settings.adText || db.settings.branding || '';
-    }
+    let channelBranding = getEffectiveChannelBranding(channelTargetNum, targetChannel, settings.adText);
 
     if (channelBranding) {
       text += `\n🆔 ${escapeHtml(channelBranding)}`;
@@ -7447,6 +7604,7 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
 
     const selectedTricks = eligibleTricks.slice(0, count);
 
+    const skipSummary = isCh2 || settings?.skipPostSummary === true;
     let text = '';
     if (selectedTricks.length === 1) {
       const it = selectedTricks[0];
@@ -7457,11 +7615,23 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
                       it.title.includes('اپل');
       const icon = isApple ? '🍏' : '💡';
       const categoryBadge = isApple ? 'ترفند محرمانه و اختصاصی آیفون (iOS)' : 'آموزش و ترفند طلایی موبایل';
-      text += `${icon} <b>${escapeHtml(it.title)}</b>\n`;
-      text += `━━━━━━━━━━━━━━━━━━━━\n`;
-      text += `📱 <i>« ${categoryBadge} »</i>\n\n`;
-      if (it.summary) {
-        text += `<blockquote>${escapeHtml(it.summary)}</blockquote>\n\n`;
+      if (skipSummary) {
+        text += `${icon} <b>${escapeHtml(it.title)}</b>\n\n`;
+        if (it.fullText) {
+          text += `${escapeHtml(it.fullText)}\n\n`;
+        } else if (it.summary) {
+          text += `${escapeHtml(it.summary)}\n\n`;
+        }
+      } else {
+        text += `${icon} <b>${escapeHtml(it.title)}</b>\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━\n`;
+        text += `📱 <i>« ${categoryBadge} »</i>\n\n`;
+        if (it.summary) {
+          text += `<blockquote>${escapeHtml(it.summary)}</blockquote>\n\n`;
+        }
+        if (it.fullText && it.fullText !== it.summary) {
+          text += `${escapeHtml(it.fullText)}\n\n`;
+        }
       }
       if (it.source) {
         text += `🔍 منبع: <i>${escapeHtml(it.source)}</i>\n`;
@@ -7474,22 +7644,12 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
       text = `💡 <b>ترفندها، رازها و آموزش‌های کاربردی موبایل و امنیت:</b>\n\n`;
       for (let i = 0; i < selectedTricks.length; i++) {
         const it = selectedTricks[i];
-        text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false);
+        text += formatTechItemForTelegram(it, settings.includeTechImportanceBadge !== false, skipSummary);
         if (i < selectedTricks.length - 1) text += `\n───────────────\n\n`;
       }
     }
 
-    let channelBranding = '';
-    if (isCh2) {
-      let rawCh2Ad = (settings.adText || '').trim();
-      const ch1Handle = (db.settings.autoPost?.targetChannel || '').replace(/^@/, '').toLowerCase().trim();
-      const ch1Branding = (db.settings.branding || '').toLowerCase().trim();
-      if (ch1Handle && rawCh2Ad.toLowerCase().includes(ch1Handle)) rawCh2Ad = '';
-      if (ch1Branding && rawCh2Ad.toLowerCase().includes(ch1Branding)) rawCh2Ad = '';
-      channelBranding = rawCh2Ad;
-    } else {
-      channelBranding = settings.adText || db.settings.branding || '';
-    }
+    let channelBranding = getEffectiveChannelBranding(channelTargetNum, targetChannel, settings.adText);
 
     if (channelBranding) {
       text += `\n🆔 ${escapeHtml(channelBranding)}`;
@@ -7885,7 +8045,7 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
 // 5. DEDICATED EXECUTOR: DIGITAL TOOLS & FUTURE-PROOF TECH HUB AUTO-POST
 // (استراتژی رشد کانال ۱ و عدم وابستگی به پروکسی و فیلترینگ)
 // ----------------------------------------------------
-function formatDigitalToolForTelegram(item: DigitalToolItem): string {
+function formatDigitalToolForTelegram(item: DigitalToolItem, skipSummary = false): string {
   let badgeEmoji = '🛠️';
   let catTitle = 'جعبه ابزار دیجیتال و کاربردی';
   if (item.category === 'ai_tools') {
@@ -7906,11 +8066,17 @@ function formatDigitalToolForTelegram(item: DigitalToolItem): string {
   }
 
   let text = '';
-  text += `${badgeEmoji} <b>« ${catTitle} »</b>\n`;
-  text += `📌 <b>${escapeHtml(item.title)}</b>\n\n`;
-
-  if (item.summary) {
-    text += `<blockquote>${escapeHtml(item.summary)}</blockquote>\n\n`;
+  if (skipSummary) {
+    text += `🛠️ <b>${escapeHtml(item.title)}</b>\n\n`;
+    if (item.summary) {
+      text += `${escapeHtml(item.summary)}\n\n`;
+    }
+  } else {
+    text += `${badgeEmoji} <b>« ${catTitle} »</b>\n`;
+    text += `📌 <b>${escapeHtml(item.title)}</b>\n\n`;
+    if (item.summary) {
+      text += `<blockquote>${escapeHtml(item.summary)}</blockquote>\n\n`;
+    }
   }
 
   if (item.howToUse) {
@@ -8003,11 +8169,19 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
       else if (it.category === 'cyber_security') catTitle = 'امنیت سایبری و ضد هک';
       else if (it.category === 'must_apps') catTitle = 'اپلیکیشن شاهکار و ضروری';
 
-      text += `🛠️ <b>${escapeHtml(it.title)}</b>\n`;
-      text += `━━━━━━━━━━━━━━━━━━━━\n`;
-      text += `🚀 <i>« ${catTitle} »</i>\n\n`;
-      if (it.summary) {
-        text += `<blockquote>${escapeHtml(it.summary)}</blockquote>\n\n`;
+      const skipSummary = isCh2 || settings?.skipPostSummary === true;
+      if (skipSummary) {
+        text += `🛠️ <b>${escapeHtml(it.title)}</b>\n\n`;
+        if (it.summary) {
+          text += `${escapeHtml(it.summary)}\n\n`;
+        }
+      } else {
+        text += `🛠️ <b>${escapeHtml(it.title)}</b>\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━\n`;
+        text += `🚀 <i>« ${catTitle} »</i>\n\n`;
+        if (it.summary) {
+          text += `<blockquote>${escapeHtml(it.summary)}</blockquote>\n\n`;
+        }
       }
       if (it.howToUse) {
         text += `📝 <b>راهنما و ترفند استفاده:</b>\n<i>${escapeHtml(it.howToUse)}</i>\n\n`;
@@ -8020,25 +8194,16 @@ async function executeDigitalToolsAutoPost(channelTargetNum: 1 | 2 = 1, customTa
         text += `🏷 <i>${formattedTags}</i>\n`;
       }
     } else {
+      const skipSummary = isCh2 || settings?.skipPostSummary === true;
       text = `🚀 <b>محتوای کاربردی و جعبه‌ابزار دیجیتال:</b>\n\n`;
       for (let i = 0; i < selectedTools.length; i++) {
         const it = selectedTools[i];
-        text += formatDigitalToolForTelegram(it);
+        text += formatDigitalToolForTelegram(it, skipSummary);
         if (i < selectedTools.length - 1) text += `\n───────────────\n\n`;
       }
     }
 
-    let channelBranding = '';
-    if (isCh2) {
-      let rawCh2Ad = (settings.adText || '').trim();
-      const ch1Handle = (db.settings.autoPost?.targetChannel || '').replace(/^@/, '').toLowerCase().trim();
-      const ch1Branding = (db.settings.branding || '').toLowerCase().trim();
-      if (ch1Handle && rawCh2Ad.toLowerCase().includes(ch1Handle)) rawCh2Ad = '';
-      if (ch1Branding && rawCh2Ad.toLowerCase().includes(ch1Branding)) rawCh2Ad = '';
-      channelBranding = rawCh2Ad;
-    } else {
-      channelBranding = settings.adText || db.settings.branding || '';
-    }
+    let channelBranding = getEffectiveChannelBranding(channelTargetNum, targetChannel, settings.adText);
 
     if (channelBranding) {
       text += `\n🆔 ${escapeHtml(channelBranding)}`;
@@ -8481,10 +8646,172 @@ export function applyPollRecommendationsToSettings(): { applied: string[]; setti
 // 5. DEDICATED EXECUTOR: FUN & GENERAL NEWS AUTO-POST
 // ----------------------------------------------------
 // ----------------------------------------------------
-// CONTENT SANITIZATION HELPERS (STRIP SOURCE GROUP/CHANNEL IDS & ADS)
+// CONTENT SANITIZATION & AD DETECTION HELPERS (STRIP SOURCE GROUP/CHANNEL IDS & ADS)
 // ----------------------------------------------------
 function escapeRegex(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Comprehensive detector for advertisements, sponsors, scam jobs, crypto scams, betting,
+ * commercial products, and clickbait join traps from source channels.
+ */
+function isTelegramSourceAd(
+  text: string,
+  title?: string,
+  rawHtml?: string
+): { isAd: boolean; reason?: string } {
+  if (!text && !title && !rawHtml) return { isAd: false };
+
+  const combined = `${title || ''}\n${text || ''}\n${rawHtml || ''}`.toLowerCase();
+
+  // 1. Gambling, Casino & Betting (شرط‌بندی، پیش‌بینی، کازینو، انفجار)
+  const bettingPatterns = [
+    '1xbet', '۱xbet', 'وان ایکس', 'بت فوروارد', 'betforward', 'melbet', 'مل بت',
+    'pinbahis', 'پین باهیس', 'bet365', 'بت ۳۶۵', 'توتوبال', 'تاینی بت', 'حضرات',
+    'پویان مختاری', 'هات بت', 'پیش بینی فوتبال', 'پیش‌بینی فوتبال', 'پیش بینی مسابقات',
+    'شرط بندی', 'شرط‌بندی', 'سایت پیش بینی', 'سایت پیش‌بینی', 'سایت شرط بندی', 'بازی انفجار',
+    'انفجار ۲', 'انفجار2', 'کازینو آنلاین', 'کازینو زنده', 'رولت آنلاین', 'پوکر آنلاین',
+    'تخته نرد پولی', 'تخته نرد آنلاین پولی', 'واریز آنی', 'برداشت آنی', 'بونوس ویژه',
+    'بونوس ۱۰۰', 'بونوس 100', 'ضریب بالا', 'ثبت نام بدون فیلتر', 'لینک ثبت نام:',
+    'ثبت نام در سایت', 'واریز و برداشت سریع', 'پیش بینی زنده'
+  ];
+  for (const p of bettingPatterns) {
+    if (combined.includes(p)) {
+      return { isAd: true, reason: `قمار و شرط‌بندی (${p})` };
+    }
+  }
+
+  // 2. Crypto Spam, Telegram Bot Referral Links, Mining & Airdrop spam
+  if (
+    /t\.me\/[a-zA-Z0-9_]+bot\?start=/i.test(combined) ||
+    /start=r[p_]/i.test(combined) ||
+    /start=ref/i.test(combined) ||
+    /startapp=/i.test(combined) ||
+    combined.includes('notcoin_bot') ||
+    combined.includes('hamster_kombat') ||
+    combined.includes('tapswap_bot') ||
+    combined.includes('major_bot') ||
+    combined.includes('blum_bot') ||
+    combined.includes('dogs_bot')
+  ) {
+    return { isAd: true, reason: 'لینک ریفرال ربات تلگرام / ایردراپ' };
+  }
+
+  const cryptoSpamPatterns = [
+    'سیگنال فیوچرز', 'سیگنال رایگان', 'سیگنال vip', 'کانال vip', 'کانال وی آی پی',
+    'عضویت در vip', 'پامپ ارز', 'شت کوین', 'سود تضمینی', 'سود قطعی', 'سود روزانه',
+    'درآمد دلاری', 'درآمد روزانه', 'کسب درآمد میلیونی', 'درآمد اینترنتی', 'کسب درآمد در خانه',
+    'میلیونر شو', 'ایردراپ قطعی', 'استخراج ابری', 'ماینینگ ابری', 'ربات ماینر',
+    'کد مورس امروز', 'کارت های امروز همستر', 'کمبو امروز', 'پروژه سودده', 'توکن رایگان'
+  ];
+  for (const p of cryptoSpamPatterns) {
+    if (combined.includes(p)) {
+      return { isAd: true, reason: `تبلیغ ارز دیجیتال و سود کاذب (${p})` };
+    }
+  }
+
+  // 3. Employment & Online Job Scams (استخدام، فروش تلفنی، نیازمند ادمین)
+  const jobScamPatterns = [
+    'نیازمند ادمین', 'به ادمین', 'استخدام ادمین', 'ادمین تلگرام نیازمندیم',
+    'کار در منزل', 'کار دانشجویی', 'فروش تلفنی', 'کار فروش تلفنی',
+    'کار پاره وقت', 'استخدام فوری', 'درآمد ساعتی', 'ساعتی ۱ میلیون', 'ساعتی ۱میلیون',
+    'ساعتی 1 میلیون', 'ساعتی 1میلیون', 'پاسخگویی دایرکت', 'پاسخگویی تلگرام',
+    'کسب درآمد آسان', 'استخدام غیرحضوری', 'شغل دوم پردرآمد', 'حقوق ساعتی'
+  ];
+  for (const p of jobScamPatterns) {
+    if (combined.includes(p)) {
+      return { isAd: true, reason: `تبلیغ کار غیرواقعی و استخدام (${p})` };
+    }
+  }
+
+  // 4. Commercial Sales, Jewelry, Miracle Products (طلا، فروشگاه، تخفیف، لاغری)
+  const commercialPatterns = [
+    'گالری طلا', 'طلاهای سبک', 'خرید آنلاین', 'ارسال رایگان به سراسر کشور',
+    'ارسال به سراسر کشور', 'پرداخت درب منزل', 'جهت سفارش به آیدی', 'ثبت سفارش از طریق',
+    'کد تخفیف:', 'تخفیف به مدت محدود', 'حراج واقعی', 'فروش ویژه به مدت',
+    'پکیج لاغری', 'پکیج افزایش قد', 'کاهش وزن بدون بازگشت', 'چربی سوز قوی',
+    'درمان قطعی ریزش مو', 'روغن خراطین اصل', 'کرم معجزه اصل', 'مشاوره رایگان قبل از خرید',
+    'قیمت فقط'
+  ];
+  for (const p of commercialPatterns) {
+    if (combined.includes(p)) {
+      return { isAd: true, reason: `تبلیغ فروشگاهی و تجاری (${p})` };
+    }
+  }
+
+  // 5. VPN & Config Commercial Sales (فروش فیلترشکن، خرید اکانت)
+  const vpnSalesPatterns = [
+    'فروش vpn', 'خرید vpn', 'فروش فیلترشکن', 'خرید فیلترشکن', 'خرید کانفیگ',
+    'فروش کانفیگ', 'کانفیگ اختصاصی', 'اکانت اختصاصی v2ray', 'سرور اختصاصی v2ray',
+    'فروش اکانت', 'خرید اکانت', 'اکانت قانونی', 'تست رایگان vpn', 'برای خرید پیام دهید',
+    'جهت خرید به آیدی', 'لیست قیمت اکانت', 'تعرفه اشتراک', 'تحویل آنی اکانت'
+  ];
+  for (const p of vpnSalesPatterns) {
+    if (combined.includes(p)) {
+      return { isAd: true, reason: `فروش فیلترشکن و اکانت (${p})` };
+    }
+  }
+
+  // 6. Source Ad Inquiries & Sponsorships (سفارش و تعرفه تبلیغ منبع)
+  const sourceAdPatterns = [
+    'سفارش تبلیغ', 'تعرفه تبلیغ', 'رزرو تبلیغ', 'پذیرش تبلیغ', 'هزینه تبلیغ',
+    'ادمین تبلیغ', 'تبلیغات پربازده', 'تبلیغات ارزان', 'پلن تبلیغاتی', 'تبلیغات گسترده',
+    'پست اسپانسری', 'اسپانسر این پست', 'حامی مالی این پست', 'تبادل تبلیغ', 'تعرفه و رزرو',
+    'سفارش تبلیغات', 'رزرو تبلیغات', 'admin تبلیغات', 'akharinkhabarads', 'سفارش تبلیغات:'
+  ];
+  for (const p of sourceAdPatterns) {
+    if (combined.includes(p)) {
+      return { isAd: true, reason: `تعرفه و سفارش تبلیغات منبع (${p})` };
+    }
+  }
+
+  // 7. Clickbaits & Forced Joins (تله‌های ممبرگیری و مشاهده در کانال دیگر)
+  const clickbaitPatterns = [
+    'ادامه در کانال', 'ادامه مطلب در کانال', 'مشاهده ادامه کلیپ در کانال',
+    'فیلم کامل در کانال', 'مشاهده کامل در کانال', 'برای دیدن فیلم بدون سانسور',
+    'فیلم بدون سانسور در کانال', 'دانلود در کانال زیر', 'دانلود مستقیم از کانال',
+    'پارت دوم در کانال', 'قسمت دوم در کانال', 'پارت بعدی در کانال',
+    'منبع کلیپ در کانال', 'کانال زاپاس', 'کانال پشتیبان', 'کانال دوم ما',
+    'عضویت الزامیست', 'جهت عضویت کلیک کنید', 'برای عضویت بزنید رو لینک',
+    'کلیک کنید 👇', 'ورود به کانال 👇', 'لینک ورود 👇', 'لینک عضویت 👇',
+    'بزن رو لینک', 'بزنید رو لینک', 'عضو شوید 👇', 'مشاهده ویدیو کامل'
+  ];
+  for (const p of clickbaitPatterns) {
+    if (combined.includes(p)) {
+      return { isAd: true, reason: `تله ممبرگیری و جوین اجباری (${p})` };
+    }
+  }
+
+  // 8. Adult & Hookup Scams (صیغه، همسریابی، دوست‌یابی)
+  const adultPatterns = [
+    'صیغه', 'همسریابی', 'دوست یابی', 'چت روم', 'دختر خاله', 'خاله‌جان',
+    'عکس سکسی', 'فیلم سوپر', 'کانال خاکبرسری', 'داستان شبانه', 'فیلم های ممنوعه',
+    'سکس چت'
+  ];
+  for (const p of adultPatterns) {
+    if (combined.includes(p)) {
+      return { isAd: true, reason: `محتوای نامناسب یا غیراخلاقی (${p})` };
+    }
+  }
+
+  // 9. Short posts that are just promotion links or handles
+  const plainText = (text || '').trim();
+  if (plainText.length < 100 && (plainText.includes('t.me/') || plainText.includes('@'))) {
+    if (
+      plainText.includes('عضویت') ||
+      plainText.includes('پیوستن') ||
+      plainText.includes('کانال') ||
+      plainText.includes('ورود') ||
+      plainText.includes('پروکسی') ||
+      plainText.includes('ساعتی') ||
+      plainText.includes('میلیون')
+    ) {
+      return { isAd: true, reason: 'پست کوتاه تبلیغاتی یا معرفی کانال/پروکسی' };
+    }
+  }
+
+  return { isAd: false };
 }
 
 /**
@@ -8533,6 +8860,17 @@ function sanitizeContentForTelegramPost(
 
   const cleanTarget = (targetChannelHandle || '').replace(/^@+/, '').toLowerCase().trim();
 
+  // If posting to Channel 2 (or any target that is not Channel 1), purge Channel 1's branding, handles, and ads
+  const ch1BannedHandles = getChannel2SanitizationBannedHandles();
+  const isNotCh1Target = cleanTarget !== (db.settings?.autoPost?.targetChannel || '').replace(/^@+/, '').toLowerCase().trim();
+  if (isNotCh1Target) {
+    for (const b of ch1BannedHandles) {
+      if (b && b !== cleanTarget) {
+        allSourceHandles.add(b);
+      }
+    }
+  }
+
   // 2. Filter lines
   const lines = text.split('\n');
   const keptLines: string[] = [];
@@ -8548,18 +8886,54 @@ function sanitizeContentForTelegramPost(
 
     const lower = trimmed.toLowerCase();
 
+    // If posting to Channel 2, drop any line that mentions Channel 1's handles or branding
+    if (isNotCh1Target) {
+      let containsCh1Leak = false;
+      for (const b of ch1BannedHandles) {
+        if (b && b.length >= 3 && b !== cleanTarget && lower.includes(b)) {
+          containsCh1Leak = true;
+          break;
+        }
+      }
+      if (containsCh1Leak) continue;
+    }
+
     // Check for ad/promotional patterns
     if (
       lower.includes('سفارش تبلیغ') ||
       lower.includes('تبلیغات') ||
+      lower.includes('تبلیغاتی') ||
       lower.includes('تعرفه تبلیغ') ||
       lower.includes('هزینه تبلیغ') ||
+      lower.includes('رزرو تبلیغ') ||
+      lower.includes('پذیرش تبلیغ') ||
+      lower.includes('ادمین تبلیغ') ||
+      lower.includes('تبلیغات پربازده') ||
       lower.includes('ثبت نام در سایت') ||
       lower.includes('پیش بینی فوتبال') ||
+      lower.includes('پیش‌بینی فوتبال') ||
+      lower.includes('پیش بینی مسابقات') ||
       lower.includes('بازی انفجار') ||
+      lower.includes('کازینو آنلاین') ||
+      lower.includes('کازینو زنده') ||
+      lower.includes('شرط بندی') ||
+      lower.includes('شرط‌بندی') ||
       lower.includes('وان ایکس') ||
       lower.includes('۱xbet') ||
       lower.includes('1xbet') ||
+      lower.includes('betforward') ||
+      lower.includes('بت فوروارد') ||
+      lower.includes('melbet') ||
+      lower.includes('مل بت') ||
+      lower.includes('pinbahis') ||
+      lower.includes('پین باهیس') ||
+      lower.includes('واریز آنی') ||
+      lower.includes('برداشت آنی') ||
+      lower.includes('بونوس') ||
+      lower.includes('اتصال به پروکسی') ||
+      lower.includes('پروکسی پر سرعت') ||
+      lower.includes('پروکسی پرسرعت') ||
+      lower.includes('اتصال سریع به پروکسی') ||
       lower.includes('کانال ما را دنبال کنید') ||
       lower.includes('عضویت در کانال') ||
       lower.includes('عضویت در گروه') ||
@@ -8573,14 +8947,54 @@ function sanitizeContentForTelegramPost(
       lower.includes('لینک چت') ||
       lower.includes('join group') ||
       lower.includes('join channel') ||
-      lower.includes('instagram.com') ||
+      lower.includes('joinchat') ||
+      lower.includes('صفحه اینستاگرام') ||
+      lower.includes('پیج اینستاگرام') ||
+      lower.includes('پیج اینستا') ||
       lower.includes('اینستاگرام:') ||
       lower.includes('اینستاگرام ما') ||
-      lower.includes('پیج اینستا') ||
+      lower.includes('instagram.com') ||
+      lower.includes('سایت ما') ||
+      lower.includes('وبسایت ما') ||
+      lower.includes('وب سایت ما') ||
+      lower.includes('www.') ||
       lower.includes('rubika.ir') ||
       lower.includes('eitaa.com') ||
       lower.includes('ble.ir') ||
-      lower.includes('akharinkhabarads')
+      lower.includes('aparat.com') ||
+      lower.includes('akharinkhabarads') ||
+      lower.includes('channel 🆔') ||
+      lower.includes('channel id') ||
+      lower.includes('نیازمند ادمین') ||
+      lower.includes('به ادمین') ||
+      lower.includes('فروش تلفنی') ||
+      lower.includes('کار در منزل') ||
+      lower.includes('ساعتی۱میلیون') ||
+      lower.includes('ساعتی 1 میلیون') ||
+      lower.includes('گالری طلا') ||
+      lower.includes('طلاهای سبک') ||
+      lower.includes('جهت سفارش به آیدی') ||
+      lower.includes('ثبت سفارش از طریق') ||
+      lower.includes('پرداخت درب منزل') ||
+      lower.includes('کد تخفیف:') ||
+      lower.includes('ارسال رایگان به سراسر') ||
+      lower.includes('سیگنال فیوچرز') ||
+      lower.includes('سیگنال رایگان') ||
+      lower.includes('کانال vip') ||
+      lower.includes('کانال وی آی پی') ||
+      lower.includes('ایردراپ') ||
+      lower.includes('ربات ماینر') ||
+      lower.includes('کد مورس امروز') ||
+      lower.includes('کارت های امروز') ||
+      lower.includes('صیغه') ||
+      lower.includes('همسریابی') ||
+      lower.includes('دوست یابی') ||
+      lower.includes('چت روم') ||
+      lower.includes('ادامه در کانال') ||
+      lower.includes('مشاهده کامل در') ||
+      lower.includes('فیلم کامل در') ||
+      lower.includes('پارت دوم در') ||
+      lower.includes('بدون سانسور در')
     ) {
       continue;
     }
@@ -8650,6 +9064,48 @@ function sanitizeContentForTelegramPost(
     }
   }
 
+  // 3. Strip trailing promotional/credit/divider blocks from the end of the post
+  while (keptLines.length > 0) {
+    const last = keptLines[keptLines.length - 1].trim();
+    const lastLower = last.toLowerCase();
+    if (
+      !last ||
+      /^[━─\-=_•*~#\s]+$/.test(last) ||
+      /^[🆔📢🔗📡👉📍👈🔹🔺🔻▪️▫️•\-\*\s]+$/.test(last) ||
+      /^[👇⬇️🔽👇🏻👇🏼👇🏽👇🏾👇🏿\s]+$/.test(last) ||
+      lastLower.includes('منبع') ||
+      lastLower.includes('کانال') ||
+      lastLower.includes('source') ||
+      lastLower.includes('channel') ||
+      lastLower.includes('اینستاگرام') ||
+      lastLower.includes('instagram') ||
+      lastLower.includes('سایت') ||
+      lastLower.includes('پروکسی') ||
+      lastLower.includes('proxy') ||
+      lastLower.includes('اسپانسر') ||
+      lastLower.includes('sponsor') ||
+      lastLower.includes('تبلیغ') ||
+      lastLower.includes('عضویت') ||
+      lastLower.includes('پیوستن') ||
+      lastLower.includes('t.me/') ||
+      lastLower.startsWith('@')
+    ) {
+      keptLines.pop();
+    } else {
+      break;
+    }
+  }
+
+  // 4. Strip leading divider lines or orphaned arrows if any
+  while (keptLines.length > 0) {
+    const first = keptLines[0].trim();
+    if (!first || /^[━─\-=_•*~#\s]+$/.test(first) || /^[🆔📢🔗📡👉📍👈🔹🔺🔻▪️▫️•\-\*\s]+$/.test(first)) {
+      keptLines.shift();
+    } else {
+      break;
+    }
+  }
+
   return keptLines
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -8664,24 +9120,78 @@ function sanitizePostTitle(title: string, targetChannelHandle?: string): string 
   t = t.replace(/(تصویر جدید از|مطلب سرگرمی از|پست جدید از|خبر جدید از)\s*(@?[\w\d_\u0600-\u06FF]+)/gi, 'مطلب منتخب طنز و روز');
   t = t.replace(/^[🆔📢🔗📡👉📍👈🔹🔺🔻▪️▫️•\-:\s]+/g, '');
   t = t.replace(/\s{2,}/g, ' ').trim();
+
+  // If title itself is an advertisement, neutralize it
+  if (isTelegramSourceAd(t).isAd) {
+    return 'مطلب و سرگرمی روز';
+  }
+
   return t || 'مطلب و خبر روز';
 }
 
-function cleanAllFunNewsItemsInDb(): void {
-  if (!db.funNewsItems || db.funNewsItems.length === 0) return;
-  let changed = false;
+/**
+ * Sweeps the entire funNewsItems database:
+ * 1. Purges any posts identified as commercial/source ads.
+ * 2. Cleans remaining posts from any source branding, links, or ad headers/footers.
+ * 3. Removes posts that became too short or empty after stripping.
+ */
+function purgeAllAdsAndSanitizeFunNewsInDb(): { purged: number; updated: number; remaining: number } {
+  if (!Array.isArray(db.funNewsItems) || db.funNewsItems.length === 0) {
+    return { purged: 0, updated: 0, remaining: 0 };
+  }
+
+  const initialCount = db.funNewsItems.length;
+  const filtered: FunNewsItem[] = [];
+  let updatedCount = 0;
+
   for (const item of db.funNewsItems) {
+    // 1. If detected as ad, completely discard
+    const adCheck = isTelegramSourceAd(item.text, item.title);
+    if (adCheck.isAd) {
+      continue;
+    }
+
+    // 2. Sanitize title and text
     const cleanT = sanitizeContentForTelegramPost(item.text);
     const cleanTitle = sanitizePostTitle(item.title);
+
+    // 3. If after sanitization it is still an ad, discard
+    if (isTelegramSourceAd(cleanT, cleanTitle).isAd) {
+      continue;
+    }
+
+    // 4. If empty or too short (< 12 chars) and has no media, discard
+    if (!cleanT && !item.imageUrl && !item.videoUrl) {
+      continue;
+    }
+    if (cleanT.length < 12 && !item.imageUrl && !item.videoUrl) {
+      continue;
+    }
+
     if (cleanT !== item.text || cleanTitle !== item.title) {
       item.text = cleanT || item.text;
       item.title = cleanTitle || item.title;
-      changed = true;
+      updatedCount++;
+    }
+
+    filtered.push(item);
+  }
+
+  const purgedCount = initialCount - filtered.length;
+  db.funNewsItems = filtered;
+
+  if (purgedCount > 0 || updatedCount > 0) {
+    saveDatabase();
+    if (purgedCount > 0) {
+      addLog('info', `[پاکسازی پایگاه‌داده] تعداد ${purgedCount} مطلب تبلیغاتی کانال‌های منبع با موفقیت شناسایی و برای همیشه حذف گردید.`);
     }
   }
-  if (changed) {
-    saveDatabase();
-  }
+
+  return { purged: purgedCount, updated: updatedCount, remaining: db.funNewsItems.length };
+}
+
+function cleanAllFunNewsItemsInDb(): void {
+  purgeAllAdsAndSanitizeFunNewsInDb();
 }
 
 async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetChannel?: string): Promise<boolean> {
@@ -8714,7 +9224,7 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       db.funNewsItems = [];
     }
 
-    const ch2DedicatedSources = (isCh2 && Array.isArray(db.settings.autoPost?.channel2?.sourceChannels) && db.settings.autoPost.channel2.sourceChannels.length > 0)
+    const ch2DedicatedSources = (Array.isArray(db.settings.autoPost?.channel2?.sourceChannels) && db.settings.autoPost.channel2.sourceChannels.length > 0)
       ? db.settings.autoPost.channel2.sourceChannels
           .map(s => s.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim())
           .filter(Boolean)
@@ -8743,6 +9253,11 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
     let eligible = (db.funNewsItems || []).filter(item => {
       if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
       if (isFunNewsOnLiveOrHistory(item)) return false;
+      if (isTelegramSourceAd(item.text, item.title).isAd) return false;
+      const cleanT = sanitizeContentForTelegramPost(item.text, targetChannel);
+      if (!cleanT && !item.imageUrl && !item.videoUrl) return false;
+      if (cleanT.length < 12 && !item.imageUrl && !item.videoUrl) return false;
+      if (isTelegramSourceAd(cleanT, item.title).isAd) return false;
       if (item.sourceChannel) {
         const handle = item.sourceChannel.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim();
         if (activeHandles.length > 0 && !activeHandles.includes(handle)) return false;
@@ -8758,6 +9273,11 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       eligible = (db.funNewsItems || []).filter(item => {
         if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
         if (isFunNewsOnLiveOrHistory(item)) return false;
+        if (isTelegramSourceAd(item.text, item.title).isAd) return false;
+        const cleanT = sanitizeContentForTelegramPost(item.text, targetChannel);
+        if (!cleanT && !item.imageUrl && !item.videoUrl) return false;
+        if (cleanT.length < 12 && !item.imageUrl && !item.videoUrl) return false;
+        if (isTelegramSourceAd(cleanT, item.title).isAd) return false;
         if (item.sourceChannel) {
           const handle = item.sourceChannel.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim();
           if (activeHandles.length > 0 && !activeHandles.includes(handle)) return false;
@@ -8778,22 +9298,25 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
     // Channel 2 must NEVER inherit Channel 1's branding or handle
-    let adText = '';
-    if (isCh2) {
-      let rawCh2Ad = (ap?.adText || '').trim();
-      const ch1Handle = (db.settings.autoPost?.targetChannel || '').replace(/^@/, '').toLowerCase().trim();
-      const ch1Branding = (db.settings.branding || '').toLowerCase().trim();
-      if (ch1Handle && rawCh2Ad.toLowerCase().includes(ch1Handle)) rawCh2Ad = '';
-      if (ch1Branding && rawCh2Ad.toLowerCase().includes(ch1Branding)) rawCh2Ad = '';
-      adText = rawCh2Ad;
-    } else {
-      adText = ap?.adText || db.settings.branding || '';
-    }
+    const effectiveAd = getEffectiveChannelBranding(channelTargetNum, targetChannel, ap?.adText);
+    const cleanTargetHandle = channelHandle.toLowerCase();
+    const showAdLine = isCh2
+      ? (effectiveAd && effectiveAd.toLowerCase() !== cleanTargetHandle && !effectiveAd.toLowerCase().includes(cleanTargetHandle.replace('@', '')))
+      : (!!effectiveAd && effectiveAd.toLowerCase() !== cleanTargetHandle);
 
+    const skipSummary = isCh2 || ap?.skipPostSummary === true;
     const nowIso = new Date().toISOString();
 
     let anySuccess = false;
     for (const item of selected) {
+      const adCheck = isTelegramSourceAd(item.text, item.title);
+      if (adCheck.isAd) {
+        addLog('warn', `مطلب ${item.id} به دلیل تبلیغاتی بودن (${adCheck.reason || 'تبلیغ منبع'}) از ارسال مسدود گردید.`);
+        if (isCh2) item.postedToChannel2 = true;
+        else item.postedToChannel1 = true;
+        continue;
+      }
+
       const isFun = item.category === 'fun';
       const categoryEmoji = isFun ? '🎭' : '📰';
       const categoryName = isFun ? 'طنز و سرگرمی تلگرام' : 'اخبار عمومی و مهم روز';
@@ -8802,9 +9325,24 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       const sanitizedText = sanitizeContentForTelegramPost(item.text, channelHandle);
       const sanitizedTitle = sanitizePostTitle(item.title, channelHandle);
 
-      let text = `${categoryEmoji} <b>« ${categoryName} »</b>\n`;
-      text += `📌 <b>${escapeHtml(sanitizedTitle)}</b>\n\n`;
-      text += `${escapeHtml(sanitizedText)}\n\n`;
+      if (isTelegramSourceAd(sanitizedText, sanitizedTitle).isAd) {
+        addLog('warn', `مطلب ${item.id} پس از پالایش همچنان حاوی تبلیغ منبع تشخیص داده شد و ارسال نگردید.`);
+        if (isCh2) item.postedToChannel2 = true;
+        else item.postedToChannel1 = true;
+        continue;
+      }
+
+      let text = '';
+      if (skipSummary) {
+        // Without summary block: output clean body text directly
+        text = `${escapeHtml(sanitizedText || sanitizedTitle)}\n\n`;
+      } else {
+        text = `${categoryEmoji} <b>« ${categoryName} »</b>\n`;
+        text += `📌 <b>${escapeHtml(sanitizedTitle)}</b>\n\n`;
+        if (sanitizedText && sanitizedText !== sanitizedTitle) {
+          text += `${escapeHtml(sanitizedText)}\n\n`;
+        }
+      }
 
       if (item.tags && item.tags.length > 0) {
         const formattedTags = item.tags
@@ -8814,8 +9352,8 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
         text += `🏷 <i>${formattedTags}</i>\n`;
       }
 
-      if (adText) {
-        text += `\n📢 <i>${escapeHtml(adText)}</i>\n`;
+      if (showAdLine) {
+        text += `\n📢 <i>${escapeHtml(effectiveAd)}</i>\n`;
       }
       text += `🆔 ${escapeHtml(channelHandle)}`;
 
@@ -8887,7 +9425,28 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
 // DEDICATED CRAWLER: FUN & NEWS TELEGRAM SOURCES
 // ----------------------------------------------------
 function cleanTelegramFunText(rawHtml: string): string {
-  let text = rawHtml
+  // Strip promo links where anchor text contains advertising/action prompts
+  let html = rawHtml.replace(/<a[^>]*href="[^"]*"[^>]*>([\s\S]*?)<\/a>/gi, (match, inner) => {
+    const lower = (inner || '').toLowerCase();
+    if (
+      lower.includes('عضویت') ||
+      lower.includes('کانال') ||
+      lower.includes('پروکسی') ||
+      lower.includes('proxy') ||
+      lower.includes('vpn') ||
+      lower.includes('کلیک') ||
+      lower.includes('ورود') ||
+      lower.includes('مشاهده') ||
+      lower.includes('join') ||
+      lower.includes('بزن رو لینک') ||
+      lower.includes('t.me/')
+    ) {
+      return '';
+    }
+    return inner;
+  });
+
+  let text = html
     .replace(/<br\s*[\/]?>/gi, '\n')
     .replace(/<a[^>]*href="[^"]*"[^>]*>([\s\S]*?)<\/a>/gi, '$1')
     .replace(/<[^>]+>/g, '')
@@ -8911,8 +9470,8 @@ async function extractFunNewsFromSources(specificSourceId?: string, extraHandles
     db.funNewsItems = [];
   }
 
-  // Clean all existing items in database
-  cleanAllFunNewsItemsInDb();
+  // Pre-purge all ads and sanitize existing items in database
+  purgeAllAdsAndSanitizeFunNewsInDb();
 
   const validSpecificId = (typeof specificSourceId === 'string' && specificSourceId.trim().length > 0 && specificSourceId !== '[object Object]')
     ? specificSourceId.trim()
@@ -9028,10 +9587,25 @@ async function extractFunNewsFromSources(specificSourceId?: string, extraHandles
         if (!textMatch && !imageUrl && !videoUrl) continue;
 
         const rawHtmlText = textMatch ? textMatch[1] : '';
+
+        // Immediate ad check on raw HTML and message structure
+        const rawAdCheck = isTelegramSourceAd(rawHtmlText, '', fullBlock);
+        if (rawAdCheck.isAd) {
+          sourceSkipped++;
+          continue;
+        }
+
         const cleanText = cleanTelegramFunText(rawHtmlText);
 
         if (!cleanText && !imageUrl && !videoUrl) continue;
         if (cleanText.length < 10 && !imageUrl && !videoUrl) continue;
+
+        // Strict ad check on sanitized text
+        const cleanAdCheck = isTelegramSourceAd(cleanText);
+        if (cleanAdCheck.isAd) {
+          sourceSkipped++;
+          continue;
+        }
 
         // Check for duplicates
         const isDuplicate = db.funNewsItems.some(item => {
@@ -9054,6 +9628,12 @@ async function extractFunNewsFromSources(specificSourceId?: string, extraHandles
             ? (firstLine.length > 65 ? firstLine.substring(0, 62) + '...' : firstLine)
             : (videoUrl ? 'ویدیوی منتخب سرگرمی و روز' : (imageUrl ? 'تصویر منتخب سرگرمی و جذاب' : 'مطلب منتخب طنز و روز'))
         );
+
+        // Verify title itself does not contain ad patterns
+        if (isTelegramSourceAd(cleanText, title).isAd) {
+          sourceSkipped++;
+          continue;
+        }
 
         // Classify into 'fun' or 'news'
         const isNewsSource = cleanHandle.toLowerCase().includes('khabar') || source.name.includes('خبر') || source.category === 'news';
@@ -9104,6 +9684,9 @@ async function extractFunNewsFromSources(specificSourceId?: string, extraHandles
       skippedCount += res.value.skipped;
     }
   }
+
+  // Final purge and sanitization across the entire funNewsItems database
+  purgeAllAdsAndSanitizeFunNewsInDb();
 
   if (db.funNewsItems.length > 1000) {
     db.funNewsItems = db.funNewsItems.slice(0, 1000);
@@ -14645,8 +15228,13 @@ function setupIntervals() {
   // Set up auto post interval
   setupAutoPostInterval();
 
-  // Run initial checks and hourly refresh shortly after startup
+  // Run initial checks, database ad purge, and hourly refresh shortly after startup
   setTimeout(() => {
+    try {
+      purgeAllAdsAndSanitizeFunNewsInDb();
+    } catch (e) {
+      console.error('Error during startup fun news ad purge:', e);
+    }
     monitorChannelPosts();
     checkAndTriggerBackup();
     runHourlyContentRefresh();
@@ -16336,6 +16924,12 @@ async function startExpressServer() {
         return res.status(404).json({ success: false, message: 'مطلب مورد نظر یافت نشد.' });
       }
 
+      // Ad filter check on source content
+      const adCheck = isTelegramSourceAd(item.text, item.title);
+      if (adCheck.isAd) {
+        return res.status(400).json({ success: false, message: `این مطلب به عنوان تبلیغ کانال منبع (${adCheck.reason || 'تبلیغاتی'}) شناسایی شده و امکان ارسال آن به کانال وجود ندارد.` });
+      }
+
       const targetNum = channelNum === 1 ? 1 : 2;
       const isCh2 = targetNum === 2;
       const ap = isCh2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
@@ -16367,6 +16961,10 @@ async function startExpressServer() {
       // Thoroughly sanitize title and body text so NO source group/channel handles appear
       const sanitizedText = sanitizeContentForTelegramPost(item.text, channelHandle);
       const sanitizedTitle = sanitizePostTitle(item.title, channelHandle);
+
+      if (isTelegramSourceAd(sanitizedText, sanitizedTitle).isAd) {
+        return res.status(400).json({ success: false, message: 'این مطلب پس از پالایش همچنان حاوی محتوای تبلیغاتی کانال منبع است و ارسال نمی‌شود.' });
+      }
 
       let text = `${categoryEmoji} <b>« ${categoryName} »</b>\n`;
       text += `📌 <b>${escapeHtml(sanitizedTitle)}</b>\n\n`;
@@ -16441,6 +17039,22 @@ async function startExpressServer() {
       db.funNewsItems.splice(idx, 1);
       saveDatabase(true);
       res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // API: Manually sweep and purge all source ads from Fun News database
+  app.post('/api/fun-news/purge-ads', (req, res) => {
+    try {
+      const result = purgeAllAdsAndSanitizeFunNewsInDb();
+      res.json({
+        success: true,
+        ...result,
+        message: result.purged > 0
+          ? `پاکسازی موفقیت‌آمیز بود: تعداد ${result.purged} مطلب تبلیغاتی کانال‌های منبع حذف شد و ${result.updated} مطلب پالایش گردید.`
+          : `تمامی مطالب موجود در پایگاه داده از قبل کاملاً پاکیزه و بدون هرگونه تبلیغات منبع هستند (${result.remaining} مطلب فعال).`
+      });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }

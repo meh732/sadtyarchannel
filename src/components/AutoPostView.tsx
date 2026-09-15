@@ -556,6 +556,23 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                   اگر چند زمان‌بندی همزمان برسند، بین هر ارسال حداقل <strong>{autoPostForm.antiFloodDelayMinutes || 3} دقیقه</strong> فاصله رعایت می‌شود.
                 </div>
               </div>
+
+              {/* Direct Post / Skip Summary toggle for Channel 1 */}
+              <div className="flex items-center justify-between p-3 rounded-xl border border-indigo-100 bg-indigo-50/40">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 block">حذف خلاصه از ابتدای پست‌های کانال اول</span>
+                  <span className="text-[10px] text-slate-500">ارسال مستقیم متن پست‌ها بدون کادر خلاصه در شروع پست</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAutoPostForm(prev => ({ ...prev, skipPostSummary: !prev.skipPostSummary }))}
+                  className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                    autoPostForm.skipPostSummary ? 'bg-indigo-600 justify-end' : 'bg-slate-200 justify-start'
+                  }`}
+                >
+                  <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                </button>
+              </div>
             </div>
 
             {/* Category 1: Configs & Proxies */}
@@ -637,17 +654,17 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                   <div className="space-y-0.5">
                     <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                       <Smile className="w-3.5 h-3.5 text-amber-600" />
-                      <span>پست ترکیبی (فان + کانفیگ هدیه)</span>
+                      <span>پست ترکیبی (فان از کانال‌های دوم + کانفیگ هدیه)</span>
                     </span>
                     <span className="text-[10px] text-slate-500">
-                      پیوست یک میم یا متن طنز جذاب از کانال‌های فان به پست کانفیگ جهت افزایش ویو و کاهش لفت
+                      پیوست پست‌های جذاب طنز و میم از کانال‌های ست‌شده برای کانال دوم به پست کانفیگ کانال اول جهت افزایش تعامل، ویو و کاهش لفت
                     </span>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setAutoPostForm(prev => ({ ...prev, funWithConfigEnabled: !prev.funWithConfigEnabled }))}
+                    onClick={() => setAutoPostForm(prev => ({ ...prev, funWithConfigEnabled: !(prev.funWithConfigEnabled !== false) }))}
                     className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center shrink-0 mr-2 ${
-                      autoPostForm.funWithConfigEnabled ? 'bg-amber-500 justify-end' : 'bg-slate-200 justify-start'
+                      autoPostForm.funWithConfigEnabled !== false ? 'bg-amber-500 justify-end' : 'bg-slate-200 justify-start'
                     }`}
                   >
                     <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
@@ -1372,20 +1389,39 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
 
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                    <span>آیدی تبلیغ / امضای کانال دوم</span>
-                    <span className="text-[10px] text-slate-400">متن زیر هر پست کانال دوم</span>
+                    <span>آیدی تبلیغ / امضای کانال دوم (کاملاً تفکیک‌شده)</span>
+                    <span className="text-[10px] text-purple-600 font-medium">اختیاری</span>
                   </label>
                   <input
                     type="text"
-                    placeholder="مثلا: @MySecondChannel یا عضویت در کانال"
+                    placeholder="خالی بگذارید تا هیچ تبلیغی درج نشود (تبلیغات کانال اول هرگز در کانال دوم درج نخواهد شد)"
                     value={c2.adText || ''}
                     onChange={(e) => updateChannel2({ adText: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-purple-500 focus:outline-none"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:border-purple-500 focus:outline-none placeholder:text-slate-400"
                   />
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    💡 اگر این فیلد خالی باشد، فقط آیدی کانال دوم در انتهای پست قرار می‌گیرد و هیچ اثری از تبلیغات یا آیدی‌های کانال اول نخواهد بود.
+                  </p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                <div className="flex items-center justify-between p-3 rounded-xl border border-purple-100 bg-purple-50/40">
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">حذف خلاصه از ابتدای پست‌ها</span>
+                    <span className="text-[10px] text-slate-500">ارسال مستقیم متن بدون تیتر/خلاصه تکراری</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateChannel2({ skipPostSummary: c2.skipPostSummary === false ? true : false })}
+                    className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer p-0.5 flex items-center ${
+                      c2.skipPostSummary !== false ? 'bg-purple-600 justify-end' : 'bg-slate-200 justify-start'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full bg-white shadow-sm" />
+                  </button>
+                </div>
+
                 <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/50">
                   <div>
                     <span className="text-xs font-bold text-slate-800 block">ارسال بدون صدا در کانال دوم (Silent Mode)</span>

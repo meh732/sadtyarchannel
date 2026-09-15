@@ -15,7 +15,8 @@ import {
   Video,
   Play,
   Sparkles,
-  Layers
+  Layers,
+  ShieldCheck
 } from 'lucide-react';
 import { FunNewsItem, FunNewsSource } from '../types';
 
@@ -31,6 +32,7 @@ interface FunNewsViewProps {
   onToggleSource: (id: string, enabled: boolean) => Promise<void>;
   onDeleteSource: (id: string) => Promise<void>;
   onRestoreDefaults?: () => Promise<void>;
+  onPurgeAds?: () => Promise<void>;
   onSendItem: (id: string, channelNum: number) => Promise<void>;
   onDeleteItem: (id: string) => Promise<void>;
 }
@@ -47,6 +49,7 @@ export const FunNewsView: React.FC<FunNewsViewProps> = ({
   onToggleSource,
   onDeleteSource,
   onRestoreDefaults,
+  onPurgeAds,
   onSendItem,
   onDeleteItem,
 }) => {
@@ -127,6 +130,19 @@ export const FunNewsView: React.FC<FunNewsViewProps> = ({
               <Plus className="w-4 h-4 text-amber-700" />
               <span>افزودن کانال تلگرامی جدید</span>
             </button>
+
+            {onPurgeAds && (
+              <button
+                type="button"
+                onClick={() => onPurgeAds()}
+                disabled={actionLoading === 'purge_fun_news_ads'}
+                className="px-4 py-2.5 bg-amber-950/40 hover:bg-amber-950/60 text-amber-100 border border-amber-300/30 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                title="بررسی فوری و حذف تمامی تبلیغات و لینک‌های تبلیغاتی کانال‌های منبع"
+              >
+                <ShieldCheck className={`w-4 h-4 text-emerald-300 ${actionLoading === 'purge_fun_news_ads' ? 'animate-spin' : ''}`} />
+                <span>پالایش و حذف تبلیغات منبع</span>
+              </button>
+            )}
 
             <button
               onClick={() => onRefreshSources()}

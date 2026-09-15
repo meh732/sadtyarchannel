@@ -73,6 +73,7 @@ export interface AutoPostSettings {
   silentMode: boolean; // send silently (disable_notification)
   postFiles?: boolean; // send .npvt and .ovpn files
   includeTechImportanceBadge?: boolean; // Show 🔥 / 💡 / 🔐 badges
+  skipPostSummary?: boolean; // Do not write intro summary at beginning of posts (send direct text)
   autoPurgeOldTechDays?: number; // Auto purge news older than X days (default: 7)
   lastPostedAt?: string | null;
 
@@ -180,6 +181,7 @@ export interface SecondaryChannelSettings {
   smartGoldenHours?: boolean; // Prioritize posting during peak engagement hours in Iran (12:30-14:30, 18:00-20:30, 21:30-23:45)
   sleepHoursProtection?: boolean; // Silence and pause auto-posts during sleeping hours (00:30 - 08:30 Tehran time)
   singlePostMode?: boolean; // Strictly post ONE single message per cycle (no separate files or duplicate texts at the same minute)
+  skipPostSummary?: boolean; // Do not write intro summary at beginning of posts (default: true for Channel 2)
 
   // Channel 2 Dedicated Glass / Inline Button Configuration
   inlineButtonEnabled?: boolean; // Toggle for inline glass button on Channel 2
