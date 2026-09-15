@@ -52,20 +52,33 @@ import { DEFAULT_DIGITAL_TOOLS, EXTENDED_AI_PROMPTS } from './src/digitalToolsDa
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const DB_FILE = path.join(process.cwd(), 'data_store.json');
 const SETTINGS_FILE = path.join(process.cwd(), 'system_settings.json');
+const BACKUPS_DIR = path.join(process.cwd(), 'backups');
 
-// --- Helpers for Atomic File Storage & Corruption Prevention ---
+// Ensure backups directory exists
+try {
+  if (!fs.existsSync(BACKUPS_DIR)) {
+    fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+  }
+} catch (e) {
+  console.error('Failed to create backups directory:', e);
+}
+
+let snapshotRotationIndex = 1;
+
+// --- Helpers for Atomic File Storage, Rolling Snapshots & Corruption Prevention ---
 function writeJsonAtomic(filePath: string, data: any) {
+  const baseName = path.basename(filePath, '.json');
   const tmpPath = `${filePath}.${Math.random().toString(36).substring(2, 9)}.tmp`;
   const bakPath = `${filePath}.bak`;
   try {
     const jsonStr = JSON.stringify(data, null, 2);
     fs.writeFileSync(tmpPath, jsonStr, 'utf8');
 
-    // Make backup copy of existing file if valid
+    // Make backup copy of existing file if valid and not empty
     if (fs.existsSync(filePath)) {
       try {
         const stats = fs.statSync(filePath);
-        if (stats.size > 0) {
+        if (stats.size > 10) {
           fs.copyFileSync(filePath, bakPath);
         }
       } catch (e) {
@@ -75,6 +88,25 @@ function writeJsonAtomic(filePath: string, data: any) {
 
     // Atomic replace
     fs.renameSync(tmpPath, filePath);
+
+    // If data is healthy (e.g. has configs or settings), create persistent snapshot in backups/
+    const isHealthyDataStore = baseName === 'data_store' && Array.isArray(data?.configs) && data.configs.length > 0;
+    const isHealthySettings = baseName === 'system_settings' && (data?.settings || (Array.isArray(data?.sources) && data.sources.length > 0));
+
+    if (isHealthyDataStore || isHealthySettings) {
+      try {
+        const healthyPath = path.join(BACKUPS_DIR, `${baseName}_latest_healthy.json`);
+        fs.writeFileSync(healthyPath, jsonStr, 'utf8');
+
+        // Rolling snapshot 1 to 5
+        const currentIdx = ((snapshotRotationIndex++) % 5) + 1;
+        const snapPath = path.join(BACKUPS_DIR, `${baseName}_snapshot_${currentIdx}.json`);
+        fs.writeFileSync(snapPath, jsonStr, 'utf8');
+      } catch (backupErr) {
+        // Non-blocking snapshot error logging
+        console.error(`Snapshot write failed for ${baseName}:`, backupErr);
+      }
+    }
   } catch (err) {
     console.error(`Atomic write failed for ${filePath}:`, err);
     if (fs.existsSync(tmpPath)) {
@@ -84,28 +116,96 @@ function writeJsonAtomic(filePath: string, data: any) {
 }
 
 function safeReadJson(filePath: string): any {
+  const baseName = path.basename(filePath, '.json');
   const bakPath = `${filePath}.bak`;
 
+  // 1. Try reading primary file
   if (fs.existsSync(filePath)) {
     try {
       const content = fs.readFileSync(filePath, 'utf8');
       if (content && content.trim()) {
-        return JSON.parse(content);
+        const parsed = JSON.parse(content);
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
       }
     } catch (err) {
       console.error(`Failed to parse primary file ${filePath}:`, err);
     }
   }
 
+  // 2. Try primary .bak file
   if (fs.existsSync(bakPath)) {
     try {
       console.log(`Attempting recovery from backup file: ${bakPath}`);
       const bakContent = fs.readFileSync(bakPath, 'utf8');
       if (bakContent && bakContent.trim()) {
-        return JSON.parse(bakContent);
+        const parsed = JSON.parse(bakContent);
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
       }
     } catch (bakErr) {
       console.error(`Failed to parse backup file ${bakPath}:`, bakErr);
+    }
+  }
+
+  // 3. Try latest healthy backup from backups/ directory
+  const healthyPath = path.join(BACKUPS_DIR, `${baseName}_latest_healthy.json`);
+  if (fs.existsSync(healthyPath)) {
+    try {
+      console.log(`Attempting recovery from latest healthy snapshot: ${healthyPath}`);
+      const hContent = fs.readFileSync(healthyPath, 'utf8');
+      if (hContent && hContent.trim()) {
+        const parsed = JSON.parse(hContent);
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
+      }
+    } catch (hErr) {
+      console.error(`Failed to parse healthy snapshot ${healthyPath}:`, hErr);
+    }
+  }
+
+  // 4. Try rolling snapshots in backups/
+  for (let i = 1; i <= 5; i++) {
+    const snapPath = path.join(BACKUPS_DIR, `${baseName}_snapshot_${i}.json`);
+    if (fs.existsSync(snapPath)) {
+      try {
+        const sContent = fs.readFileSync(snapPath, 'utf8');
+        if (sContent && sContent.trim()) {
+          const parsed = JSON.parse(sContent);
+          if (parsed && typeof parsed === 'object') {
+            console.log(`Recovered data from snapshot: ${snapPath}`);
+            return parsed;
+          }
+        }
+      } catch (sErr) {
+        // continue trying next snapshot
+      }
+    }
+  }
+
+  // 5. Try legacy filenames if looking for data_store or system_settings
+  if (baseName === 'data_store') {
+    const legacyFiles = [
+      path.join(process.cwd(), 'database.json'),
+      path.join(process.cwd(), 'database.json.bak'),
+      path.join(process.cwd(), 'data_store_backup.json')
+    ];
+    for (const leg of legacyFiles) {
+      if (fs.existsSync(leg)) {
+        try {
+          const legContent = fs.readFileSync(leg, 'utf8');
+          if (legContent && legContent.trim()) {
+            const parsed = JSON.parse(legContent);
+            if (parsed && typeof parsed === 'object') {
+              console.log(`Recovered data from legacy file: ${leg}`);
+              return parsed;
+            }
+          }
+        } catch (e) {}
+      }
     }
   }
 
@@ -954,6 +1054,70 @@ let db: DatabaseSchema = {
   techItems: []
 };
 
+function findBestDataStoreBackup(): any {
+  const candidatePaths = [
+    path.join(BACKUPS_DIR, 'data_store_latest_healthy.json'),
+    path.join(process.cwd(), 'data_store.json.bak'),
+    path.join(BACKUPS_DIR, 'data_store_snapshot_1.json'),
+    path.join(BACKUPS_DIR, 'data_store_snapshot_2.json'),
+    path.join(BACKUPS_DIR, 'data_store_snapshot_3.json'),
+    path.join(BACKUPS_DIR, 'data_store_snapshot_4.json'),
+    path.join(BACKUPS_DIR, 'data_store_snapshot_5.json'),
+    path.join(process.cwd(), 'database.json'),
+    path.join(process.cwd(), 'database.json.bak'),
+    path.join(process.cwd(), 'data_store_backup.json')
+  ];
+
+  let bestData: any = null;
+  let maxConfigs = 0;
+
+  for (const cPath of candidatePaths) {
+    if (fs.existsSync(cPath)) {
+      try {
+        const raw = fs.readFileSync(cPath, 'utf8');
+        if (raw && raw.trim()) {
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.configs)) {
+            if (parsed.configs.length > maxConfigs) {
+              maxConfigs = parsed.configs.length;
+              bestData = parsed;
+            }
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
+  return bestData;
+}
+
+function findBestSettingsBackup(): any {
+  const candidatePaths = [
+    path.join(BACKUPS_DIR, 'system_settings_latest_healthy.json'),
+    path.join(process.cwd(), 'system_settings.json.bak'),
+    path.join(BACKUPS_DIR, 'system_settings_snapshot_1.json'),
+    path.join(BACKUPS_DIR, 'system_settings_snapshot_2.json'),
+    path.join(BACKUPS_DIR, 'system_settings_snapshot_3.json'),
+    path.join(BACKUPS_DIR, 'system_settings_snapshot_4.json'),
+    path.join(BACKUPS_DIR, 'system_settings_snapshot_5.json')
+  ];
+
+  for (const cPath of candidatePaths) {
+    if (fs.existsSync(cPath)) {
+      try {
+        const raw = fs.readFileSync(cPath, 'utf8');
+        if (raw && raw.trim()) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.settings) {
+            return parsed;
+          }
+        }
+      } catch (e) {}
+    }
+  }
+  return null;
+}
+
 function loadDatabase() {
   try {
     const envAdminId = process.env.ADMIN_ID ? process.env.ADMIN_ID.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
@@ -963,6 +1127,11 @@ function loadDatabase() {
 
     // 1. Try loading system_settings.json first
     let loadedSettings = safeReadJson(SETTINGS_FILE);
+
+    // Fallback if settings missing/corrupted
+    if (!loadedSettings) {
+      loadedSettings = findBestSettingsBackup();
+    }
 
     // 2. Try loading data_store.json
     let loadedDataStore = safeReadJson(DB_FILE);
@@ -1005,9 +1174,9 @@ function loadDatabase() {
       finalSettings.publicUrl = detectedUrl;
     }
 
-    const finalSources = Array.isArray(loadedSettings?.sources) 
+    const finalSources = Array.isArray(loadedSettings?.sources) && loadedSettings.sources.length > 0
       ? loadedSettings.sources 
-      : (Array.isArray(loadedDataStore?.sources) ? loadedDataStore.sources : DEFAULT_SOURCES);
+      : (Array.isArray(loadedDataStore?.sources) && loadedDataStore.sources.length > 0 ? loadedDataStore.sources : DEFAULT_SOURCES);
 
     const finalForceJoin = Array.isArray(loadedSettings?.forceJoinChannels)
       ? loadedSettings.forceJoinChannels
@@ -1017,12 +1186,25 @@ function loadDatabase() {
       ? loadedSettings.users
       : (Array.isArray(loadedDataStore?.users) ? loadedDataStore.users : []);
 
-    const finalConfigs = Array.isArray(loadedDataStore?.configs) ? loadedDataStore.configs : [];
-    const finalProxies = Array.isArray(loadedDataStore?.proxies) ? loadedDataStore.proxies : [];
-    const finalNpvFiles = Array.isArray(loadedDataStore?.npvFiles) ? loadedDataStore.npvFiles : [];
-    const finalLogs = Array.isArray(loadedDataStore?.logs) ? loadedDataStore.logs : [];
-    const finalPosted = Array.isArray(loadedDataStore?.postedMessages) ? loadedDataStore.postedMessages : [];
-    const finalTechItems = Array.isArray(loadedDataStore?.techItems) ? loadedDataStore.techItems : [];
+    let finalConfigs = Array.isArray(loadedDataStore?.configs) ? loadedDataStore.configs : [];
+    let finalProxies = Array.isArray(loadedDataStore?.proxies) ? loadedDataStore.proxies : [];
+    let finalNpvFiles = Array.isArray(loadedDataStore?.npvFiles) ? loadedDataStore.npvFiles : [];
+    let finalLogs = Array.isArray(loadedDataStore?.logs) ? loadedDataStore.logs : [];
+    let finalPosted = Array.isArray(loadedDataStore?.postedMessages) ? loadedDataStore.postedMessages : [];
+    let finalTechItems = Array.isArray(loadedDataStore?.techItems) ? loadedDataStore.techItems : [];
+
+    // Zero-Wipe Auto-Recovery Protection: If configs are empty, scan backups to restore healthy data
+    if (finalConfigs.length === 0) {
+      const bestBackup = findBestDataStoreBackup();
+      if (bestBackup && Array.isArray(bestBackup.configs) && bestBackup.configs.length > 0) {
+        console.log(`[Auto-Recovery] Restored ${bestBackup.configs.length} configs and items from healthy backup snapshot.`);
+        finalConfigs = bestBackup.configs;
+        if (finalProxies.length === 0 && Array.isArray(bestBackup.proxies)) finalProxies = bestBackup.proxies;
+        if (finalNpvFiles.length === 0 && Array.isArray(bestBackup.npvFiles)) finalNpvFiles = bestBackup.npvFiles;
+        if (finalTechItems.length === 0 && Array.isArray(bestBackup.techItems)) finalTechItems = bestBackup.techItems;
+        if (finalPosted.length === 0 && Array.isArray(bestBackup.postedMessages)) finalPosted = bestBackup.postedMessages;
+      }
+    }
     const finalAiPrompts = Array.isArray(loadedDataStore?.aiPrompts)
       ? loadedDataStore.aiPrompts
       : (Array.isArray(loadedSettings?.aiPrompts) ? loadedSettings.aiPrompts : DEFAULT_AI_PROMPTS);
@@ -1324,6 +1506,19 @@ function saveDatabase(immediate = false) {
         postedDigitalToolsHistory: db.postedDigitalToolsHistory || [],
         postedTricksHistory: db.postedTricksHistory || []
       };
+
+      // Zero-Wipe Safe Guard: If memory configs is 0, but disk or healthy backups contain configs, do not wipe!
+      if ((!db.configs || db.configs.length === 0) && fs.existsSync(DB_FILE)) {
+        try {
+          const diskContent = safeReadJson(DB_FILE);
+          if (diskContent && Array.isArray(diskContent.configs) && diskContent.configs.length > 0) {
+            console.warn(`[Safe-Guard] Memory configs is 0 but disk contains ${diskContent.configs.length} configs. Preserving disk configs.`);
+            storeData.configs = diskContent.configs;
+            db.configs = diskContent.configs;
+          }
+        } catch (guardErr) {}
+      }
+
       writeJsonAtomic(DB_FILE, storeData);
     } catch (err) {
       console.error('Failed to save database:', err);
@@ -1348,6 +1543,23 @@ function saveDatabase(immediate = false) {
     }, 400);
   }
 }
+
+// Process lifecycle hooks for zero data-loss on restart/shutdown/update
+process.on('SIGINT', () => {
+  console.log('Received SIGINT: Flushing database to disk...');
+  saveDatabase(true);
+});
+
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM: Flushing database to disk...');
+  saveDatabase(true);
+});
+
+process.on('beforeExit', () => {
+  if (savePending) {
+    saveDatabase(true);
+  }
+});
 
 // --- Logger Helper ---
 function addLog(level: 'info' | 'warn' | 'error' | 'success', message: string) {
@@ -1412,6 +1624,59 @@ function getGeminiClient(): GoogleGenAI | null {
     }
   }
   return geminiClient;
+}
+
+/**
+ * Executes a Gemini prompt with automatic multi-model fallback and graceful error handling.
+ * Handles temporary spikes in demand (503 UNAVAILABLE) and rate limits (429) cleanly without crashes.
+ */
+async function generateGeminiContentWithFallback(
+  ai: GoogleGenAI,
+  prompt: string,
+  preferredModel = 'gemini-2.5-flash',
+  fallbackModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite']
+): Promise<string | null> {
+  const models = [preferredModel, ...fallbackModels.filter(m => m !== preferredModel)];
+  
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+      });
+      if (response && response.text) {
+        return response.text;
+      }
+    } catch (err: any) {
+      const errMsg = (err?.message || err?.error?.message || (typeof err === 'string' ? err : JSON.stringify(err))).trim();
+      const isTemporaryDemandSpike = errMsg.includes('503') || 
+        errMsg.includes('UNAVAILABLE') || 
+        errMsg.includes('high demand') ||
+        errMsg.includes('experiencing high demand');
+      const isRateLimit = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota');
+
+      if (isTemporaryDemandSpike || isRateLimit) {
+        if (i < models.length - 1) {
+          console.warn(`[Gemini AI] Model '${model}' is temporarily busy or experiencing high demand. Switching to '${models[i + 1]}'`);
+          await new Promise(res => setTimeout(res, 600));
+          continue;
+        } else {
+          console.warn(`[Gemini AI] Gemini models currently experiencing high demand. Gracefully activating curated fallback content.`);
+          return null;
+        }
+      }
+
+      // Other errors
+      if (i < models.length - 1) {
+        console.warn(`[Gemini AI] Model '${model}' error: ${errMsg.slice(0, 100)}. Trying '${models[i + 1]}'`);
+        await new Promise(res => setTimeout(res, 600));
+      } else {
+        console.warn(`[Gemini AI] Prompt generation unavailable via AI (${errMsg.slice(0, 100)}). Using curated fallback.`);
+      }
+    }
+  }
+  return null;
 }
 
 // Global queue of recently served prompts to guarantee zero immediate repetitions
@@ -4907,19 +5172,22 @@ Respond with ONLY a raw JSON array of ${count} objects (no markdown blocks, no c
   }
 ]`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: promptInstruction,
-      });
+      const responseText = await generateGeminiContentWithFallback(
+        ai,
+        promptInstruction,
+        'gemini-2.5-flash',
+        ['gemini-3.8-flash', 'gemini-3.1-flash-lite']
+      );
 
-      const responseText = response.text || '';
-      const cleanJson = responseText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(cleanJson);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        generatedItems = parsed;
+      if (responseText) {
+        const cleanJson = responseText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(cleanJson);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          generatedItems = parsed;
+        }
       }
     } catch (geminiErr: any) {
-      console.error('[Gemini Prompt Extraction Error]:', geminiErr.message || geminiErr);
+      console.warn('[Gemini Prompt Extraction]: Handled gracefully, switching to curated dynamic fallback.');
     }
   }
 
@@ -5064,18 +5332,22 @@ async function generateViralShareablePostWithGemini(channelNum: 1 | 2 = 1): Prom
   "tags": ["ترفند_آیفون", "اپل", "هوش_مصنوعی", "آموزش_موبایل"]
 }`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: promptInstruction,
-      });
+      const responseText = await generateGeminiContentWithFallback(
+        ai,
+        promptInstruction,
+        'gemini-2.5-flash',
+        ['gemini-3.8-flash', 'gemini-3.1-flash-lite']
+      );
 
-      const cleanJson = (response.text || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(cleanJson);
-      if (parsed && parsed.title && parsed.summary) {
-        generatedData = parsed;
+      if (responseText) {
+        const cleanJson = responseText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(cleanJson);
+        if (parsed && parsed.title && parsed.summary) {
+          generatedData = parsed;
+        }
       }
     } catch (err: any) {
-      console.error('[Gemini Viral Generation Error]:', err.message || err);
+      console.warn('[Gemini Viral Generation]: Handled gracefully, switching to curated dynamic fallback.');
     }
   }
 
@@ -5591,6 +5863,19 @@ function recordChannelPostEvent(
   db.channelPostHistory.push(newHistoryItem);
   if (db.channelPostHistory.length > 300) {
     db.channelPostHistory = db.channelPostHistory.slice(-300);
+  }
+
+  // Synchronously update lastPostedAt and lastAnyPostAt to guarantee cooldown/pacing locks immediately
+  const nowIso = now.toISOString();
+  if (channelNum === 2) {
+    if (!db.settings.autoPost.channel2) db.settings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
+    db.settings.autoPost.channel2.lastAnyPostAt = nowIso;
+    db.settings.autoPost.channel2.lastPostedAt = nowIso;
+  } else {
+    if (db.settings.autoPost) {
+      db.settings.autoPost.lastAnyPostAt = nowIso;
+      db.settings.autoPost.lastPostedAt = nowIso;
+    }
   }
 
   // Update last posted signature
@@ -9743,42 +10028,37 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'pr
     return await executeDigitalToolsAutoPost(channelTarget, settings.targetChannel);
   }
 
-  // mode === 'all'
-  let anySuccess = false;
-  if (settings.configsEnabled !== false && ((settings.configCount || 0) > 0 || (settings.proxyCount || 0) > 0)) {
-    const res = await executeConfigsAutoPost(channelTarget, settings.targetChannel);
-    if (res) anySuccess = true;
-  }
-  if (settings.techNewsEnabled !== false && (settings.techNewsCount || 0) > 0) {
-    const res = await executeTechNewsAutoPost(channelTarget, settings.targetChannel);
-    if (res) anySuccess = true;
-  }
-  if (settings.techTricksEnabled !== false && (settings.techTricksCount || 0) > 0) {
-    const res = await executeTechTricksAutoPost(channelTarget, settings.targetChannel);
-    if (res) anySuccess = true;
-  }
-  if (settings.aiPromptsEnabled !== false && (settings.aiPromptsCount || 0) > 0) {
-    const res = await executeAiPromptsAutoPost(channelTarget, settings.targetChannel);
-    if (res) anySuccess = true;
-  }
-  if (settings.funNewsEnabled === true && (settings.funNewsCount || 0) > 0) {
-    const res = await executeFunNewsAutoPost(channelTarget, settings.targetChannel);
-    if (res) anySuccess = true;
-  }
-  if (settings.digitalToolsEnabled !== false && (settings.digitalToolsCount || 0) > 0) {
-    const res = await executeDigitalToolsAutoPost(channelTarget, settings.targetChannel);
-    if (res) anySuccess = true;
-  }
-
-  if (!anySuccess) {
-    if (isCh2) {
-      anySuccess = await executeFunNewsAutoPost(2, settings.targetChannel);
-    } else {
-      anySuccess = await executeConfigsAutoPost(1, settings.targetChannel);
+  // mode === 'all': execute the primary single targeted post for the channel
+  if (isCh2) {
+    if (settings.funNewsEnabled !== false && (settings.funNewsCount || 0) > 0) {
+      return await executeFunNewsAutoPost(2, settings.targetChannel);
     }
+    if (settings.configsEnabled === true) {
+      return await executeConfigsAutoPost(2, settings.targetChannel);
+    }
+    return await executeFunNewsAutoPost(2, settings.targetChannel);
+  } else {
+    // Channel 1: Post primary Configs pack (with fun attachment if enabled) or first active category
+    if (settings.configsEnabled !== false && ((settings.configCount || 0) > 0 || (settings.proxyCount || 0) > 0)) {
+      return await executeConfigsAutoPost(1, settings.targetChannel);
+    }
+    if (settings.techNewsEnabled !== false && (settings.techNewsCount || 0) > 0) {
+      return await executeTechNewsAutoPost(1, settings.targetChannel);
+    }
+    if (settings.techTricksEnabled !== false && (settings.techTricksCount || 0) > 0) {
+      return await executeTechTricksAutoPost(1, settings.targetChannel);
+    }
+    if (settings.funNewsEnabled === true && (settings.funNewsCount || 0) > 0) {
+      return await executeFunNewsAutoPost(1, settings.targetChannel);
+    }
+    if (settings.digitalToolsEnabled !== false && (settings.digitalToolsCount || 0) > 0) {
+      return await executeDigitalToolsAutoPost(1, settings.targetChannel);
+    }
+    if (settings.aiPromptsEnabled !== false && (settings.aiPromptsCount || 0) > 0) {
+      return await executeAiPromptsAutoPost(1, settings.targetChannel);
+    }
+    return await executeConfigsAutoPost(1, settings.targetChannel);
   }
-
-  return anySuccess;
 }
 
 // --- Granular Auto-Post Scheduler ---

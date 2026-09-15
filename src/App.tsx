@@ -105,36 +105,68 @@ declare global {
 }
 
 // Global fetch interceptor to automatically attach authorization token and handle 401
-const originalFetch = window.fetch;
-window.fetch = async function(input: RequestInfo | URL, init?: RequestInit) {
-  const token = localStorage.getItem('adminToken');
-  if (token && typeof input === 'string' && input.startsWith('/api/')) {
-    init = init || {};
-    init.headers = init.headers || {};
-    if (init.headers instanceof Headers) {
-      init.headers.set('Authorization', `Bearer ${token}`);
-    } else if (Array.isArray(init.headers)) {
-      const hasAuth = init.headers.some(h => h[0].toLowerCase() === 'authorization');
-      if (!hasAuth) {
-        init.headers.push(['Authorization', `Bearer ${token}`]);
+const originalFetch = (typeof window !== 'undefined' && typeof window.fetch === 'function')
+  ? window.fetch.bind(window)
+  : (typeof globalThis !== 'undefined' && typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : fetch);
+
+const customFetch: typeof window.fetch = async function(input: RequestInfo | URL, init?: RequestInit) {
+  try {
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('adminToken') : null;
+    if (token && typeof input === 'string' && input.startsWith('/api/')) {
+      init = init || {};
+      init.headers = init.headers || {};
+      if (init.headers instanceof Headers) {
+        init.headers.set('Authorization', `Bearer ${token}`);
+      } else if (Array.isArray(init.headers)) {
+        const hasAuth = init.headers.some(h => h[0].toLowerCase() === 'authorization');
+        if (!hasAuth) {
+          init.headers.push(['Authorization', `Bearer ${token}`]);
+        }
+      } else {
+        init.headers = {
+          ...init.headers,
+          'Authorization': `Bearer ${token}`
+        };
       }
-    } else {
-      init.headers = {
-        ...init.headers,
-        'Authorization': `Bearer ${token}`
-      };
     }
+  } catch {
+    // Ignore header configuration errors
   }
   
-  const response = await originalFetch.call(this, input, init);
+  const response = await originalFetch(input, init);
   
-  if (response.status === 401 && typeof input === 'string' && input.startsWith('/api/') && !input.includes('/api/auth/')) {
-    localStorage.removeItem('adminToken');
-    window.dispatchEvent(new Event('admin-logout'));
+  try {
+    if (response.status === 401 && typeof input === 'string' && input.startsWith('/api/') && !input.includes('/api/auth/')) {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('adminToken');
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('admin-logout'));
+      }
+    }
+  } catch {
+    // Ignore event dispatch errors
   }
   
   return response;
 };
+
+// Safely install customFetch without throwing "Cannot set property fetch of #<Window> which has only a getter"
+if (typeof window !== 'undefined') {
+  try {
+    Object.defineProperty(window, 'fetch', {
+      value: customFetch,
+      writable: true,
+      configurable: true,
+    });
+  } catch {
+    try {
+      (window as any).fetch = customFetch;
+    } catch (e) {
+      console.warn('Could not override window.fetch directly:', e);
+    }
+  }
+}
 
 export default function App() {
   // Auth States
