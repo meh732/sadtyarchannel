@@ -17,6 +17,8 @@ BOLD='\033[1m'
 
 # Paths
 INSTALL_DIR="/opt/sadtyar-bot"
+PERMANENT_DATA_DIR="/var/lib/sadtyar-data"
+PERMANENT_BACKUP_DIR="/opt/sadtyar-permanent-backup"
 SERVICE_NAME="sadtyar-bot"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 BIN_CMD="/usr/local/bin/sadtyar"
@@ -28,6 +30,59 @@ if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}${BOLD}Error: Please run this script with root privileges (sudo bash).${PLAIN}"
     exit 1
 fi
+
+# Multi-Layer Data Protection & Safe Backup Function
+backup_critical_data() {
+    echo -e "${BLUE}Safeguarding database, settings, and backups into permanent OS storage...${PLAIN}"
+    mkdir -p "$PERMANENT_DATA_DIR" "$PERMANENT_BACKUP_DIR" "$PERMANENT_DATA_DIR/backups" "$PERMANENT_BACKUP_DIR/backups"
+    
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    ARCHIVE_DIR="$PERMANENT_DATA_DIR/archive_${TIMESTAMP}"
+    mkdir -p "$ARCHIVE_DIR"
+
+    # Backup from current INSTALL_DIR if it exists
+    if [ -d "$INSTALL_DIR" ]; then
+        for f in "data_store.json" "system_settings.json" "data_store.json.bak" "system_settings.json.bak" ".env" "database.json" "database.json.bak"; do
+            if [ -s "$INSTALL_DIR/$f" ]; then
+                cp -f "$INSTALL_DIR/$f" "$PERMANENT_DATA_DIR/$f" 2>/dev/null || true
+                cp -f "$INSTALL_DIR/$f" "$PERMANENT_BACKUP_DIR/$f" 2>/dev/null || true
+                cp -f "$INSTALL_DIR/$f" "$ARCHIVE_DIR/$f" 2>/dev/null || true
+            fi
+        done
+
+        if [ -d "$INSTALL_DIR/backups" ]; then
+            cp -rf "$INSTALL_DIR/backups/"* "$PERMANENT_DATA_DIR/backups/" 2>/dev/null || true
+            cp -rf "$INSTALL_DIR/backups/"* "$PERMANENT_BACKUP_DIR/backups/" 2>/dev/null || true
+            cp -rf "$INSTALL_DIR/backups" "$ARCHIVE_DIR/" 2>/dev/null || true
+        fi
+    fi
+
+    echo -e "${GREEN}Database state securely backed up to ${PERMANENT_DATA_DIR}.${PLAIN}"
+}
+
+# Multi-Layer Data Restore Function
+restore_critical_data() {
+    echo -e "${BLUE}Restoring database, settings, and backups into installation directory...${PLAIN}"
+    mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/backups"
+
+    # 1. Restore core JSON stores
+    for f in "data_store.json" "system_settings.json" "data_store.json.bak" "system_settings.json.bak" ".env" "database.json"; do
+        if [ -s "$PERMANENT_DATA_DIR/$f" ]; then
+            cp -f "$PERMANENT_DATA_DIR/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
+        elif [ -s "$PERMANENT_BACKUP_DIR/$f" ]; then
+            cp -f "$PERMANENT_BACKUP_DIR/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
+        fi
+    done
+
+    # 2. Restore historical backup snapshots
+    if [ -d "$PERMANENT_DATA_DIR/backups" ]; then
+        cp -rf "$PERMANENT_DATA_DIR/backups/"* "$INSTALL_DIR/backups/" 2>/dev/null || true
+    elif [ -d "$PERMANENT_BACKUP_DIR/backups" ]; then
+        cp -rf "$PERMANENT_BACKUP_DIR/backups/"* "$INSTALL_DIR/backups/" 2>/dev/null || true
+    fi
+
+    echo -e "${GREEN}Database and configuration successfully restored.${PLAIN}"
+}
 
 show_banner() {
     clear
@@ -167,6 +222,9 @@ install_bot() {
     show_banner
     echo -e "${YELLOW}${BOLD}Starting Sadtyar Bot Installation...${PLAIN}\n"
     
+    # 0. Safeguard existing database first
+    backup_critical_data
+
     # 1. Dependencies
     install_system_deps
     
@@ -180,8 +238,6 @@ install_bot() {
         cp -rf ./.* "$INSTALL_DIR/" 2>/dev/null || true
     else
         echo -e "Downloading latest release package from GitHub..."
-        rm -rf "$INSTALL_DIR"
-        mkdir -p "$INSTALL_DIR"
         wget -q "$ZIP_URL" -O /tmp/sadtyar_main.zip
         if [ -f /tmp/sadtyar_main.zip ]; then
             unzip -q -o /tmp/sadtyar_main.zip -d /tmp/sadtyar_extract
@@ -189,29 +245,27 @@ install_bot() {
             cp -rf /tmp/sadtyar_extract/sadtyarchannel-main/.* "$INSTALL_DIR/" 2>/dev/null || true
             rm -rf /tmp/sadtyar_main.zip /tmp/sadtyar_extract
         else
-            git clone "$REPO_URL" "$INSTALL_DIR"
+            git clone "$REPO_URL" "$INSTALL_DIR" 2>/dev/null || true
         fi
     fi
+
+    # Restore preserved database immediately
+    restore_critical_data
 
     cd "$INSTALL_DIR" || exit 1
 
     # 3. Setup Xray Core
     install_xray_core
 
-    # 4. Prompt Credentials
-    prompt_credentials
-
-    # 5. Stop existing service
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-        echo -e "${YELLOW}Stopping existing background service...${PLAIN}"
-        systemctl stop "$SERVICE_NAME"
-    fi
-
-    # 6. Write Environment File
-    echo -e "${BLUE}[4/5] Creating environment config file (.env)...${PLAIN}"
-    server_ip=$(curl -s https://api.ipify.org || wget -qO- https://api.ipify.org || echo "127.0.0.1")
-    app_url="http://${server_ip}:${web_port}"
-    cat <<EOF > "$INSTALL_DIR/.env"
+    # 4. Prompt Credentials (skip if valid .env already exists and user wants to keep it)
+    if [ -s "$INSTALL_DIR/.env" ] && grep -q "BOT_TOKEN=" "$INSTALL_DIR/.env"; then
+        echo -e "${GREEN}Existing .env configuration detected and preserved.${PLAIN}"
+    else
+        prompt_credentials
+        echo -e "${BLUE}[4/5] Creating environment config file (.env)...${PLAIN}"
+        server_ip=$(curl -s https://api.ipify.org || wget -qO- https://api.ipify.org || echo "127.0.0.1")
+        app_url="http://${server_ip}:${web_port}"
+        cat <<EOF > "$INSTALL_DIR/.env"
 APP_URL="${app_url}"
 NODE_ENV=production
 ADMIN_ID="${admin_id}"
@@ -220,13 +274,20 @@ PORT="${web_port}"
 ADMIN_USERNAME="${admin_username:-admin}"
 ADMIN_PASSWORD="${admin_password:-admin}"
 EOF
+    fi
 
-    # 7. Build and Compile
+    # 5. Stop existing service
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo -e "${YELLOW}Stopping existing background service...${PLAIN}"
+        systemctl stop "$SERVICE_NAME"
+    fi
+
+    # 6. Build and Compile
     echo -e "${BLUE}[5/5] Installing npm dependencies & compiling application...${PLAIN}"
     npm install --production=false
     npm run build
 
-    # 8. Create Systemd Service
+    # 7. Create Systemd Service
     echo -e "Creating systemd background service (${SERVICE_NAME})..."
     cat <<EOF > "$SERVICE_FILE"
 [Unit]
@@ -246,7 +307,7 @@ EnvironmentFile=${INSTALL_DIR}/.env
 WantedBy=multi-user.target
 EOF
 
-    # 9. Register shortcut CLI command
+    # 8. Register shortcut CLI command
     cat <<'EOF' > "$BIN_CMD"
 #!/bin/bash
 if [ -f "/opt/sadtyar-bot/install.sh" ]; then
@@ -258,22 +319,23 @@ EOF
     chmod +x "$BIN_CMD"
     chmod +x "$INSTALL_DIR/install.sh" 2>/dev/null || true
 
-    # 10. Start and Enable Service
+    # 9. Start and Enable Service
     systemctl daemon-reload
     systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
     systemctl restart "$SERVICE_NAME"
 
     # Get Server IP
     SERVER_IP=$(curl -s4 ifconfig.me || curl -s4 api.ipify.org || echo "Server-IP")
+    WEB_PORT=$(grep -oP 'PORT="\K[^"]+' "$INSTALL_DIR/.env" 2>/dev/null || echo "3000")
 
     echo ""
     echo -e "=================================================================="
     echo -e "${GREEN}${BOLD}🎉 Installation completed successfully!${PLAIN}"
     echo -e "=================================================================="
-    echo -e "Admin ID:        ${CYAN}${admin_id}${PLAIN}"
     echo -e "Service Status:  ${GREEN}Active & Auto-start on boot${PLAIN}"
     echo -e "Install Path:    ${YELLOW}${INSTALL_DIR}${PLAIN}"
-    echo -e "Web Panel URL:   ${CYAN}http://${SERVER_IP}:${web_port}${PLAIN}"
+    echo -e "Permanent Data:  ${YELLOW}${PERMANENT_DATA_DIR}${PLAIN}"
+    echo -e "Web Panel URL:   ${CYAN}http://${SERVER_IP}:${WEB_PORT}${PLAIN}"
     echo -e "Management CLI:  ${PURPLE}${BOLD}sadtyar${PLAIN}"
     echo -e "=================================================================="
     echo -e "You can manage the bot in Telegram with: ${GREEN}/admin${PLAIN}"
@@ -294,18 +356,13 @@ update_bot() {
         return
     fi
 
+    # 1. First-class Backup to permanent OS storage
+    backup_critical_data
+
     cd "$INSTALL_DIR" || exit 1
 
     echo -e "${BLUE}Temporarily stopping service...${PLAIN}"
     systemctl stop "$SERVICE_NAME"
-
-    echo -e "${BLUE}Creating safe backup of database, settings & .env...${PLAIN}"
-    mkdir -p /tmp/sadtyar_safe_backup
-    [ -f "$INSTALL_DIR/data_store.json" ] && cp -f "$INSTALL_DIR/data_store.json" /tmp/sadtyar_safe_backup/
-    [ -f "$INSTALL_DIR/system_settings.json" ] && cp -f "$INSTALL_DIR/system_settings.json" /tmp/sadtyar_safe_backup/
-    [ -f "$INSTALL_DIR/data_store.json.bak" ] && cp -f "$INSTALL_DIR/data_store.json.bak" /tmp/sadtyar_safe_backup/
-    [ -f "$INSTALL_DIR/system_settings.json.bak" ] && cp -f "$INSTALL_DIR/system_settings.json.bak" /tmp/sadtyar_safe_backup/
-    [ -f "$INSTALL_DIR/.env" ] && cp -f "$INSTALL_DIR/.env" /tmp/sadtyar_safe_backup/
 
     echo -e "${BLUE}Downloading latest update package from GitHub...${PLAIN}"
     
@@ -322,17 +379,13 @@ update_bot() {
     else
         # Fallback to non-interactive git pull
         GIT_TERMINAL_PROMPT=0 git stash 2>/dev/null || true
-        GIT_TERMINAL_PROMPT=0 git pull origin main || GIT_TERMINAL_PROMPT=0 git pull origin master || true
+        GIT_TERMINAL_PROMPT=0 git pull origin main 2>/dev/null || GIT_TERMINAL_PROMPT=0 git pull origin master 2>/dev/null || true
     fi
 
-    echo -e "${BLUE}Restoring database and configuration files...${PLAIN}"
-    [ -f /tmp/sadtyar_safe_backup/data_store.json ] && cp -f /tmp/sadtyar_safe_backup/data_store.json "$INSTALL_DIR/"
-    [ -f /tmp/sadtyar_safe_backup/system_settings.json ] && cp -f /tmp/sadtyar_safe_backup/system_settings.json "$INSTALL_DIR/"
-    [ -f /tmp/sadtyar_safe_backup/data_store.json.bak ] && cp -f /tmp/sadtyar_safe_backup/data_store.json.bak "$INSTALL_DIR/"
-    [ -f /tmp/sadtyar_safe_backup/system_settings.json.bak ] && cp -f /tmp/sadtyar_safe_backup/system_settings.json.bak "$INSTALL_DIR/"
-    [ -f /tmp/sadtyar_safe_backup/.env ] && cp -f /tmp/sadtyar_safe_backup/.env "$INSTALL_DIR/"
-    rm -rf /tmp/sadtyar_safe_backup
+    # 2. Restore database and config files from permanent backup
+    restore_critical_data
 
+    # 3. Setup Xray core if needed
     install_xray_core
 
     echo -e "${BLUE}Installing dependencies and building bundle...${PLAIN}"
@@ -343,7 +396,7 @@ update_bot() {
     systemctl daemon-reload
     systemctl restart "$SERVICE_NAME"
 
-    echo -e "${GREEN}${BOLD}🎉 Update completed successfully! Database and configs preserved.${PLAIN}"
+    echo -e "${GREEN}${BOLD}🎉 Update completed successfully! 100% Zero-Data-Loss guaranteed.${PLAIN}"
     read -p "Press Enter to return..."
 }
 

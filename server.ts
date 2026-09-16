@@ -1058,6 +1058,12 @@ function findBestDataStoreBackup(): any {
   const candidatePaths = [
     path.join(BACKUPS_DIR, 'data_store_latest_healthy.json'),
     path.join(process.cwd(), 'data_store.json.bak'),
+    '/var/lib/sadtyar-data/data_store.json',
+    '/var/lib/sadtyar-data/data_store_latest_healthy.json',
+    '/var/lib/sadtyar-data/data_store.json.bak',
+    '/opt/sadtyar-permanent-backup/data_store.json',
+    '/opt/sadtyar-permanent-backup/data_store_latest_healthy.json',
+    '/tmp/sadtyar_safe_backup/data_store.json',
     path.join(BACKUPS_DIR, 'data_store_snapshot_1.json'),
     path.join(BACKUPS_DIR, 'data_store_snapshot_2.json'),
     path.join(BACKUPS_DIR, 'data_store_snapshot_3.json'),
@@ -1095,6 +1101,10 @@ function findBestSettingsBackup(): any {
   const candidatePaths = [
     path.join(BACKUPS_DIR, 'system_settings_latest_healthy.json'),
     path.join(process.cwd(), 'system_settings.json.bak'),
+    '/var/lib/sadtyar-data/system_settings.json',
+    '/var/lib/sadtyar-data/system_settings_latest_healthy.json',
+    '/opt/sadtyar-permanent-backup/system_settings.json',
+    '/tmp/sadtyar_safe_backup/system_settings.json',
     path.join(BACKUPS_DIR, 'system_settings_snapshot_1.json'),
     path.join(BACKUPS_DIR, 'system_settings_snapshot_2.json'),
     path.join(BACKUPS_DIR, 'system_settings_snapshot_3.json'),
@@ -1520,6 +1530,17 @@ function saveDatabase(immediate = false) {
       }
 
       writeJsonAtomic(DB_FILE, storeData);
+
+      // 3. Mirror to Linux permanent directories if available
+      try {
+        const linuxDirs = ['/var/lib/sadtyar-data', '/opt/sadtyar-permanent-backup'];
+        for (const lDir of linuxDirs) {
+          if (fs.existsSync(lDir)) {
+            writeJsonAtomic(path.join(lDir, 'system_settings.json'), systemData);
+            writeJsonAtomic(path.join(lDir, 'data_store.json'), storeData);
+          }
+        }
+      } catch (mirrorErr) {}
     } catch (err) {
       console.error('Failed to save database:', err);
     }
