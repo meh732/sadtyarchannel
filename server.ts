@@ -978,8 +978,8 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   funNewsCount: 1,
   lastFunNewsPostedAt: null,
 
-  // 6. Future-Proof Digital Tools & AI Toolbox (Channel 1 Independence from Filter/Proxy)
-  digitalToolsEnabled: true,
+  // 6. Future-Proof Digital Tools & AI Toolbox (Channel 1)
+  digitalToolsEnabled: false,
   digitalToolsIntervalHours: 4,
   digitalToolsIntervalMinutes: 240,
   digitalToolsCount: 1,
@@ -987,12 +987,12 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   lastDigitalToolsPostedAt: null,
 
   // 8. AI Trend Prompt Extraction Schedule (Gemini)
-  aiTrendExtractionEnabled: true,
+  aiTrendExtractionEnabled: false,
   aiTrendExtractionIntervalHours: 24,
   lastAiTrendExtractionAt: null,
 
   // 9. Viral & High-Share Rate Content (Channel 1 Booster)
-  viralShareEnabled: true,
+  viralShareEnabled: false,
   viralShareIntervalHours: 24,
   viralShareIntervalMinutes: 1440,
   lastViralSharePostedAt: null,
@@ -6006,6 +6006,73 @@ async function scanAndCleanRecentDuplicates(channelNum: 1 | 2 = 1): Promise<{ sc
   return { scanned: items.length, duplicatesFound, deletedCount };
 }
 
+/**
+ * Intelligent Channel Pacing & Category Anti-Clustering Guard
+ * Inspects recent posts on Channel 1 to enforce:
+ * 1. No 2+ consecutive non-config posts back-to-back
+ * 2. Minimum interval (e.g. 6 hours / 360 min) between any non-config posts on Channel 1
+ * 3. Priority interleaving so VPN/Proxy/Config remains the healthy backbone
+ */
+function getChannelRecentPostStats(channelNum: 1 | 2 = 1, hoursWindow = 8) {
+  if (!db.channelPostHistory || db.channelPostHistory.length === 0) {
+    return {
+      lastCategory: null as string | null,
+      lastPostedAt: null as string | null,
+      lastNonConfigPostedAt: null as string | null,
+      minutesSinceLastNonConfig: Infinity,
+      consecutiveNonConfigs: 0,
+      nonConfigsInWindow: 0,
+      totalInWindow: 0
+    };
+  }
+
+  const cutoff = Date.now() - (hoursWindow * 60 * 60 * 1000);
+  const validHistory = db.channelPostHistory
+    .filter(h => h.channelTarget === channelNum && !h.deletedAsDuplicate)
+    .sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime());
+
+  if (validHistory.length === 0) {
+    return {
+      lastCategory: null,
+      lastPostedAt: null,
+      lastNonConfigPostedAt: null,
+      minutesSinceLastNonConfig: Infinity,
+      consecutiveNonConfigs: 0,
+      nonConfigsInWindow: 0,
+      totalInWindow: 0
+    };
+  }
+
+  const latest = validHistory[0];
+  const lastNonConfig = validHistory.find(h => h.category !== 'configs');
+  const minutesSinceLastNonConfig = lastNonConfig 
+    ? Math.max(0, Math.floor((Date.now() - new Date(lastNonConfig.postedAt).getTime()) / 60000))
+    : Infinity;
+
+  // Count consecutive non-config posts starting from latest
+  let consecutiveNonConfigs = 0;
+  for (const item of validHistory) {
+    if (item.category !== 'configs') {
+      consecutiveNonConfigs++;
+    } else {
+      break;
+    }
+  }
+
+  const inWindow = validHistory.filter(h => new Date(h.postedAt).getTime() >= cutoff);
+  const nonConfigsInWindow = inWindow.filter(h => h.category !== 'configs').length;
+
+  return {
+    lastCategory: latest.category,
+    lastPostedAt: latest.postedAt,
+    lastNonConfigPostedAt: lastNonConfig ? lastNonConfig.postedAt : null,
+    minutesSinceLastNonConfig,
+    consecutiveNonConfigs,
+    nonConfigsInWindow,
+    totalInWindow: inWindow.length
+  };
+}
+
 async function evaluateChannelPostingAllowance(channelNum: 1 | 2, bypassTimeChecks = false) {
   const isCh2 = channelNum === 2;
   const settings = isCh2 ? (db.settings.autoPost?.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
@@ -7287,42 +7354,15 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       }
     }
 
-    let dynamicHeadline = settings.customText && !settings.customText.includes('کانفیگ جدید منتشر شد')
+    const effectiveHeadline = settings.customText && !settings.customText.includes('کانفیگ جدید منتشر شد')
       ? settings.customText
-      : (attachedFunItem?.title 
-          ? `⚡ ${attachedFunItem.title}` 
-          : `${countryFlagsStr || '🚀'} سرورهای پرسرعت V2Ray [ضدفیلتر و پایدار]`);
+      : `${countryFlagsStr || '🚀'} سرورهای پرسرعت V2Ray [ضدفیلتر و پایدار]`;
 
-    const skipSummary = isCh2 || settings?.skipPostSummary === true;
     let text = '';
-    if (attachedFunItem) {
-      const cleanFunText = sanitizeContentForTelegramPost(attachedFunItem.text || '', targetChannel);
-      const cleanFunTitle = sanitizePostTitle(attachedFunItem.title || '', targetChannel);
-      if (isTelegramSourceAd(cleanFunText, cleanFunTitle).isAd) {
-        attachedFunItem = null;
-      } else if (skipSummary) {
-        if (cleanFunText) {
-          text += `${escapeHtml(cleanFunText.slice(0, 500))}\n\n`;
-        } else if (cleanFunTitle) {
-          text += `${escapeHtml(cleanFunTitle)}\n\n`;
-        }
-        text += `🎁 <b>کانفیگ هدیه همراه با این پست 👇</b>\n`;
-        text += `📶 <b>تست‌شده روی تمام اپراتورها 🟢</b>\n\n`;
-      } else {
-        text += `🎭 <b>${escapeHtml(cleanFunTitle || 'لبخند روزانه')}</b>\n`;
-        text += `━━━━━━━━━━━━━━━━━━━━\n`;
-        if (cleanFunText && cleanFunText !== cleanFunTitle) {
-          text += `${escapeHtml(cleanFunText.slice(0, 400))}\n\n`;
-        }
-        text += `🎁 <b>کانفیگ هدیه همراه با این پست 👇</b>\n`;
-        text += `📶 <b>تست‌شده روی تمام اپراتورها 🟢</b>\n\n`;
-      }
-    } else {
-      text += `⚡ <b>${escapeHtml(dynamicHeadline)}</b>\n`;
-      text += `━━━━━━━━━━━━━━━━━━━━\n`;
-      text += `📶 <b>تست‌شده روی: همراه اول 🟢 | ایرانسل 🟢 | مخابرات 🟢</b>\n`;
-      text += `🎯 <i>مناسب اینستاگرام، یوتیوب ۴K و وب‌گردی بدون قطعی</i>\n\n`;
-    }
+    text += `⚡ <b>${escapeHtml(effectiveHeadline)}</b>\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `📶 <b>تست‌شده روی: همراه اول 🟢 | ایرانسل 🟢 | مخابرات 🟢</b>\n`;
+    text += `🎯 <i>مناسب اینستاگرام، یوتیوب ۴K و وب‌گردی بدون قطعی</i>\n\n`;
 
     let needsFullPackFile = false;
     let fullPackConfigsContent = '';
@@ -10100,14 +10140,14 @@ async function checkAndTriggerAutoPost() {
 
     const candidates: PostCandidate[] = [];
 
-    // 1. Configs & Proxies Schedule Check
+    // 1. Configs & Proxies Schedule Check (Channel 1 Primary Core)
     if (ap.configsEnabled !== false && ((ap.configCount || 0) > 0 || (ap.proxyCount || 0) > 0)) {
       const configMinutes = Number(ap.configIntervalMinutes) || (Number(ap.configIntervalHours) ? Number(ap.configIntervalHours) * 60 : (Number(ap.postIntervalHours) ? Number(ap.postIntervalHours) * 60 : 240));
       const intervalMs = Math.max(30, configMinutes) * 60 * 1000;
       const lastTime = ap.lastConfigsPostedAt || ap.lastPostedAt;
       const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
       if (elapsed >= intervalMs) {
-        const p = (tehran.hour >= 12 && tehran.hour <= 14) || (tehran.hour >= 20 && tehran.hour <= 23) ? 10 : 5;
+        const p = 20; // Highest priority: Channel 1 is strictly a VPN/Proxy channel
         candidates.push({
           category: 'configs',
           isDue: true,
@@ -10118,8 +10158,8 @@ async function checkAndTriggerAutoPost() {
       }
     }
 
-    // 2. Tech News Schedule Check
-    if (ap.techNewsEnabled !== false && (ap.techNewsCount || 0) > 0) {
+    // 2. Tech News Schedule Check (Only if explicitly enabled)
+    if (ap.techNewsEnabled === true && (ap.techNewsCount || 0) > 0) {
       const newsMinutes = Number(ap.techNewsIntervalMinutes) || (Number(ap.techNewsIntervalHours) ? Number(ap.techNewsIntervalHours) * 60 : 240);
       const intervalMs = Math.max(30, newsMinutes) * 60 * 1000;
       const lastTime = ap.lastTechNewsPostedAt;
@@ -10135,43 +10175,41 @@ async function checkAndTriggerAutoPost() {
       }
     }
 
-    // 3. Tech Tricks & Secrets Schedule Check
-    if (ap.techTricksEnabled !== false && (ap.techTricksCount || 0) > 0) {
+    // 3. Tech Tricks & Secrets Schedule Check (Only if explicitly enabled)
+    if (ap.techTricksEnabled === true && (ap.techTricksCount || 0) > 0) {
       const tricksMinutes = Number(ap.techTricksIntervalMinutes) || (Number(ap.techTricksIntervalHours) ? Number(ap.techTricksIntervalHours) * 60 : 360);
       const intervalMs = Math.max(30, tricksMinutes) * 60 * 1000;
       const lastTime = ap.lastTechTricksPostedAt;
       const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
       if (elapsed >= intervalMs) {
-        const p = (tehran.hour >= 15 && tehran.hour <= 20) ? 9 : 6;
         candidates.push({
           category: 'tricks',
           isDue: true,
           timeSinceDueMs: elapsed - intervalMs,
-          goldenPriority: p,
+          goldenPriority: 5,
           run: () => executeTechTricksAutoPost(1, ap.targetChannel)
         });
       }
     }
 
-    // 4. AI Prompts Schedule Check
-    if (ap.aiPromptsEnabled !== false && (ap.aiPromptsCount || 0) > 0) {
+    // 4. AI Prompts Schedule Check (Only if explicitly enabled)
+    if (ap.aiPromptsEnabled === true && (ap.aiPromptsCount || 0) > 0) {
       const promptsMinutes = Number(ap.aiPromptsIntervalMinutes) || (Number(ap.aiPromptsIntervalHours) ? Number(ap.aiPromptsIntervalHours) * 60 : 360);
       const intervalMs = Math.max(30, promptsMinutes) * 60 * 1000;
       const lastTime = ap.lastAiPromptsPostedAt;
       const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
       if (elapsed >= intervalMs) {
-        const p = (tehran.hour >= 18 && tehran.hour <= 22) ? 8 : 4;
         candidates.push({
           category: 'prompts',
           isDue: true,
           timeSinceDueMs: elapsed - intervalMs,
-          goldenPriority: p,
+          goldenPriority: 4,
           run: () => executeAiPromptsAutoPost(1, ap.targetChannel)
         });
       }
     }
 
-    // 5. Fun & General News Schedule Check (Channel 1)
+    // 5. Fun & General News Schedule Check (Channel 1 - Only if explicitly enabled)
     if (ap.funNewsEnabled === true && (ap.funNewsCount || 0) > 0) {
       const funMinutes = Number(ap.funNewsIntervalMinutes) || (Number(ap.funNewsIntervalHours) ? Number(ap.funNewsIntervalHours) * 60 : 180);
       const intervalMs = Math.max(30, funMinutes) * 60 * 1000;
@@ -10188,19 +10226,18 @@ async function checkAndTriggerAutoPost() {
       }
     }
 
-    // 6. Digital Tools & Future-Proof Tech Schedule (Channel 1 Independence from Filter)
-    if (ap.digitalToolsEnabled !== false && (ap.digitalToolsCount || 0) > 0) {
+    // 6. Digital Tools Schedule (Channel 1 - Only if explicitly enabled)
+    if (ap.digitalToolsEnabled === true && (ap.digitalToolsCount || 0) > 0) {
       const toolsMinutes = Number(ap.digitalToolsIntervalMinutes) || (Number(ap.digitalToolsIntervalHours) ? Number(ap.digitalToolsIntervalHours) * 60 : 240);
       const intervalMs = Math.max(30, toolsMinutes) * 60 * 1000;
       const lastTime = ap.lastDigitalToolsPostedAt;
       const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
       if (elapsed >= intervalMs) {
-        const p = (tehran.hour >= 16 && tehran.hour <= 22) ? 9 : 6;
         candidates.push({
           category: 'tools',
           isDue: true,
           timeSinceDueMs: elapsed - intervalMs,
-          goldenPriority: p,
+          goldenPriority: 4,
           run: () => executeDigitalToolsAutoPost(1, ap.targetChannel)
         });
       }
@@ -10244,15 +10281,46 @@ async function checkAndTriggerAutoPost() {
       }
     }
 
-    // If candidates are ready, pick the single highest priority / longest waiting one
+    // If candidates are ready, apply Intelligent Interleaving & Anti-Clustering rules for Channel 1
     if (candidates.length > 0) {
-      candidates.sort((a, b) => {
-        if (ap.smartGoldenHours !== false && tehran.isGoldenHour && a.goldenPriority !== b.goldenPriority) {
-          return b.goldenPriority - a.goldenPriority;
+      const recentStats = getChannelRecentPostStats(1, 10);
+      
+      // Filter out non-config candidates if:
+      // 1. The last post on Channel 1 was already non-config (strict 1:1 or 2:1 config interleave)
+      // 2. OR less than 4 hours (240 minutes) have passed since the last non-config post on Channel 1
+      let filteredCandidates = candidates.filter(c => {
+        if (c.category === 'configs') return true; // Configs/VPN always allowed
+        
+        // Non-config checks for Channel 1:
+        if (recentStats.consecutiveNonConfigs >= 1) {
+          // Channel 1 MUST receive a config/VPN post before another non-config post is allowed
+          return false;
         }
-        return b.timeSinceDueMs - a.timeSinceDueMs;
+        if (recentStats.minutesSinceLastNonConfig < 240) {
+          // Keep at least 4 hours between any non-config posts in Channel 1 to avoid clustering
+          return false;
+        }
+        return true;
       });
-      await candidates[0].run();
+
+      // If all candidates were filtered out but a config candidate is available, pick configs
+      if (filteredCandidates.length === 0) {
+        filteredCandidates = candidates.filter(c => c.category === 'configs');
+      }
+
+      if (filteredCandidates.length > 0) {
+        filteredCandidates.sort((a, b) => {
+          // Always give config posts highest preference in Channel 1
+          if (a.category === 'configs' && b.category !== 'configs') return -1;
+          if (b.category === 'configs' && a.category !== 'configs') return 1;
+
+          if (ap.smartGoldenHours !== false && tehran.isGoldenHour && a.goldenPriority !== b.goldenPriority) {
+            return b.goldenPriority - a.goldenPriority;
+          }
+          return b.timeSinceDueMs - a.timeSinceDueMs;
+        });
+        await filteredCandidates[0].run();
+      }
     }
   }
 }

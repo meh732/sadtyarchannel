@@ -35,19 +35,19 @@
       "proxyCount": 1,
       "customText": "💎 کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده ما تقدیم به شما:",
       "lastConfigsPostedAt": null,
-      "techNewsEnabled": true,
+      "techNewsEnabled": false,
       "techNewsIntervalHours": 6,
       "techNewsIntervalMinutes": 360,
       "techNewsCount": 2,
       "lastTechNewsPostedAt": null,
-      "techTricksEnabled": true,
+      "techTricksEnabled": false,
       "techTricksIntervalHours": 6,
       "techTricksIntervalMinutes": 360,
       "techTricksCount": 2,
       "lastTechTricksPostedAt": null,
-      "aiPromptsEnabled": true,
-      "aiPromptsIntervalHours": 8,
-      "aiPromptsIntervalMinutes": 480,
+      "aiPromptsEnabled": false,
+      "aiPromptsIntervalHours": 6,
+      "aiPromptsIntervalMinutes": 360,
       "aiPromptsCount": 1,
       "lastAiPromptsPostedAt": null,
       "funNewsEnabled": false,
@@ -56,8 +56,8 @@
       "funNewsCount": 1,
       "lastFunNewsPostedAt": null,
       "digitalToolsEnabled": true,
-      "digitalToolsIntervalHours": 6,
-      "digitalToolsIntervalMinutes": 360,
+      "digitalToolsIntervalHours": 4,
+      "digitalToolsIntervalMinutes": 240,
       "digitalToolsCount": 1,
       "digitalToolsCategories": [
         "ai_tools",
@@ -67,10 +67,10 @@
         "must_apps"
       ],
       "lastDigitalToolsPostedAt": null,
-      "aiTrendExtractionEnabled": false,
+      "aiTrendExtractionEnabled": true,
       "aiTrendExtractionIntervalHours": 24,
-      "lastAiTrendExtractionAt": null,
-      "viralShareEnabled": false,
+      "lastAiTrendExtractionAt": "2026-09-16T08:58:45.831Z",
+      "viralShareEnabled": true,
       "viralShareIntervalHours": 24,
       "viralShareIntervalMinutes": 1440,
       "lastViralSharePostedAt": null,
@@ -168,8 +168,8 @@
       "name": "V2Ray Alpha Configs",
       "urlOrHandle": "@v2ray_alpha",
       "enabled": true,
-      "extractedCount": 107,
-      "lastExtracted": "2026-09-16T09:03:43.861Z"
+      "extractedCount": 94,
+      "lastExtracted": "2026-09-16T08:58:52.675Z"
     },
     {
       "id": "src-2",
@@ -178,7 +178,7 @@
       "urlOrHandle": "@v2ray_free_conf",
       "enabled": true,
       "extractedCount": 20,
-      "lastExtracted": "2026-09-16T09:03:43.361Z"
+      "lastExtracted": "2026-09-16T08:58:50.797Z"
     },
     {
       "id": "src-3",
@@ -187,7 +187,7 @@
       "urlOrHandle": "@vpn_ocean",
       "enabled": true,
       "extractedCount": 10,
-      "lastExtracted": "2026-09-16T09:03:43.657Z"
+      "lastExtracted": "2026-09-16T08:58:52.640Z"
     },
     {
       "id": "src-4",
@@ -196,7 +196,7 @@
       "urlOrHandle": "@PrivateVPNs",
       "enabled": true,
       "extractedCount": 14,
-      "lastExtracted": "2026-09-16T09:03:43.472Z"
+      "lastExtracted": "2026-09-16T08:58:50.868Z"
     },
     {
       "id": "src-5",
@@ -204,8 +204,8 @@
       "name": "Proxy MTProto Live",
       "urlOrHandle": "@ProxyMTProto",
       "enabled": true,
-      "extractedCount": 39,
-      "lastExtracted": "2026-09-16T09:03:43.499Z"
+      "extractedCount": 38,
+      "lastExtracted": "2026-09-16T08:58:50.845Z"
     },
     {
       "id": "src-6",
@@ -213,8 +213,8 @@
       "name": "BarryFar All Configs Sub",
       "urlOrHandle": "https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_Sub.txt",
       "enabled": true,
-      "extractedCount": 7027,
-      "lastExtracted": "2026-09-16T09:03:39.461Z"
+      "extractedCount": 6834,
+      "lastExtracted": "2026-09-16T08:58:52.353Z"
     },
     {
       "id": "src-7",
@@ -223,7 +223,7 @@
       "urlOrHandle": "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
       "enabled": true,
       "extractedCount": 4017,
-      "lastExtracted": "2026-09-16T09:03:44.315Z"
+      "lastExtracted": "2026-09-16T08:58:53.754Z"
     },
     {
       "id": "src-8",
@@ -231,8 +231,8 @@
       "name": "Epodonios All Configs Sub",
       "urlOrHandle": "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt",
       "enabled": true,
-      "extractedCount": 4760,
-      "lastExtracted": "2026-09-16T09:03:41.795Z"
+      "extractedCount": 4981,
+      "lastExtracted": "2026-09-16T08:58:51.355Z"
     },
     {
       "id": "src-9",
@@ -240,8 +240,8 @@
       "name": "Mineral Nodes Hub",
       "urlOrHandle": "https://raw.githubusercontent.com/LalatinaHub/Mineral/master/result/nodes",
       "enabled": true,
-      "extractedCount": 1767,
-      "lastExtracted": "2026-09-16T09:03:44.025Z"
+      "extractedCount": 1760,
+      "lastExtracted": "2026-09-16T08:58:53.139Z"
     }
   ],
   "forceJoinChannels": [
