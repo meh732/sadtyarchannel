@@ -1219,7 +1219,7 @@ function loadDatabase() {
     if (finalSettings.autoPost.funWithConfigEnabled === undefined) {
       finalSettings.autoPost.funWithConfigEnabled = true;
     }
-    // Ensure default config count is set to 20 if previously set to old low defaults (5 or 3 or 0/undefined)
+    // Ensure default config count for Channel 1 is set to 20 if previously set to old low defaults (5 or 3 or 0/undefined)
     if (!finalSettings.autoPost.configCount || finalSettings.autoPost.configCount === 5 || finalSettings.autoPost.configCount === 3) {
       finalSettings.autoPost.configCount = 20;
     }
@@ -1230,9 +1230,6 @@ function loadDatabase() {
       if (!Array.isArray(finalSettings.autoPost.channel2.sourceChannels) || finalSettings.autoPost.channel2.sourceChannels.length === 0) {
         finalSettings.autoPost.channel2.sourceChannels = [...DEFAULT_CHANNEL2_SETTINGS.sourceChannels];
       }
-    }
-    if (!finalSettings.autoPost.channel2.configCount || finalSettings.autoPost.channel2.configCount === 5 || finalSettings.autoPost.channel2.configCount === 3) {
-      finalSettings.autoPost.channel2.configCount = 20;
     }
 
     // Automatically resolve and set the correct public Web panel URL for Telegram WebApp (TWA)
@@ -7226,10 +7223,6 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
   try {
     addLog('info', `در حال آماده‌سازی و ارسال پست کانفیگ‌ها و پروکسی‌ها به کانال ${channelTargetNum} (${targetChannel})...`);
 
-    // Get requested configs count
-    const rawConfCount = typeof settings.configCount === 'number' ? settings.configCount : parseInt(String(settings.configCount), 10);
-    const configLimit = !isNaN(rawConfCount) && rawConfCount >= 0 ? rawConfCount : 20;
-    
     // Live channel inspection & Anti-duplicate check
     const liveSnapshot = await inspectChannelLiveContent(targetChannel);
     const targetChannelKey = isCh2 ? 'postedToChannel2' : 'postedToChannel1';
@@ -7246,73 +7239,7 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       return true;
     };
 
-    let selectedConfigs: ConfigItem[] = [];
-
-    if (configLimit > 0) {
-      let unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
-      let unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
-      let allUnposted = [...unpostedWorking, ...unpostedUntested];
-
-      // If available unposted configs are low, scrape fresh configs immediately from all sources
-      if (allUnposted.length < configLimit) {
-        addLog('info', `موجودی کانفیگ‌های جدید و منتشرنشده برای کانال ${channelTargetNum} اندک است (${allUnposted.length} عدد). در حال استخراج و دریافت کانفیگ‌های تازه از ساب‌ها و منابع...`);
-        try {
-          await triggerBulkScrape();
-        } catch (scrapeErr) {
-          console.error('Auto scrape on low unposted configs error:', scrapeErr);
-        }
-        unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
-        unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
-        allUnposted = [...unpostedWorking, ...unpostedUntested];
-      }
-
-      if (allUnposted.length > 0) {
-        // STRICT DUPLICATE PREVENTION: Pick ONLY fresh unposted configs (NEVER pick previously posted items)
-        const shuffled = [...allUnposted].sort(() => 0.5 - Math.random());
-        selectedConfigs = shuffled.slice(0, Math.min(configLimit, shuffled.length));
-      }
-    }
-
-    // Get requested proxies count
-    const rawProxyCount = typeof settings.proxyCount === 'number' ? settings.proxyCount : parseInt(String(settings.proxyCount), 10);
-    const proxyLimit = !isNaN(rawProxyCount) && rawProxyCount >= 0 ? rawProxyCount : 1;
-    
-    let selectedProxies: ProxyItem[] = [];
-
-    if (proxyLimit > 0) {
-      const allProxies = db.proxies || [];
-      const unpostedWorkingProxies = allProxies.filter(p => p.status === 'working' && isChProxyValid(p));
-      const unpostedUntestedProxies = allProxies.filter(p => p.status === 'untested' && isChProxyValid(p));
-      const allUnpostedProxies = [...unpostedWorkingProxies, ...unpostedUntestedProxies];
-
-      if (allUnpostedProxies.length > 0) {
-        // STRICT DUPLICATE PREVENTION: Pick ONLY fresh unposted proxies
-        const shuffled = [...allUnpostedProxies].sort(() => 0.5 - Math.random());
-        selectedProxies = shuffled.slice(0, Math.min(proxyLimit, shuffled.length));
-      }
-    }
-
-    if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
-      addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} انجام نشد: هیچ کانفیگ یا پروکسی جدید و منتشرنشده‌ای یافت نشد (جهت رعایت اکید قانون عدم ارسال تکراری، ارسال متوقف گردید).`);
-      return false;
-    }
-
-    let channelBranding = getEffectiveChannelBranding(channelTargetNum, targetChannel, settings.adText);
-
-    // Collect top countries for headline
-    const countryBadges: string[] = [];
-    const previewCount = Math.min(selectedConfigs.length, 6);
-    for (let i = 0; i < previewCount; i++) {
-      const conf = selectedConfigs[i];
-      const loc = await getIpLocation(conf.server || '');
-      const flag = getFlagEmoji(loc.countryCode);
-      if (flag && !countryBadges.includes(flag)) {
-        countryBadges.push(flag);
-      }
-    }
-    const countryFlagsStr = countryBadges.slice(0, 4).join(' ');
-
-    // Check if Fun + Config combined mode is active (channel 1 or 2)
+    // 1. Check if Fun + Config combined mode is active (channel 1 or 2)
     // For Channel 1: enabled by default unless explicitly disabled (settings.funWithConfigEnabled !== false)
     // For Channel 2: enabled if explicitly configured (settings.funWithConfigEnabled === true)
     const isFunWithConfig = channelTargetNum === 1
@@ -7321,7 +7248,7 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
     let attachedFunItem: FunNewsItem | null = null;
 
     if (isFunWithConfig) {
-      // Source channels configured for Channel 2 (dedicated fun/content channels specified by user)
+      // Source channels configured for Channel 2
       const ch2DedicatedSources = (Array.isArray(db.settings.autoPost?.channel2?.sourceChannels) && db.settings.autoPost.channel2.sourceChannels.length > 0)
         ? db.settings.autoPost.channel2.sourceChannels
             .map(s => s.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim())
@@ -7330,7 +7257,6 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
 
       let funChannelHandles: string[] = [];
       if (ch2DedicatedSources.length > 0) {
-        // Strictly prioritize channels configured for Channel 2
         funChannelHandles = ch2DedicatedSources;
       } else {
         const enabledFunSources = (db.funSources || []).filter(s => s.enabled);
@@ -7356,7 +7282,6 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
         return true;
       });
 
-      // If available unposted fun items are low (< 3), automatically scrape fresh items from the sources
       if (eligibleFun.length < 3) {
         try {
           const sourcesToExtract = ch2DedicatedSources.length > 0 ? ch2DedicatedSources : (funChannelHandles.length > 0 ? funChannelHandles : undefined);
@@ -7376,12 +7301,9 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
             if (funChannelHandles.length > 0 && !funChannelHandles.includes(itemSrc)) return false;
             return true;
           });
-        } catch (e) {
-          // ignore extraction error
-        }
+        } catch (e) {}
       }
 
-      // If all items have already been posted to this channel, recycle clean items so post is never left without fun content
       if (eligibleFun.length === 0) {
         let cleanRecyclable = (db.funNewsItems || []).filter(item => {
           if (isTelegramSourceAd(item.text, item.title).isAd) return false;
@@ -7398,7 +7320,6 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
           return true;
         });
 
-        // Fallback: if no items found strictly matching Channel 2 handles, recycle any clean fun item in db
         if (cleanRecyclable.length === 0 && (db.funNewsItems || []).length > 0) {
           cleanRecyclable = (db.funNewsItems || []).filter(item => {
             if (isTelegramSourceAd(item.text, item.title).isAd) return false;
@@ -7419,7 +7340,6 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       }
 
       if (eligibleFun.length > 0) {
-        // Rotates through distinct fun channels and picks the latest unposted post of each channel
         const pickedList = selectFunNewsItemsWithRoundRobin(eligibleFun, 1, channelTargetNum);
         if (pickedList.length > 0) {
           attachedFunItem = pickedList[0];
@@ -7430,94 +7350,230 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       }
     }
 
+    // 2. Determine config count rule:
+    // Channel 1: Combined posts (Fun Meme/Joke + Configs attached) get strictly 5 configs (clean caption under 1024 chars).
+    // Channel 1: Normal posts (Pure Configs) get 20 configs (or settings.configCount if > 5, default 20).
+    // Channel 2: Uses its own settings without forcing Channel 1's combined/20 rules.
+    const isCombinedPost = Boolean(attachedFunItem);
+    const rawConfCount = typeof settings.configCount === 'number' ? settings.configCount : parseInt(String(settings.configCount), 10);
+    const configLimit = isCh2
+      ? (!isNaN(rawConfCount) && rawConfCount > 0 ? rawConfCount : 20)
+      : (isCombinedPost
+          ? 5
+          : (!isNaN(rawConfCount) && rawConfCount > 0 ? (rawConfCount <= 5 ? 20 : rawConfCount) : 20));
+
+    let selectedConfigs: ConfigItem[] = [];
+
+    if (configLimit > 0) {
+      let unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
+      let unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
+      let allUnposted = [...unpostedWorking, ...unpostedUntested];
+
+      if (allUnposted.length < configLimit) {
+        addLog('info', `موجودی کانفیگ‌های جدید و منتشرنشده برای کانال ${channelTargetNum} اندک است (${allUnposted.length} عدد). در حال استخراج و دریافت کانفیگ‌های تازه از ساب‌ها و منابع...`);
+        try {
+          await triggerBulkScrape();
+        } catch (scrapeErr) {
+          console.error('Auto scrape on low unposted configs error:', scrapeErr);
+        }
+        unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
+        unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
+        allUnposted = [...unpostedWorking, ...unpostedUntested];
+      }
+
+      if (allUnposted.length > 0) {
+        const shuffled = [...allUnposted].sort(() => 0.5 - Math.random());
+        selectedConfigs = shuffled.slice(0, Math.min(configLimit, shuffled.length));
+      }
+    }
+
+    // Get requested proxies count
+    const rawProxyCount = typeof settings.proxyCount === 'number' ? settings.proxyCount : parseInt(String(settings.proxyCount), 10);
+    const proxyLimit = !isNaN(rawProxyCount) && rawProxyCount >= 0 ? rawProxyCount : 1;
+    
+    let selectedProxies: ProxyItem[] = [];
+
+    if (proxyLimit > 0) {
+      const allProxies = db.proxies || [];
+      const unpostedWorkingProxies = allProxies.filter(p => p.status === 'working' && isChProxyValid(p));
+      const unpostedUntestedProxies = allProxies.filter(p => p.status === 'untested' && isChProxyValid(p));
+      const allUnpostedProxies = [...unpostedWorkingProxies, ...unpostedUntestedProxies];
+
+      if (allUnpostedProxies.length > 0) {
+        const shuffled = [...allUnpostedProxies].sort(() => 0.5 - Math.random());
+        selectedProxies = shuffled.slice(0, Math.min(proxyLimit, shuffled.length));
+      }
+    }
+
+    if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
+      addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} انجام نشد: هیچ کانفیگ یا پروکسی جدید و منتشرنشده‌ای یافت نشد (جهت رعایت اکید قانون عدم ارسال تکراری، ارسال متوقف گردید).`);
+      return false;
+    }
+
+    let channelBranding = getEffectiveChannelBranding(channelTargetNum, targetChannel, settings.adText);
+
+    // Collect top countries for headline
+    const countryBadges: string[] = [];
+    const previewCount = Math.min(selectedConfigs.length, 6);
+    const configLocations: { country: string; flag: string }[] = [];
+    for (let i = 0; i < previewCount; i++) {
+      const conf = selectedConfigs[i];
+      const loc = await getIpLocation(conf.server || '');
+      const flag = getFlagEmoji(loc.countryCode);
+      if (flag && !countryBadges.includes(flag)) {
+        countryBadges.push(flag);
+      }
+      configLocations.push({ country: loc.country, flag });
+    }
+    const countryFlagsStr = countryBadges.slice(0, 4).join(' ');
+
+    const proxyLocations: { country: string; flag: string }[] = [];
+    const proxyPreviewCount = Math.min(selectedProxies.length, 6);
+    for (let i = 0; i < proxyPreviewCount; i++) {
+      const proxy = selectedProxies[i];
+      const loc = await getIpLocation(proxy.server || '');
+      const flag = getFlagEmoji(loc.countryCode);
+      proxyLocations.push({ country: loc.country, flag });
+    }
+
     const effectiveHeadline = settings.customText && !settings.customText.includes('کانفیگ جدید منتشر شد')
       ? settings.customText
       : `${countryFlagsStr || '🚀'} سرورهای پرسرعت V2Ray [ضدفیلتر و پایدار]`;
 
-    let text = '';
-    text += `⚡ <b>${escapeHtml(effectiveHeadline)}</b>\n`;
-    text += `━━━━━━━━━━━━━━━━━━━━\n`;
-    text += `📶 <b>تست‌شده روی: همراه اول 🟢 | ایرانسل 🟢 | مخابرات 🟢</b>\n`;
-    text += `🎯 <i>مناسب اینستاگرام، یوتیوب ۴K و وب‌گردی بدون قطعی</i>\n\n`;
-
     let needsFullPackFile = false;
     let fullPackConfigsContent = '';
 
-    // Show simulated ping only if explicitly enabled (default is false because ping varies per user connection)
+    // Generate all branded configs
+    const effectiveRemarkBranding = isCh2 ? channelBranding : (channelBranding || db.settings.branding);
+    const allBrandedList = selectedConfigs.map(conf => applyBrandingToConfig(conf.raw, effectiveRemarkBranding));
+    fullPackConfigsContent = allBrandedList.join('\n');
+
+    let inlineBatch = '';
+    let inlineCount = 0;
+    for (const confStr of allBrandedList) {
+      if ((inlineBatch + confStr + '\n').length < 3200) {
+        inlineBatch += (inlineBatch ? '\n' : '') + confStr;
+        inlineCount++;
+      } else {
+        break;
+      }
+    }
+
+    if (settings.postFiles && inlineCount < selectedConfigs.length) {
+      needsFullPackFile = true;
+    }
+
     const showPing = settings.displayPingInPosts === true;
 
-    if (selectedConfigs.length > 0) {
-      text += `🚀 <b>پک ${selectedConfigs.length} کانفیگ اختصاصی V2Ray:</b>\n\n`;
-      
-      for (let i = 0; i < previewCount; i++) {
-        const conf = selectedConfigs[i];
-        const loc = await getIpLocation(conf.server || '');
-        const flag = getFlagEmoji(loc.countryCode);
-        const pingText = showPing 
-          ? (conf.latency ? `⚡ <code>${conf.latency}ms</code>` : '🟢 فعال')
-          : '🟢 فعال';
-        const proto = (conf.protocol || 'V2RAY').toUpperCase();
-        text += `▫️ <b>[${proto}]</b> ${loc.country} ${flag} ╶─╴ ${pingText}\n`;
-      }
+    // Helper to format post text with optional verbose intro/outro explanations
+    const buildPostText = (includeVerboseExplanations: boolean, customInlineBatch?: string, customInlineCount?: number) => {
+      let t = '';
 
-      if (selectedConfigs.length > previewCount) {
-        text += `\n<i>▫️ و ${selectedConfigs.length - previewCount} کانفیگ دیگر در کادر زیر...</i>\n`;
-      }
-
-      // Generate all branded configs
-      const effectiveRemarkBranding = isCh2 ? channelBranding : (channelBranding || db.settings.branding);
-      const allBrandedList = selectedConfigs.map(conf => applyBrandingToConfig(conf.raw, effectiveRemarkBranding));
-      fullPackConfigsContent = allBrandedList.join('\n');
-
-      let inlineBatch = '';
-      let inlineCount = 0;
-      for (const confStr of allBrandedList) {
-        if ((inlineBatch + confStr + '\n').length < 3200) {
-          inlineBatch += (inlineBatch ? '\n' : '') + confStr;
-          inlineCount++;
-        } else {
-          break;
+      if (attachedFunItem) {
+        const cleanFunText = sanitizeContentForTelegramPost(attachedFunItem.text || attachedFunItem.title || '', targetChannel);
+        if (cleanFunText) {
+          const maxFunLen = includeVerboseExplanations ? 350 : 150;
+          t += `😂 <b>${escapeHtml(cleanFunText.slice(0, maxFunLen))}</b>\n`;
+          t += `━━━━━━━━━━━━━━━━━━━━\n\n`;
         }
       }
 
-      if (settings.postFiles && inlineCount < selectedConfigs.length) {
-        needsFullPackFile = true;
+      t += `⚡ <b>${escapeHtml(effectiveHeadline)}</b>\n`;
+      t += `━━━━━━━━━━━━━━━━━━━━\n`;
+
+      if (includeVerboseExplanations) {
+        t += `📶 <b>تست‌شده روی: همراه اول 🟢 | ایرانسل 🟢 | مخابرات 🟢</b>\n`;
+        t += `🎯 <i>مناسب اینستاگرام، یوتیوب ۴K و وب‌گردی بدون قطعی</i>\n\n`;
+      } else {
+        t += `\n`;
       }
 
-      if (inlineBatch) {
-        const copyTitle = inlineCount === selectedConfigs.length 
-          ? `📋 <b>کپی یکجای تمامی ${selectedConfigs.length} کانفیگ (روی کادر زیر لمس کنید):</b>`
-          : `📋 <b>کپی یکجای کانفیگ‌ها (${inlineCount} از ${selectedConfigs.length} عدد):</b>`;
-        text += `\n${copyTitle}\n`;
-        text += `<blockquote expandable><code>${escapeHtml(inlineBatch)}</code></blockquote>\n\n`;
+      const activeBatch = customInlineBatch !== undefined ? customInlineBatch : inlineBatch;
+      const activeCount = customInlineCount !== undefined ? customInlineCount : inlineCount;
+
+      if (selectedConfigs.length > 0) {
+        t += `🚀 <b>پک ${selectedConfigs.length} کانفیگ اختصاصی V2Ray:</b>\n\n`;
+        
+        for (let i = 0; i < previewCount; i++) {
+          const conf = selectedConfigs[i];
+          const loc = configLocations[i] || { country: 'آلمان', flag: '🇩🇪' };
+          const pingText = (showPing && includeVerboseExplanations)
+            ? (conf.latency ? `⚡ <code>${conf.latency}ms</code>` : '🟢 فعال')
+            : '🟢 فعال';
+          const proto = (conf.protocol || 'V2RAY').toUpperCase();
+          t += `▫️ <b>[${proto}]</b> ${loc.country} ${loc.flag} ╶─╴ ${pingText}\n`;
+        }
+
+        if (selectedConfigs.length > previewCount) {
+          t += `\n<i>▫️ و ${selectedConfigs.length - previewCount} کانفیگ دیگر در کادر زیر...</i>\n`;
+        }
+
+        if (activeBatch) {
+          const copyTitle = activeCount === selectedConfigs.length 
+            ? `📋 <b>کپی یکجای تمامی ${selectedConfigs.length} کانفیگ (روی کادر زیر لمس کنید):</b>`
+            : `📋 <b>کپی یکجای کانفیگ‌ها (${activeCount} از ${selectedConfigs.length} عدد):</b>`;
+          t += `\n${copyTitle}\n`;
+          t += `<blockquote expandable><code>${escapeHtml(activeBatch)}</code></blockquote>\n\n`;
+        }
       }
-    }
 
-    // Append proxies
-    if (selectedProxies.length > 0) {
-      text += `🔌 <b>پروکسی‌های فعال و بدون قطعی تلگرام:</b>\n\n`;
-      const proxyPreviewCount = Math.min(selectedProxies.length, 6);
-      for (let i = 0; i < proxyPreviewCount; i++) {
-        const proxy = selectedProxies[i];
-        const loc = await getIpLocation(proxy.server || '');
-        const flag = getFlagEmoji(loc.countryCode);
-        const pingText = showPing
-          ? (proxy.latency ? `⚡ <code>${proxy.latency}ms</code>` : '🟢 فعال')
-          : '🟢 فعال';
-        const pType = (proxy.type || 'MTPROTO').toUpperCase();
-        text += `▫️ <b>[${pType}]</b> ${loc.country} ${flag} ╶─╴ ${pingText}\n`;
+      // Append proxies
+      if (selectedProxies.length > 0) {
+        t += `🔌 <b>پروکسی‌های فعال و بدون قطعی تلگرام:</b>\n\n`;
+        for (let i = 0; i < proxyPreviewCount; i++) {
+          const proxy = selectedProxies[i];
+          const loc = proxyLocations[i] || { country: 'آلمان', flag: '🇩🇪' };
+          const pingText = showPing
+            ? (proxy.latency ? `⚡ <code>${proxy.latency}ms</code>` : '🟢 فعال')
+            : '🟢 فعال';
+          const pType = (proxy.type || 'MTPROTO').toUpperCase();
+          t += `▫️ <b>[${pType}]</b> ${loc.country} ${loc.flag} ╶─╴ ${pingText}\n`;
+        }
+        t += `\n<i>👇 جهت اتصال به پروکسی‌ها دکمه‌های زیر را لمس نمایید:</i>\n\n`;
       }
-      text += `\n<i>👇 جهت اتصال به پروکسی‌ها دکمه‌های زیر را لمس نمایید:</i>\n\n`;
+
+      if (needsFullPackFile || (activeCount < selectedConfigs.length)) {
+        t += `\n📁 <i>فایل متنی شامل تمام ${selectedConfigs.length} کانفیگ نیز ضمیمه شد.</i>\n`;
+      }
+
+      if (includeVerboseExplanations) {
+        t += `\n❤️ <i>با فوروارد کردن این پست برای دوستانتان، از ما حمایت کنید.</i>\n`;
+      }
+
+      if (channelBranding) {
+        t += `\n🆔 ${escapeHtml(channelBranding)}`;
+      }
+
+      return t;
+    };
+
+    // Determine strict character limit based on post media type
+    const hasMedia = Boolean(attachedFunItem && (attachedFunItem.imageUrl || attachedFunItem.videoUrl));
+    const maxAllowedChars = hasMedia ? 1010 : 3850;
+
+    // Try full text first
+    let text = buildPostText(true);
+
+    // If text exceeds Telegram character limit for this media type, automatically strip verbose intro/outro descriptions (Panther fluff)!
+    if (text.length > maxAllowedChars) {
+      addLog('info', `طول متن پست (${text.length} کاراکتر) از سقف مجاز تلگرام (${maxAllowedChars}) بیشتر بود. توضیحات تشریحی اضافه جهت جاگیری کامل کانفیگ‌ها و عدم تجاوز از سقف تلگرام حذف گردید.`);
+      text = buildPostText(false);
     }
 
-    if (needsFullPackFile) {
-      text += `\n📁 <i>فایل متنی شامل تمام ${selectedConfigs.length} کانفیگ نیز ضمیمه شد.</i>\n`;
-    }
-
-    text += `\n❤️ <i>با فوروارد کردن این پست برای دوستانتان، از ما حمایت کنید.</i>\n`;
-
-    if (channelBranding) {
-      text += `\n🆔 ${escapeHtml(channelBranding)}`;
+    // If text STILL exceeds maxAllowedChars, dynamically trim inlineBatch until text fits inside limit
+    if (text.length > maxAllowedChars) {
+      let trimmedList = [...allBrandedList];
+      while (trimmedList.length > 1) {
+        trimmedList.pop();
+        const testBatch = trimmedList.join('\n');
+        const testText = buildPostText(false, testBatch, trimmedList.length);
+        if (testText.length <= maxAllowedChars) {
+          text = testText;
+          needsFullPackFile = true;
+          addLog('info', `متن پست با جاگیری ${trimmedList.length} کانفیگ درون کادر و ارسال فایل کامل ${selectedConfigs.length} کانفیگ جهت تطابق کامل با سقف تلگرام تنظیم شد.`);
+          break;
+        }
+      }
     }
 
     const inlineButtons: any[] = [];

@@ -69,7 +69,7 @@
       "lastDigitalToolsPostedAt": null,
       "aiTrendExtractionEnabled": false,
       "aiTrendExtractionIntervalHours": 24,
-      "lastAiTrendExtractionAt": "2026-09-29T09:27:34.721Z",
+      "lastAiTrendExtractionAt": "2026-09-29T17:59:42.059Z",
       "viralShareEnabled": false,
       "viralShareIntervalHours": 24,
       "viralShareIntervalMinutes": 1440,
@@ -168,8 +168,8 @@
       "name": "V2Ray Alpha Configs",
       "urlOrHandle": "@v2ray_alpha",
       "enabled": true,
-      "extractedCount": 328,
-      "lastExtracted": "2026-09-29T09:28:04.529Z"
+      "extractedCount": 289,
+      "lastExtracted": "2026-09-29T17:59:51.229Z"
     },
     {
       "id": "src-2",
@@ -177,8 +177,8 @@
       "name": "V2Ray Free Configs",
       "urlOrHandle": "@v2ray_free_conf",
       "enabled": true,
-      "extractedCount": 37,
-      "lastExtracted": "2026-09-29T09:28:00.028Z"
+      "extractedCount": 38,
+      "lastExtracted": "2026-09-29T17:59:50.861Z"
     },
     {
       "id": "src-3",
@@ -187,7 +187,7 @@
       "urlOrHandle": "@vpn_ocean",
       "enabled": true,
       "extractedCount": 20,
-      "lastExtracted": "2026-09-29T09:27:56.791Z"
+      "lastExtracted": "2026-09-29T17:59:51.114Z"
     },
     {
       "id": "src-4",
@@ -195,8 +195,8 @@
       "name": "Private VPNs Channel",
       "urlOrHandle": "@PrivateVPNs",
       "enabled": true,
-      "extractedCount": 13,
-      "lastExtracted": "2026-09-29T09:20:10.159Z"
+      "extractedCount": 29,
+      "lastExtracted": "2026-09-29T17:59:51.146Z"
     },
     {
       "id": "src-5",
@@ -204,8 +204,8 @@
       "name": "Proxy MTProto Live",
       "urlOrHandle": "@ProxyMTProto",
       "enabled": true,
-      "extractedCount": 33,
-      "lastExtracted": "2026-09-29T09:20:10.131Z"
+      "extractedCount": 62,
+      "lastExtracted": "2026-09-29T17:59:50.915Z"
     },
     {
       "id": "src-6",
@@ -213,8 +213,8 @@
       "name": "BarryFar All Configs Sub",
       "urlOrHandle": "https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_Sub.txt",
       "enabled": true,
-      "extractedCount": 11915,
-      "lastExtracted": "2026-09-29T09:27:58.499Z"
+      "extractedCount": 13463,
+      "lastExtracted": "2026-09-29T17:59:50.006Z"
     },
     {
       "id": "src-7",
@@ -222,8 +222,8 @@
       "name": "MahdiBland V2Ray Aggregator",
       "urlOrHandle": "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
       "enabled": true,
-      "extractedCount": 8254,
-      "lastExtracted": "2026-09-29T09:28:04.059Z"
+      "extractedCount": 8156,
+      "lastExtracted": "2026-09-29T17:59:48.179Z"
     },
     {
       "id": "src-8",
@@ -231,8 +231,8 @@
       "name": "Epodonios All Configs Sub",
       "urlOrHandle": "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt",
       "enabled": true,
-      "extractedCount": 10133,
-      "lastExtracted": "2026-09-29T09:28:05.055Z"
+      "extractedCount": 10203,
+      "lastExtracted": "2026-09-29T17:59:51.991Z"
     },
     {
       "id": "src-9",
@@ -240,8 +240,8 @@
       "name": "Mineral Nodes Hub",
       "urlOrHandle": "https://raw.githubusercontent.com/LalatinaHub/Mineral/master/result/nodes",
       "enabled": true,
-      "extractedCount": 3533,
-      "lastExtracted": "2026-09-29T09:28:03.679Z"
+      "extractedCount": 3529,
+      "lastExtracted": "2026-09-29T17:59:51.391Z"
     }
   ],
   "forceJoinChannels": [
@@ -261,8 +261,8 @@
       "urlOrHandle": "@akharinkhabar",
       "enabled": true,
       "category": "news",
-      "extractedCount": 14,
-      "lastExtracted": "2026-09-29T09:27:50.813Z"
+      "extractedCount": 9,
+      "lastExtracted": "2026-09-29T17:59:47.794Z"
     },
     {
       "id": "fun-src-2",
@@ -270,8 +270,8 @@
       "urlOrHandle": "@jokkadeh",
       "enabled": true,
       "category": "fun",
-      "extractedCount": 19,
-      "lastExtracted": "2026-09-29T09:27:52.019Z"
+      "extractedCount": 0,
+      "lastExtracted": "2026-09-29T17:59:46.779Z"
     },
     {
       "id": "fun-src-3",
@@ -280,7 +280,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 0,
-      "lastExtracted": null
+      "lastExtracted": "2026-09-29T17:59:46.445Z"
     },
     {
       "id": "fun-src-4",
@@ -288,8 +288,8 @@
       "urlOrHandle": "@khandehabadd",
       "enabled": true,
       "category": "fun",
-      "extractedCount": 13,
-      "lastExtracted": "2026-09-29T09:27:54.026Z"
+      "extractedCount": 7,
+      "lastExtracted": "2026-09-29T17:59:46.799Z"
     },
     {
       "id": "fun-src-5",
@@ -298,7 +298,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 0,
-      "lastExtracted": null
+      "lastExtracted": "2026-09-29T17:59:46.472Z"
     },
     {
       "id": "fun-src-6",
@@ -306,8 +306,8 @@
       "urlOrHandle": "@khabar_fouri",
       "enabled": true,
       "category": "news",
-      "extractedCount": 0,
-      "lastExtracted": null
+      "extractedCount": 13,
+      "lastExtracted": "2026-09-29T17:59:47.766Z"
     },
     {
       "id": "fun-src-7",
@@ -315,8 +315,8 @@
       "urlOrHandle": "@Farsna",
       "enabled": true,
       "category": "news",
-      "extractedCount": 0,
-      "lastExtracted": null
+      "extractedCount": 18,
+      "lastExtracted": "2026-09-29T17:59:46.575Z"
     },
     {
       "id": "fun-src-8",
@@ -325,7 +325,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 0,
-      "lastExtracted": null
+      "lastExtracted": "2026-09-29T17:59:46.710Z"
     },
     {
       "id": "fun-src-9",
@@ -333,8 +333,8 @@
       "urlOrHandle": "@GizmizTel",
       "enabled": true,
       "category": "fun",
-      "extractedCount": 0,
-      "lastExtracted": null
+      "extractedCount": 17,
+      "lastExtracted": "2026-09-29T17:59:46.622Z"
     },
     {
       "id": "fun-src-10",
@@ -342,8 +342,8 @@
       "urlOrHandle": "@Kafiha",
       "enabled": true,
       "category": "fun",
-      "extractedCount": 9,
-      "lastExtracted": "2026-09-29T09:27:51.992Z"
+      "extractedCount": 4,
+      "lastExtracted": "2026-09-29T17:59:46.528Z"
     },
     {
       "id": "fun-src-11",
@@ -351,8 +351,8 @@
       "urlOrHandle": "@zoomit",
       "enabled": true,
       "category": "news",
-      "extractedCount": 0,
-      "lastExtracted": null
+      "extractedCount": 2,
+      "lastExtracted": "2026-09-29T17:59:46.455Z"
     }
   ],
   "lastPostedFunSourceMap": {
