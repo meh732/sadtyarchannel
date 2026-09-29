@@ -882,7 +882,7 @@ const DEFAULT_CHANNEL2_SETTINGS: SecondaryChannelSettings = {
   postIntervalHours: 4,
   configIntervalHours: 4,
   configIntervalMinutes: 240,
-  configCount: 5,
+  configCount: 20,
   proxyCount: 1,
   customText: '💎 کانفیگ‌ها و پروکسی‌های اختصاصی تقدیم به شما:',
   lastConfigsPostedAt: null,
@@ -945,7 +945,7 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   postIntervalHours: 4,
   configIntervalHours: 4,
   configIntervalMinutes: 240,
-  configCount: 5,
+  configCount: 20,
   proxyCount: 1,
   customText: '💎 کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده ما تقدیم به شما:',
   lastConfigsPostedAt: null,
@@ -1169,6 +1169,10 @@ function loadDatabase() {
     if (finalSettings.autoPost.funWithConfigEnabled === undefined) {
       finalSettings.autoPost.funWithConfigEnabled = true;
     }
+    // Ensure default config count is set to 20 if previously set to old low defaults (5 or 3 or 0/undefined)
+    if (!finalSettings.autoPost.configCount || finalSettings.autoPost.configCount === 5 || finalSettings.autoPost.configCount === 3) {
+      finalSettings.autoPost.configCount = 20;
+    }
     if (!finalSettings.autoPost.channel2) {
       finalSettings.autoPost.channel2 = { ...DEFAULT_CHANNEL2_SETTINGS };
     } else {
@@ -1176,6 +1180,9 @@ function loadDatabase() {
       if (!Array.isArray(finalSettings.autoPost.channel2.sourceChannels) || finalSettings.autoPost.channel2.sourceChannels.length === 0) {
         finalSettings.autoPost.channel2.sourceChannels = [...DEFAULT_CHANNEL2_SETTINGS.sourceChannels];
       }
+    }
+    if (!finalSettings.autoPost.channel2.configCount || finalSettings.autoPost.channel2.configCount === 5 || finalSettings.autoPost.channel2.configCount === 3) {
+      finalSettings.autoPost.channel2.configCount = 20;
     }
 
     // Automatically resolve and set the correct public Web panel URL for Telegram WebApp (TWA)
@@ -7173,7 +7180,7 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
 
     // Get requested configs count
     const rawConfCount = typeof settings.configCount === 'number' ? settings.configCount : parseInt(String(settings.configCount), 10);
-    const configLimit = !isNaN(rawConfCount) && rawConfCount >= 0 ? rawConfCount : 5;
+    const configLimit = !isNaN(rawConfCount) && rawConfCount >= 0 ? rawConfCount : 20;
     
     // Live channel inspection & Anti-duplicate check
     const liveSnapshot = await inspectChannelLiveContent(targetChannel);

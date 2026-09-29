@@ -119,7 +119,7 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
     funNewsIntervalMinutes: 120,
     funNewsCount: 1,
     configsEnabled: false,
-    configCount: 3,
+    configCount: 20,
     proxyCount: 1,
     configIntervalMinutes: 240,
     techNewsEnabled: false,
@@ -623,14 +623,20 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-700">تعداد کانفیگ در هر پست</label>
                   <select
-                    value={autoPostForm.configCount || 5}
+                    value={autoPostForm.configCount || 20}
                     onChange={(e) => setAutoPostForm(prev => ({ ...prev, configCount: Number(e.target.value) }))}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none cursor-pointer"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:border-indigo-500 focus:outline-none cursor-pointer font-medium"
                   >
                     <option value="1">۱ عدد</option>
                     <option value="3">۳ عدد</option>
                     <option value="5">۵ عدد</option>
                     <option value="10">۱۰ عدد</option>
+                    <option value="15">۱۵ عدد</option>
+                    <option value="20">۲۰ عدد (پیش‌فرض استاندارد)</option>
+                    <option value="25">۲۵ عدد</option>
+                    <option value="30">۳۰ عدد</option>
+                    <option value="40">۴۰ عدد</option>
+                    <option value="50">۵۰ عدد</option>
                   </select>
                 </div>
                 <div className="space-y-1.5">
@@ -1817,13 +1823,20 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                   <div>
                     <label className="text-[10px] text-slate-500 block mb-1">تعداد کانفیگ</label>
                     <select
-                      value={c2.configCount || 3}
+                      value={c2.configCount || 20}
                       onChange={(e) => updateChannel2({ configCount: Number(e.target.value) })}
-                      className="w-full p-2 rounded-lg border border-slate-200 text-xs"
+                      className="w-full p-2 rounded-lg border border-slate-200 text-xs font-medium"
                     >
                       <option value="1">۱ عدد</option>
                       <option value="3">۳ عدد</option>
                       <option value="5">۵ عدد</option>
+                      <option value="10">۱۰ عدد</option>
+                      <option value="15">۱۵ عدد</option>
+                      <option value="20">۲۰ عدد (پیش‌فرض)</option>
+                      <option value="25">۲۵ عدد</option>
+                      <option value="30">۳۰ عدد</option>
+                      <option value="40">۴۰ عدد</option>
+                      <option value="50">۵۰ عدد</option>
                     </select>
                   </div>
                 </div>
