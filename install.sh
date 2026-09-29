@@ -395,6 +395,12 @@ update_bot() {
     echo -e "${BLUE}Restarting systemd service...${PLAIN}"
     systemctl daemon-reload
     systemctl restart "$SERVICE_NAME"
+    sleep 2
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo -e "${GREEN}${BOLD}🎉 Sadtyar Bot service is ACTIVE and RUNNING!${PLAIN}"
+    else
+        echo -e "${YELLOW}Notice: Service is starting up. Check status with: systemctl status sadtyar-bot${PLAIN}"
+    fi
 
     echo -e "${GREEN}${BOLD}🎉 Update completed successfully! 100% Zero-Data-Loss guaranteed.${PLAIN}"
     read -p "Press Enter to return..."

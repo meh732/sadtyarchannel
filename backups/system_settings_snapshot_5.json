@@ -31,7 +31,7 @@
       "postIntervalHours": 4,
       "configIntervalHours": 4,
       "configIntervalMinutes": 240,
-      "configCount": 5,
+      "configCount": 20,
       "proxyCount": 1,
       "customText": "💎 کانفیگ‌ها و پروکسی‌های اختصاصی و تست‌شده ما تقدیم به شما:",
       "lastConfigsPostedAt": null,
@@ -55,7 +55,7 @@
       "funNewsIntervalMinutes": 240,
       "funNewsCount": 1,
       "lastFunNewsPostedAt": null,
-      "digitalToolsEnabled": true,
+      "digitalToolsEnabled": false,
       "digitalToolsIntervalHours": 4,
       "digitalToolsIntervalMinutes": 240,
       "digitalToolsCount": 1,
@@ -67,10 +67,10 @@
         "must_apps"
       ],
       "lastDigitalToolsPostedAt": null,
-      "aiTrendExtractionEnabled": true,
+      "aiTrendExtractionEnabled": false,
       "aiTrendExtractionIntervalHours": 24,
-      "lastAiTrendExtractionAt": "2026-09-16T08:58:45.831Z",
-      "viralShareEnabled": true,
+      "lastAiTrendExtractionAt": "2026-09-29T09:27:34.721Z",
+      "viralShareEnabled": false,
       "viralShareIntervalHours": 24,
       "viralShareIntervalMinutes": 1440,
       "lastViralSharePostedAt": null,
@@ -113,7 +113,7 @@
         "postIntervalHours": 4,
         "configIntervalHours": 4,
         "configIntervalMinutes": 240,
-        "configCount": 5,
+        "configCount": 20,
         "proxyCount": 1,
         "customText": "💎 کانفیگ‌ها و پروکسی‌های اختصاصی تقدیم به شما:",
         "lastConfigsPostedAt": null,
@@ -168,8 +168,8 @@
       "name": "V2Ray Alpha Configs",
       "urlOrHandle": "@v2ray_alpha",
       "enabled": true,
-      "extractedCount": 94,
-      "lastExtracted": "2026-09-16T08:58:52.675Z"
+      "extractedCount": 328,
+      "lastExtracted": "2026-09-29T09:28:04.529Z"
     },
     {
       "id": "src-2",
@@ -177,8 +177,8 @@
       "name": "V2Ray Free Configs",
       "urlOrHandle": "@v2ray_free_conf",
       "enabled": true,
-      "extractedCount": 20,
-      "lastExtracted": "2026-09-16T08:58:50.797Z"
+      "extractedCount": 37,
+      "lastExtracted": "2026-09-29T09:28:00.028Z"
     },
     {
       "id": "src-3",
@@ -186,8 +186,8 @@
       "name": "VPN Ocean (Configs & Proxies)",
       "urlOrHandle": "@vpn_ocean",
       "enabled": true,
-      "extractedCount": 10,
-      "lastExtracted": "2026-09-16T08:58:52.640Z"
+      "extractedCount": 20,
+      "lastExtracted": "2026-09-29T09:27:56.791Z"
     },
     {
       "id": "src-4",
@@ -195,8 +195,8 @@
       "name": "Private VPNs Channel",
       "urlOrHandle": "@PrivateVPNs",
       "enabled": true,
-      "extractedCount": 14,
-      "lastExtracted": "2026-09-16T08:58:50.868Z"
+      "extractedCount": 13,
+      "lastExtracted": "2026-09-29T09:20:10.159Z"
     },
     {
       "id": "src-5",
@@ -204,8 +204,8 @@
       "name": "Proxy MTProto Live",
       "urlOrHandle": "@ProxyMTProto",
       "enabled": true,
-      "extractedCount": 38,
-      "lastExtracted": "2026-09-16T08:58:50.845Z"
+      "extractedCount": 33,
+      "lastExtracted": "2026-09-29T09:20:10.131Z"
     },
     {
       "id": "src-6",
@@ -213,8 +213,8 @@
       "name": "BarryFar All Configs Sub",
       "urlOrHandle": "https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_Sub.txt",
       "enabled": true,
-      "extractedCount": 6834,
-      "lastExtracted": "2026-09-16T08:58:52.353Z"
+      "extractedCount": 11915,
+      "lastExtracted": "2026-09-29T09:27:58.499Z"
     },
     {
       "id": "src-7",
@@ -222,8 +222,8 @@
       "name": "MahdiBland V2Ray Aggregator",
       "urlOrHandle": "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
       "enabled": true,
-      "extractedCount": 4017,
-      "lastExtracted": "2026-09-16T08:58:53.754Z"
+      "extractedCount": 8254,
+      "lastExtracted": "2026-09-29T09:28:04.059Z"
     },
     {
       "id": "src-8",
@@ -231,8 +231,8 @@
       "name": "Epodonios All Configs Sub",
       "urlOrHandle": "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt",
       "enabled": true,
-      "extractedCount": 4981,
-      "lastExtracted": "2026-09-16T08:58:51.355Z"
+      "extractedCount": 10133,
+      "lastExtracted": "2026-09-29T09:28:05.055Z"
     },
     {
       "id": "src-9",
@@ -240,8 +240,8 @@
       "name": "Mineral Nodes Hub",
       "urlOrHandle": "https://raw.githubusercontent.com/LalatinaHub/Mineral/master/result/nodes",
       "enabled": true,
-      "extractedCount": 1760,
-      "lastExtracted": "2026-09-16T08:58:53.139Z"
+      "extractedCount": 3533,
+      "lastExtracted": "2026-09-29T09:28:03.679Z"
     }
   ],
   "forceJoinChannels": [
@@ -254,7 +254,107 @@
     }
   ],
   "users": [],
-  "funSources": [],
+  "funSources": [
+    {
+      "id": "fun-src-1",
+      "name": "آخرین خبر (اخبار روز و فوری)",
+      "urlOrHandle": "@akharinkhabar",
+      "enabled": true,
+      "category": "news",
+      "extractedCount": 14,
+      "lastExtracted": "2026-09-29T09:27:50.813Z"
+    },
+    {
+      "id": "fun-src-2",
+      "name": "جوک کده (بمب خنده و جوک تلگرام)",
+      "urlOrHandle": "@jokkadeh",
+      "enabled": true,
+      "category": "fun",
+      "extractedCount": 19,
+      "lastExtracted": "2026-09-29T09:27:52.019Z"
+    },
+    {
+      "id": "fun-src-3",
+      "name": "فارسی فان (شوخی و سرگرمی روز)",
+      "urlOrHandle": "@farsifun",
+      "enabled": true,
+      "category": "fun",
+      "extractedCount": 0,
+      "lastExtracted": null
+    },
+    {
+      "id": "fun-src-4",
+      "name": "خنده‌آباد (طنز، میم و لبخند)",
+      "urlOrHandle": "@khandehabadd",
+      "enabled": true,
+      "category": "fun",
+      "extractedCount": 13,
+      "lastExtracted": "2026-09-29T09:27:54.026Z"
+    },
+    {
+      "id": "fun-src-5",
+      "name": "جوک‌دونی (طنز و سرگرمی تلگرام)",
+      "urlOrHandle": "@jokdoni",
+      "enabled": true,
+      "category": "fun",
+      "extractedCount": 0,
+      "lastExtracted": null
+    },
+    {
+      "id": "fun-src-6",
+      "name": "خبر فوری (اخبار مهم روز)",
+      "urlOrHandle": "@khabar_fouri",
+      "enabled": true,
+      "category": "news",
+      "extractedCount": 0,
+      "lastExtracted": null
+    },
+    {
+      "id": "fun-src-7",
+      "name": "خبرگزاری فارس (اخبار روز)",
+      "urlOrHandle": "@Farsna",
+      "enabled": true,
+      "category": "news",
+      "extractedCount": 0,
+      "lastExtracted": null
+    },
+    {
+      "id": "fun-src-8",
+      "name": "دانستنی‌های جهان (دانستنی و اطلاعات جالب)",
+      "urlOrHandle": "@danestanihaye_jahan",
+      "enabled": true,
+      "category": "fun",
+      "extractedCount": 0,
+      "lastExtracted": null
+    },
+    {
+      "id": "fun-src-9",
+      "name": "کانال گیزمیز (مطالب جالب و سرگرمی)",
+      "urlOrHandle": "@GizmizTel",
+      "enabled": true,
+      "category": "fun",
+      "extractedCount": 0,
+      "lastExtracted": null
+    },
+    {
+      "id": "fun-src-10",
+      "name": "کافیه (مطالب خواندنی روز)",
+      "urlOrHandle": "@Kafiha",
+      "enabled": true,
+      "category": "fun",
+      "extractedCount": 9,
+      "lastExtracted": "2026-09-29T09:27:51.992Z"
+    },
+    {
+      "id": "fun-src-11",
+      "name": "زومیت (اخبار علم و فناوری)",
+      "urlOrHandle": "@zoomit",
+      "enabled": true,
+      "category": "news",
+      "extractedCount": 0,
+      "lastExtracted": null
+    }
+  ],
   "lastPostedFunSourceMap": {
     "1": "",
     "2": ""

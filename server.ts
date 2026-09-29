@@ -1,6 +1,16 @@
+import dotenv from 'dotenv';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+
+// Initialize environment variables from .env (and permanent Linux directories)
+dotenv.config();
+if (fs.existsSync('/opt/sadtyar-bot/.env')) {
+  dotenv.config({ path: '/opt/sadtyar-bot/.env' });
+}
+if (fs.existsSync('/var/lib/sadtyar-data/.env')) {
+  dotenv.config({ path: '/var/lib/sadtyar-data/.env' });
+}
 import net from 'net';
 import dns from 'dns';
 import tls from 'tls';
@@ -1054,6 +1064,10 @@ let db: DatabaseSchema = {
   techItems: []
 };
 
+// Global source rotation maps (must be declared before loadDatabase)
+const lastPostedFunSourceMap: Record<number, string> = { 1: '', 2: '' };
+const sourceRoundRobinPointer: Record<number, number> = { 1: 0, 2: 0 };
+
 function findBestDataStoreBackup(): any {
   const candidatePaths = [
     path.join(BACKUPS_DIR, 'data_store_latest_healthy.json'),
@@ -1130,10 +1144,41 @@ function findBestSettingsBackup(): any {
 
 function loadDatabase() {
   try {
-    const envAdminId = process.env.ADMIN_ID ? process.env.ADMIN_ID.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
-    const envBotToken = process.env.BOT_TOKEN ? process.env.BOT_TOKEN.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
-    const envAdminUsername = process.env.ADMIN_USERNAME ? process.env.ADMIN_USERNAME.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
-    const envAdminPassword = process.env.ADMIN_PASSWORD ? process.env.ADMIN_PASSWORD.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+    let envAdminId = process.env.ADMIN_ID ? process.env.ADMIN_ID.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+    let envBotToken = process.env.BOT_TOKEN ? process.env.BOT_TOKEN.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+    let envAdminUsername = process.env.ADMIN_USERNAME ? process.env.ADMIN_USERNAME.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+    let envAdminPassword = process.env.ADMIN_PASSWORD ? process.env.ADMIN_PASSWORD.replace(/^['"\s]+|['"\s]+$/g, '').trim() : '';
+
+    // Direct disk scan for .env files as permanent fail-safe
+    const candidateEnvPaths = [
+      path.join(process.cwd(), '.env'),
+      '/opt/sadtyar-bot/.env',
+      '/var/lib/sadtyar-data/.env',
+      '/opt/sadtyar-permanent-backup/.env'
+    ];
+    for (const ep of candidateEnvPaths) {
+      if (fs.existsSync(ep)) {
+        try {
+          const raw = fs.readFileSync(ep, 'utf8');
+          if (!envBotToken) {
+            const mToken = raw.match(/^BOT_TOKEN=(.*)$/m);
+            if (mToken && mToken[1]) envBotToken = mToken[1].replace(/^['"\s]+|['"\s]+$/g, '').trim();
+          }
+          if (!envAdminId) {
+            const mAdmin = raw.match(/^ADMIN_ID=(.*)$/m);
+            if (mAdmin && mAdmin[1]) envAdminId = mAdmin[1].replace(/^['"\s]+|['"\s]+$/g, '').trim();
+          }
+          if (!envAdminUsername) {
+            const mUser = raw.match(/^ADMIN_USERNAME=(.*)$/m);
+            if (mUser && mUser[1]) envAdminUsername = mUser[1].replace(/^['"\s]+|['"\s]+$/g, '').trim();
+          }
+          if (!envAdminPassword) {
+            const mPass = raw.match(/^ADMIN_PASSWORD=(.*)$/m);
+            if (mPass && mPass[1]) envAdminPassword = mPass[1].replace(/^['"\s]+|['"\s]+$/g, '').trim();
+          }
+        } catch (_) {}
+      }
+    }
 
     // 1. Try loading system_settings.json first
     let loadedSettings = safeReadJson(SETTINGS_FILE);
@@ -1156,11 +1201,16 @@ function loadDatabase() {
       };
     }
 
+    const resolvedBotToken = envBotToken || loadedSettings?.settings?.botToken || loadedDataStore?.settings?.botToken || '';
+    const resolvedAdminId = envAdminId || loadedSettings?.settings?.adminId || loadedDataStore?.settings?.adminId || '';
+
     const finalSettings = { 
       ...DEFAULT_SETTINGS, 
       ...(loadedSettings?.settings || {}),
-      adminId: envAdminId || loadedSettings?.settings?.adminId || loadedDataStore?.settings?.adminId || '',
-      botToken: envBotToken || loadedSettings?.settings?.botToken || loadedDataStore?.settings?.botToken || '',
+      adminId: resolvedAdminId,
+      botToken: resolvedBotToken,
+      // If a valid bot token is configured, ensure bot is marked as running by default
+      isBotRunning: Boolean(resolvedBotToken && (loadedSettings?.settings?.isBotRunning !== false)),
       adminUsername: envAdminUsername || loadedSettings?.settings?.adminUsername || loadedDataStore?.settings?.adminUsername || 'admin',
       adminPassword: envAdminPassword || loadedSettings?.settings?.adminPassword || loadedDataStore?.settings?.adminPassword || 'admin',
       autoPost: { ...DEFAULT_AUTO_POST, ...(loadedSettings?.settings?.autoPost || loadedDataStore?.settings?.autoPost || {}) }
@@ -6946,8 +6996,6 @@ function getEffectiveChannelBranding(channelNum: 1 | 2, targetChannel?: string, 
 // Ensures consecutive posts cycle through DIFFERENT source channels
 // and picks the LATEST unposted post of each distinct channel in rotation.
 // ---------------------------------------------------------------------------
-const lastPostedFunSourceMap: Record<number, string> = { 1: '', 2: '' };
-const sourceRoundRobinPointer: Record<number, number> = { 1: 0, 2: 0 };
 
 function selectFunNewsItemsWithRoundRobin(
   eligibleItems: FunNewsItem[],
@@ -14367,6 +14415,19 @@ async function handleBotUpdate(update: any) {
     }
     // --- END ADMIN CONTROLS BYPASS ---
 
+    // Inform non-admin users attempting to open admin panel
+    if (!isAdmin && (messageText === '/admin' || callbackData === 'admin_menu' || (callbackData && callbackData.startsWith('admin_')))) {
+      if (callbackQueryId) await answerCallback('⛔️ دسترسی به پنل مدیریت ندارید', true);
+      const currentAdminSetting = db.settings.adminId ? 'تنظیم شده اما با اکانت شما مطابقت ندارد' : 'هنوز در سیستم ثبت نشده است';
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: `⛔️ **عدم دسترسی به پنل مدیریت تلگرام**\n\nشناسه عددی اکانت شما (User ID): \`${userId}\`\nوضعیت آیدی مدیر در سیستم: **${currentAdminSetting}**\n\n💡 اگر شما مدیر سرور هستید، لطفاً شناسه عددی بالا (\`${userId}\`) را در فایل \`.env\` در متغیر \`ADMIN_ID\` یا در بخش تنظیمات پنل تحت وب وارد فرمایید تا دسترسی کامل فعال گردد.`,
+        parse_mode: 'Markdown',
+        reply_markup: getReplyKeyboard(userId, username)
+      });
+      return;
+    }
+
     // If user has not joined mandatory channels, block everything except the join checks
     if (!userHasJoinedAll && notJoinedList.length > 0) {
       if (callbackData === 'check_join_status') {
@@ -15355,18 +15416,25 @@ function stopBot() {
  */
 async function startBot() {
   if (db.settings.botConnectionMode !== 'webhook' && pollingActive) return;
-  const token = db.settings.botToken;
+  const token = (db.settings.botToken || process.env.BOT_TOKEN || '').trim();
   if (!token) {
-    addLog('error', 'خطا در فعال‌سازی ربات: توکن تعریف نشده است.');
+    addLog('warn', 'خطا در فعال‌سازی ربات: توکن تعریف نشده است.');
     return;
   }
+  db.settings.botToken = token;
 
   try {
     addLog('info', 'در حال اتصال به سرورهای تلگرام و اعتبارسنجی توکن...');
-    const username = await testBotConnection(token);
-    await setBotCommands(token);
-    await setupBotMenuButton(token);
-    db.settings.botUsername = username;
+    let username = 'telegram_bot';
+    try {
+      username = await testBotConnection(token);
+      db.settings.botUsername = username;
+    } catch (e: any) {
+      console.warn('testBotConnection error (proceeding to poll):', e.message);
+    }
+
+    try { await setBotCommands(token); } catch (_) {}
+    try { await setupBotMenuButton(token); } catch (_) {}
     
     if (db.settings.botConnectionMode === 'webhook') {
       const pUrl = db.settings.publicUrl;
@@ -15388,10 +15456,10 @@ async function startBot() {
       saveDatabase();
       addLog('success', `ربات با موفقیت در حالت وب‌هوک فعال شد: @${username}`);
     } else {
-      // Delete any previous webhook
+      // Delete any previous webhook (keep pending updates so user messages aren't lost)
       try {
         addLog('info', 'حذف وب‌هوک‌های قبلی جهت شروع دریافت مکرر (Polling)...');
-        await callTelegramApi('deleteWebhook', { drop_pending_updates: true });
+        await callTelegramApi('deleteWebhook', { drop_pending_updates: false });
       } catch (webhookErr: any) {
         console.error('Error removing webhook before polling:', webhookErr.message);
       }
@@ -15405,11 +15473,11 @@ async function startBot() {
       addLog('success', `ربات با موفقیت در حالت Polling فعال شد و در حال شنود است: @${username}`);
     }
   } catch (err: any) {
-    db.settings.isBotRunning = false;
-    pollingActive = false;
-    saveDatabase();
-    addLog('error', `ارتباط با توکن تلگرام برقرار نشد: ${err.message}`);
-    throw err;
+    // Keep bot running in background so watchdog continues retry loop
+    pollingActive = true;
+    db.settings.isBotRunning = true;
+    runBotPolling().catch(() => {});
+    addLog('warn', `تلاش برای شنود پیام‌های ربات در پس‌زمینه ادامه دارد: ${err.message}`);
   }
 }
 
@@ -15559,10 +15627,13 @@ function setupIntervals() {
 
   // Watchdog to auto-recover if bot polling freezes or stops unexpectedly
   setInterval(() => {
-    if (db.settings.isBotRunning && db.settings.botToken && db.settings.botConnectionMode !== 'webhook') {
+    const activeToken = (db.settings.botToken || process.env.BOT_TOKEN || '').trim();
+    if (activeToken && db.settings.botConnectionMode !== 'webhook') {
       if (!pollingActive || (Date.now() - lastPollTimestamp > 35000)) {
         addLog('warn', 'بازراه‌اندازی خودکار مکانیزم شنود ربات (Watchdog)...');
         pollingActive = true;
+        if (!db.settings.botToken) db.settings.botToken = activeToken;
+        db.settings.isBotRunning = true;
         if (botTimeoutRef) clearTimeout(botTimeoutRef);
         runBotPolling().catch(err => console.error('Watchdog restart error:', err));
       }
@@ -15633,9 +15704,16 @@ function setupIntervals() {
 // Initialize background schedules
 setupIntervals();
 
-// Start bot if token exists in saved DB
-if (db.settings.botToken) {
-  startBot().catch(() => {});
+// Start bot if token exists in saved DB or environment
+const bootToken = (db.settings.botToken || process.env.BOT_TOKEN || '').trim();
+if (bootToken) {
+  if (!db.settings.botToken) db.settings.botToken = bootToken;
+  startBot().catch(err => {
+    console.error('Initial startBot error, fallback to runBotPolling:', err);
+    pollingActive = true;
+    db.settings.isBotRunning = true;
+    runBotPolling().catch(() => {});
+  });
 }
 
 // --- API Routing Logic ---
