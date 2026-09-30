@@ -951,7 +951,7 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
 
   // 1. Configs & Proxies Schedule
   configsEnabled: true,
-  funWithConfigEnabled: true, // Embed a fun meme/joke alongside configs in Channel 1 for viral retention
+  funWithConfigEnabled: true, // Fun + Config combined posts get 5 configs; Pure config posts get 20 configs
   postIntervalHours: 4,
   configIntervalHours: 4,
   configIntervalMinutes: 240,
@@ -7481,12 +7481,7 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       t += `⚡ <b>${escapeHtml(effectiveHeadline)}</b>\n`;
       t += `━━━━━━━━━━━━━━━━━━━━\n`;
 
-      if (includeVerboseExplanations) {
-        t += `📶 <b>تست‌شده روی: همراه اول 🟢 | ایرانسل 🟢 | مخابرات 🟢</b>\n`;
-        t += `🎯 <i>مناسب اینستاگرام، یوتیوب ۴K و وب‌گردی بدون قطعی</i>\n\n`;
-      } else {
-        t += `\n`;
-      }
+      t += `\n`;
 
       const activeBatch = customInlineBatch !== undefined ? customInlineBatch : inlineBatch;
       const activeCount = customInlineCount !== undefined ? customInlineCount : inlineCount;
@@ -7494,18 +7489,18 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       if (selectedConfigs.length > 0) {
         t += `🚀 <b>پک ${selectedConfigs.length} کانفیگ اختصاصی V2Ray:</b>\n\n`;
         
-        for (let i = 0; i < previewCount; i++) {
-          const conf = selectedConfigs[i];
-          const loc = configLocations[i] || { country: 'آلمان', flag: '🇩🇪' };
-          const pingText = (showPing && includeVerboseExplanations)
-            ? (conf.latency ? `⚡ <code>${conf.latency}ms</code>` : '🟢 فعال')
-            : '🟢 فعال';
-          const proto = (conf.protocol || 'V2RAY').toUpperCase();
-          t += `▫️ <b>[${proto}]</b> ${loc.country} ${loc.flag} ╶─╴ ${pingText}\n`;
-        }
+        if (showPing) {
+          for (let i = 0; i < previewCount; i++) {
+            const conf = selectedConfigs[i];
+            const loc = configLocations[i] || { country: 'آلمان', flag: '🇩🇪' };
+            const pingText = conf.latency ? `⚡ <code>${conf.latency}ms</code>` : '🟢 فعال';
+            const proto = (conf.protocol || 'V2RAY').toUpperCase();
+            t += `▫️ <b>[${proto}]</b> ${loc.country} ${loc.flag} ╶─╴ ${pingText}\n`;
+          }
 
-        if (selectedConfigs.length > previewCount) {
-          t += `\n<i>▫️ و ${selectedConfigs.length - previewCount} کانفیگ دیگر در کادر زیر...</i>\n`;
+          if (selectedConfigs.length > previewCount) {
+            t += `\n<i>▫️ و ${selectedConfigs.length - previewCount} کانفیگ دیگر در کادر زیر...</i>\n`;
+          }
         }
 
         if (activeBatch) {
@@ -7520,24 +7515,20 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       // Append proxies
       if (selectedProxies.length > 0) {
         t += `🔌 <b>پروکسی‌های فعال و بدون قطعی تلگرام:</b>\n\n`;
-        for (let i = 0; i < proxyPreviewCount; i++) {
-          const proxy = selectedProxies[i];
-          const loc = proxyLocations[i] || { country: 'آلمان', flag: '🇩🇪' };
-          const pingText = showPing
-            ? (proxy.latency ? `⚡ <code>${proxy.latency}ms</code>` : '🟢 فعال')
-            : '🟢 فعال';
-          const pType = (proxy.type || 'MTPROTO').toUpperCase();
-          t += `▫️ <b>[${pType}]</b> ${loc.country} ${loc.flag} ╶─╴ ${pingText}\n`;
+        if (showPing) {
+          for (let i = 0; i < proxyPreviewCount; i++) {
+            const proxy = selectedProxies[i];
+            const loc = proxyLocations[i] || { country: 'آلمان', flag: '🇩🇪' };
+            const pingText = proxy.latency ? `⚡ <code>${proxy.latency}ms</code>` : '🟢 فعال';
+            const pType = (proxy.type || 'MTPROTO').toUpperCase();
+            t += `▫️ <b>[${pType}]</b> ${loc.country} ${loc.flag} ╶─╴ ${pingText}\n`;
+          }
         }
         t += `\n<i>👇 جهت اتصال به پروکسی‌ها دکمه‌های زیر را لمس نمایید:</i>\n\n`;
       }
 
       if (needsFullPackFile || (activeCount < selectedConfigs.length)) {
         t += `\n📁 <i>فایل متنی شامل تمام ${selectedConfigs.length} کانفیگ نیز ضمیمه شد.</i>\n`;
-      }
-
-      if (includeVerboseExplanations) {
-        t += `\n❤️ <i>با فوروارد کردن این پست برای دوستانتان، از ما حمایت کنید.</i>\n`;
       }
 
       if (channelBranding) {
