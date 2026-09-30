@@ -35,7 +35,7 @@ interface AutoPostViewProps {
   actionLoading: string | null;
   handleSaveAutoPostSettings: (e: React.FormEvent) => Promise<void>;
   handleTriggerAutoPost: (channelNum?: number) => Promise<void>;
-  handleTriggerConfigsAutoPost: (channelNum?: number) => Promise<void>;
+  handleTriggerConfigsAutoPost: (channelNum?: number, mode?: 'pure' | 'combined') => Promise<void>;
   handleTriggerTechNewsAutoPost: (channelNum?: number) => Promise<void>;
   handleTriggerTechTricksAutoPost: (channelNum?: number) => Promise<void>;
   handleTriggerAiPromptsAutoPost: (channelNum?: number) => Promise<void>;
@@ -699,19 +699,31 @@ export const AutoPostView: React.FC<AutoPostViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
                 <div className="text-[11px] text-slate-400">
                   {autoPostForm.lastConfigsPostedAt ? `آخرین ارسال: ${new Date(autoPostForm.lastConfigsPostedAt).toLocaleString('fa-IR')}` : 'هنوز ارسالی ثبت نشده'}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleTriggerConfigsAutoPost(1)}
-                  disabled={actionLoading === 'trigger_configs_autopost_1' || !autoPostForm.targetChannel}
-                  className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  {actionLoading === 'trigger_configs_autopost_1' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                  <span>ارسال فوری تست کانفیگ به کانال ۱</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleTriggerConfigsAutoPost(1, 'pure')}
+                    disabled={actionLoading === 'trigger_configs_autopost_1_pure' || !autoPostForm.targetChannel}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
+                  >
+                    {actionLoading === 'trigger_configs_autopost_1_pure' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                    <span>🚀 تست کانفیگ خالص (۲۰ تایی)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleTriggerConfigsAutoPost(1, 'combined')}
+                    disabled={actionLoading === 'trigger_configs_autopost_1_combined' || !autoPostForm.targetChannel}
+                    className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {actionLoading === 'trigger_configs_autopost_1_combined' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Smile className="w-3.5 h-3.5" />}
+                    <span>😂 تست پست ترکیبی طنز (۵ تایی)</span>
+                  </button>
+                </div>
               </div>
             </div>
 

@@ -1371,8 +1371,8 @@ export default function App() {
     }
   };
 
-  const handleTriggerConfigsAutoPost = async (channelNum = 1) => {
-    setActionLoading(`trigger_configs_autopost_${channelNum}`);
+  const handleTriggerConfigsAutoPost = async (channelNum = 1, mode?: 'pure' | 'combined') => {
+    setActionLoading(`trigger_configs_autopost_${channelNum}_${mode || 'auto'}`);
     try {
       await fetch('/api/settings/auto-post', {
         method: 'POST',
@@ -1383,7 +1383,7 @@ export default function App() {
       const res = await fetch('/api/bot/auto-post/trigger-configs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channelNum })
+        body: JSON.stringify({ channelNum, mode })
       });
       const data = await res.json();
       if (data.success) {

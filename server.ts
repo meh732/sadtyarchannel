@@ -7201,7 +7201,11 @@ function syncDatabaseWithChannelSnapshot(snapshot: ChannelLiveSnapshot, channelN
 // ----------------------------------------------------
 // 1. DEDICATED EXECUTOR: CONFIGS & PROXIES AUTO-POST
 // ----------------------------------------------------
-async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetChannel?: string): Promise<boolean> {
+async function executeConfigsAutoPost(
+  channelTargetNum: 1 | 2 = 1, 
+  customTargetChannel?: string,
+  explicitPostMode?: 'pure' | 'combined' | 'auto'
+): Promise<boolean> {
   const isCh2 = channelTargetNum === 2;
   const settings = isCh2 ? (db.settings.autoPost.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
   const targetChannel = customTargetChannel || settings?.targetChannel;
@@ -7239,15 +7243,17 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
       return true;
     };
 
-    // 1. Check if Fun + Config combined mode is active (channel 1 or 2)
-    // For Channel 1: enabled by default unless explicitly disabled (settings.funWithConfigEnabled !== false)
-    // For Channel 2: enabled if explicitly configured (settings.funWithConfigEnabled === true)
-    const isFunWithConfig = channelTargetNum === 1
-      ? (settings.funWithConfigEnabled !== false)
-      : (settings.funWithConfigEnabled === true);
+    // 1. Check if Fun + Config combined mode is active
+    // If explicitPostMode === 'pure', do NOT attach any fun item
+    // If explicitPostMode === 'combined', force attach fun item
+    // If auto/undefined, follow settings.funWithConfigEnabled
+    const shouldLookForFun = explicitPostMode === 'pure' 
+      ? false 
+      : (explicitPostMode === 'combined' ? true : (channelTargetNum === 1 ? (settings.funWithConfigEnabled !== false) : (settings.funWithConfigEnabled === true)));
+
     let attachedFunItem: FunNewsItem | null = null;
 
-    if (isFunWithConfig) {
+    if (shouldLookForFun) {
       // Source channels configured for Channel 2
       const ch2DedicatedSources = (Array.isArray(db.settings.autoPost?.channel2?.sourceChannels) && db.settings.autoPost.channel2.sourceChannels.length > 0)
         ? db.settings.autoPost.channel2.sourceChannels
@@ -7351,9 +7357,8 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
     }
 
     // 2. Determine config count rule:
-    // Channel 1: Combined posts (Fun Meme/Joke + Configs attached) get strictly 5 configs (clean caption under 1024 chars).
-    // Channel 1: Normal posts (Pure Configs) get 20 configs (or settings.configCount if > 5, default 20).
-    // Channel 2: Uses its own settings without forcing Channel 1's combined/20 rules.
+    // Combined posts (Fun Meme/Joke + Configs attached) get strictly 5 configs (clean caption under 1024 chars).
+    // Normal / Pure posts get 20 configs (or settings.configCount if > 5, default 20).
     const isCombinedPost = Boolean(attachedFunItem);
     const rawConfCount = typeof settings.configCount === 'number' ? settings.configCount : parseInt(String(settings.configCount), 10);
     const configLimit = isCh2
@@ -7366,24 +7371,40 @@ async function executeConfigsAutoPost(channelTargetNum: 1 | 2 = 1, customTargetC
 
     if (configLimit > 0) {
       let unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
-      let unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
-      let allUnposted = [...unpostedWorking, ...unpostedUntested];
 
-      if (allUnposted.length < configLimit) {
-        addLog('info', `موجودی کانفیگ‌های جدید و منتشرنشده برای کانال ${channelTargetNum} اندک است (${allUnposted.length} عدد). در حال استخراج و دریافت کانفیگ‌های تازه از ساب‌ها و منابع...`);
+      // Quality control: If working configs are fewer than required, auto-scrape fresh subscriptions and live-test a batch
+      if (unpostedWorking.length < configLimit) {
+        addLog('info', `موجودی کانفیگ‌های تست‌شده و سالم (${unpostedWorking.length} عدد) کمتر از سقف مجاز (${configLimit} عدد) است. در حال استخراج خودکار و تست اتصال فوری...`);
         try {
           await triggerBulkScrape();
+          const untestedIds = db.configs
+            .filter(c => c.status === 'untested' && isChConfigValid(c))
+            .slice(0, Math.max(50, configLimit * 3))
+            .map(c => c.id);
+          if (untestedIds.length > 0) {
+            await testConfigsBatch(untestedIds);
+          }
         } catch (scrapeErr) {
           console.error('Auto scrape on low unposted configs error:', scrapeErr);
         }
         unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
-        unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
-        allUnposted = [...unpostedWorking, ...unpostedUntested];
       }
 
-      if (allUnposted.length > 0) {
-        const shuffled = [...allUnposted].sort(() => 0.5 - Math.random());
-        selectedConfigs = shuffled.slice(0, Math.min(configLimit, shuffled.length));
+      // STRICT SPEED & QUALITY SORTING: Fastest ping latency first, then latest tested
+      unpostedWorking.sort((a, b) => {
+        const latA = (a.latency && a.latency > 0) ? a.latency : 999;
+        const latB = (b.latency && b.latency > 0) ? b.latency : 999;
+        if (latA !== latB) return latA - latB;
+        const dateA = a.lastChecked ? new Date(a.lastChecked).getTime() : 0;
+        const dateB = b.lastChecked ? new Date(b.lastChecked).getTime() : 0;
+        return dateB - dateA;
+      });
+
+      if (unpostedWorking.length >= configLimit) {
+        selectedConfigs = unpostedWorking.slice(0, configLimit);
+      } else {
+        const unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
+        selectedConfigs = [...unpostedWorking, ...unpostedUntested.slice(0, configLimit - unpostedWorking.length)];
       }
     }
 
@@ -9718,6 +9739,12 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
       const cleanT = sanitizeContentForTelegramPost(item.text, targetChannel);
       if (!cleanT && !item.imageUrl && !item.videoUrl) return false;
       if (cleanT.length < 12 && !item.imageUrl && !item.videoUrl) return false;
+      // In Channel 2 or fun posts, if an item has NO media, only allow it if it's a complete standalone long joke or story (not a short missing caption)
+      if (!item.imageUrl && !item.videoUrl) {
+        if (cleanT.length < 80) return false;
+        const lineCount = cleanT.split('\n').filter(l => l.trim().length > 0).length;
+        if (lineCount < 2 && cleanT.length < 140) return false;
+      }
       if (isTelegramSourceAd(cleanT, item.title).isAd) return false;
       if (item.sourceChannel) {
         const handle = item.sourceChannel.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@+/, '').toLowerCase().trim();
@@ -10024,16 +10051,21 @@ async function extractFunNewsFromSources(specificSourceId?: string, extraHandles
           }
         }
 
-        // Extract image url or video thumbnail if present
+        // Extract image url or video thumbnail if present (supports quotes, &quot;, data-src, background-image)
         let imageUrl: string | undefined = undefined;
-        const imgMatch = fullBlock.match(/class=["'][^"']*tgme_widget_message_photo(?:_wrap)?[^"']*["'][^>]*style=["'][^"']*background-image:\s*url\(['"]?(https?:\/\/[^'"\)]+)['"]?\)/i)
-          || fullBlock.match(/background-image:\s*url\(['"]?(https?:\/\/[^'"\)]+)['"]?\)/i)
-          || fullBlock.match(/<img[^>]*class=["'][^"']*tgme_widget_message_photo[^"']*["'][^>]*src=["'](https?:\/\/[^"']+)["']/i)
-          || fullBlock.match(/<video[^>]*\bposter=["'](https?:\/\/[^"']+)["']/i)
-          || fullBlock.match(/src="(https?:\/\/[^"]+)"/i);
-
-        if (imgMatch && imgMatch[1] && !imgMatch[1].includes('favicon') && !imgMatch[1].includes('avatar')) {
-          imageUrl = imgMatch[1].trim();
+        const bgMatch = fullBlock.match(/background-image:\s*url\(\s*(?:&quot;|['"])?(https?:\/\/[^'"\)\s&;]+)(?:&quot;|['"])?\s*\)/i);
+        if (bgMatch && bgMatch[1] && !bgMatch[1].includes('favicon') && !bgMatch[1].includes('avatar')) {
+          imageUrl = bgMatch[1].trim();
+        } else {
+          const imgTagMatch = fullBlock.match(/<img[^>]+(?:src|data-src)=["'](https?:\/\/[^"']+)["']/i);
+          if (imgTagMatch && imgTagMatch[1] && !imgTagMatch[1].includes('favicon') && !imgTagMatch[1].includes('avatar')) {
+            imageUrl = imgTagMatch[1].trim();
+          } else {
+            const posterMatch = fullBlock.match(/<video[^>]*\bposter=["'](https?:\/\/[^"']+)["']/i);
+            if (posterMatch && posterMatch[1]) {
+              imageUrl = posterMatch[1].trim();
+            }
+          }
         }
 
         let mediaType: 'photo' | 'video' | 'animation' | undefined = undefined;
@@ -17164,10 +17196,12 @@ async function startExpressServer() {
   app.post('/api/bot/auto-post/trigger-configs', async (req, res) => {
     try {
       const channelNum = req.body?.channelNum === 2 ? 2 : 1;
+      const mode = req.body?.mode === 'pure' ? 'pure' : (req.body?.mode === 'combined' ? 'combined' : undefined);
       const ap = channelNum === 2 ? (db.settings.autoPost.channel2 || db.settings.autoPost) : db.settings.autoPost;
-      const success = await executeConfigsAutoPost(channelNum, ap?.targetChannel);
+      const success = await executeConfigsAutoPost(channelNum, ap?.targetChannel, mode);
       if (success) {
-        res.json({ success: true, message: `پست کانفیگ‌ها و پروکسی‌ها با موفقیت به کانال ${channelNum} ارسال گردید.` });
+        const modeLabel = mode === 'pure' ? 'خالص (۲۰ تایی)' : (mode === 'combined' ? 'ترکیبی طنز (۵ تایی)' : '');
+        res.json({ success: true, message: `پست کانفیگ‌ها ${modeLabel} با موفقیت به کانال ${channelNum} ارسال گردید.` });
       } else {
         res.status(400).json({ success: false, message: 'ارسال کانفیگ‌ها با خطا مواجه شد یا موردی یافت نشد.' });
       }
