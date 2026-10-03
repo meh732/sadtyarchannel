@@ -97,6 +97,7 @@ export interface AutoPostSettings {
   proxyCount: number; // number of proxies (0, 1, 2, 3, 5, 10, 15, 20)
   customText: string; // custom Persian text to add to the config post
   lastConfigsPostedAt?: string | null;
+  lastFunConfigsPostedAt?: string | null;
   funWithConfigEnabled?: boolean; // Embed a fun meme/joke alongside configs in Channel 1 for viral retention & anti-churn
   displayPingInPosts?: boolean; // When false, removes simulated ping ms from posts (since actual ping depends on user's ISP/net)
 

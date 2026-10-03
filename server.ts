@@ -2650,6 +2650,9 @@ function cleanupCheckingStates() {
   if (changed) saveDatabase();
 }
 
+// Clean up any stale checking states immediately on server boot
+cleanupCheckingStates();
+
 /**
  * Performs real-world client handshake verification of a configuration using Xray and curl SOCKS5
  */
@@ -2747,7 +2750,7 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
 /**
  * Checks if a TLS handshake can be successfully completed
  */
-function checkTlsHandshake(host: string, port: number, sni: string, timeout = 2200): Promise<{ working: boolean; latency: number }> {
+function checkTlsHandshake(host: string, port: number, sni: string, timeout = 2800): Promise<{ working: boolean; latency: number }> {
   return new Promise((resolve) => {
     if (!host || !port) {
       return resolve({ working: false, latency: 999 });
@@ -2762,25 +2765,32 @@ function checkTlsHandshake(host: string, port: number, sni: string, timeout = 22
       try { if (socket) socket.destroy(); } catch (e) {}
       clearTimeout(timer);
       const latency = Date.now() - start;
-      resolve({ working, latency: working ? latency : 999 });
+      resolve({ working, latency: working ? Math.max(10, latency) : 999 });
     };
 
-    const timer = setTimeout(() => finish(false), timeout + 300);
+    const timer = setTimeout(() => finish(false), timeout + 200);
 
     let socket: tls.TLSSocket | null = null;
     try {
-      socket = tls.connect({
-        host: host,
+      const servername = (sni && typeof sni === 'string' && !net.isIP(sni.trim()))
+        ? sni.trim()
+        : (!net.isIP(host.trim()) ? host.trim() : undefined);
+
+      const tlsOpts: any = {
+        host: host.trim(),
         port: port,
-        servername: sni || host,
         rejectUnauthorized: false,
         timeout: timeout
-      }, () => finish(true));
+      };
+      if (servername) {
+        tlsOpts.servername = servername;
+      }
+
+      socket = tls.connect(tlsOpts, () => finish(true));
 
       socket.on('error', () => finish(false));
       socket.on('timeout', () => finish(false));
       socket.on('close', () => finish(false));
-      socket.on('end', () => finish(false));
     } catch (e) {
       finish(false);
     }
@@ -2788,7 +2798,8 @@ function checkTlsHandshake(host: string, port: number, sni: string, timeout = 22
 }
 
 /**
- * Performs complete, robust verification of a configuration
+ * Performs fast, accurate TCP/TLS port ping verification of a configuration
+ * Matches the standard TCP Ping behavior of V2Ray clients (v2rayN, v2rayNG, Nekoray)
  */
 async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   try {
@@ -2797,40 +2808,30 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // Tier 1: Fast direct TCP socket / TLS handshake check
-    let handCheck = { working: false, latency: 999 };
+    // Fast direct TCP socket check
+    const portCheck = await checkPort(details.host, details.port, 2800);
+    if (portCheck.working) {
+      return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
+    }
+
+    // Fallback: If TLS is enabled with a valid domain SNI, verify via TLS handshake
     if (details.tls) {
-      handCheck = await checkTlsHandshake(details.host, details.port, details.sni, 2200);
-    }
-    if (!handCheck.working) {
-      handCheck = await checkPort(details.host, details.port, 2200);
-    }
-
-    // If direct TCP socket / TLS handshake failed, the server is unreachable
-    if (!handCheck.working) {
-      return { working: false, latency: 999 };
-    }
-
-    // Tier 2: Real end-to-end proxy verification via Xray core if available
-    let finalLatency = handCheck.latency;
-    const xrayPath = path.join(process.cwd(), 'bin/xray');
-    if (fs.existsSync(xrayPath)) {
-      const xrayCheck = await checkConfigWithXray(rawConfig);
-      if (xrayCheck.working) {
-        finalLatency = xrayCheck.latency;
+      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 2800);
+      if (tlsCheck.working) {
+        return { working: true, latency: Math.max(10, Math.round(tlsCheck.latency)) };
       }
     }
 
-    return { working: true, latency: Math.max(10, Math.round(finalLatency)) };
+    return { working: false, latency: 999 };
   } catch (err) {
     return { working: false, latency: 999 };
   }
 }
 
 // --- Connection Port Tester ---
-function checkPort(host: string, port: number, timeout = 1800): Promise<{ working: boolean; latency: number }> {
+function checkPort(host: string, port: number, timeout = 2800): Promise<{ working: boolean; latency: number }> {
   return new Promise((resolve) => {
-    if (!host || !port) {
+    if (!host || !port || isNaN(port)) {
       return resolve({ working: false, latency: 999 });
     }
 
@@ -2843,10 +2844,10 @@ function checkPort(host: string, port: number, timeout = 1800): Promise<{ workin
       try { socket.destroy(); } catch (e) {}
       clearTimeout(timer);
       const latency = Date.now() - start;
-      resolve({ working, latency: working ? latency : 999 });
+      resolve({ working, latency: working ? Math.max(10, latency) : 999 });
     };
 
-    const timer = setTimeout(() => finish(false), timeout + 300);
+    const timer = setTimeout(() => finish(false), timeout + 200);
 
     const socket = new net.Socket();
     socket.setTimeout(timeout);
@@ -2855,10 +2856,9 @@ function checkPort(host: string, port: number, timeout = 1800): Promise<{ workin
     socket.on('error', () => finish(false));
     socket.on('timeout', () => finish(false));
     socket.on('close', () => finish(false));
-    socket.on('end', () => finish(false));
 
     try {
-      socket.connect(port, host);
+      socket.connect(port, host.trim());
     } catch (e) {
       finish(false);
     }
@@ -4189,7 +4189,7 @@ async function testConfigsBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 10;
+  const CONCURRENCY = 25;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
@@ -4198,7 +4198,7 @@ async function testConfigsBatch(ids: string[]) {
 
       const checkResult = await withHardTimeout(
         () => checkConfigFully(config.raw),
-        10000,
+        3500,
         { working: false, latency: 999 }
       );
       
@@ -4214,8 +4214,10 @@ async function testConfigsBatch(ids: string[]) {
       }
     }));
 
-    saveDatabase();
-    await new Promise(r => setTimeout(r, 25));
+    if (i % (CONCURRENCY * 3) === 0 || i + CONCURRENCY >= ids.length) {
+      saveDatabase();
+    }
+    await new Promise(r => setTimeout(r, 15));
   }
 
   // Final sanity cleanup for any config still in 'checking' status in this batch
@@ -4339,11 +4341,14 @@ function formatProxyTelegramUrl(p: { type?: string; raw?: string; server?: strin
   return raw.startsWith('http') ? raw : `tg://socks?server=${encodeURIComponent(p.server || '127.0.0.1')}&port=${p.port || 1080}`;
 }
 
-// Helper to safely truncate and balance HTML tags in strict LIFO order to respect Telegram 4096 character limits
+// Helper to safely truncate and balance HTML tags in strict LIFO order to respect Telegram 4096 character limits (and 1024 for media captions)
 function safeTelegramHtmlLength(text: string, maxLen: number = 3800): string {
   if (!text || text.length <= maxLen) return text;
   
-  let truncated = text.substring(0, maxLen);
+  // Reserve space for closing tags so the final result strictly stays <= maxLen
+  const tagReserve = maxLen <= 1024 ? 45 : 60;
+  const cutTarget = Math.max(10, maxLen - tagReserve);
+  let truncated = text.substring(0, cutTarget);
   // If we cut inside an HTML tag, trim back to opening bracket
   const lastOpen = truncated.lastIndexOf('<');
   const lastClose = truncated.lastIndexOf('>');
@@ -4378,6 +4383,11 @@ function safeTelegramHtmlLength(text: string, maxLen: number = 3800): string {
   while (tagStack.length > 0) {
     const unclosed = tagStack.pop();
     truncated += `</${unclosed}>`;
+  }
+
+  // Ultimate sanity check: if somehow still exceeds maxLen, hard slice and strip unclosed tags
+  if (truncated.length > maxLen) {
+    truncated = truncated.substring(0, maxLen).replace(/<[^>]*$/, '');
   }
 
   return truncated;
@@ -5606,8 +5616,12 @@ function formatTechItemForTelegram(item: TechItem, showBadge = true, skipSummary
  */
 async function downloadMediaToBlob(url: string, timeoutMs = 12000): Promise<{ blob: Blob; filename: string; contentType: string } | null> {
   if (!url || !/^https?:\/\//i.test(url)) return null;
+  const cleanUrl = url.replace(/&amp;/g, '&').trim();
+  // Filter out webpage links that are not direct CDN media files
+  if (cleanUrl.includes('t.me/') && !cleanUrl.includes('/file/')) return null;
+
   try {
-    const res = await fetch(url, {
+    const res = await fetch(cleanUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'image/*,video/*,*/*',
@@ -5616,16 +5630,20 @@ async function downloadMediaToBlob(url: string, timeoutMs = 12000): Promise<{ bl
       signal: AbortSignal.timeout(timeoutMs)
     });
     if (!res.ok) return null;
+    const contentType = (res.headers.get('content-type') || 'application/octet-stream').toLowerCase();
+    if (contentType.includes('text/html') || contentType.includes('application/json')) {
+      return null;
+    }
+
     const arrayBuffer = await res.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     if (buffer.length === 0 || buffer.length > 50 * 1024 * 1024) return null;
 
-    const contentType = res.headers.get('content-type') || 'application/octet-stream';
     let ext = 'jpg';
-    if (contentType.includes('video') || url.includes('.mp4')) ext = 'mp4';
-    else if (contentType.includes('gif') || url.includes('.gif')) ext = 'gif';
-    else if (contentType.includes('png') || url.includes('.png')) ext = 'png';
-    else if (contentType.includes('webp') || url.includes('.webp')) ext = 'webp';
+    if (contentType.includes('video') || cleanUrl.includes('.mp4')) ext = 'mp4';
+    else if (contentType.includes('gif') || cleanUrl.includes('.gif')) ext = 'gif';
+    else if (contentType.includes('png') || cleanUrl.includes('.png')) ext = 'png';
+    else if (contentType.includes('webp') || cleanUrl.includes('.webp')) ext = 'webp';
 
     const blob = new Blob([buffer], { type: contentType });
     return { blob, filename: `media_${Date.now()}.${ext}`, contentType };
@@ -5638,7 +5656,7 @@ async function downloadMediaToBlob(url: string, timeoutMs = 12000): Promise<{ bl
  * Unified Telegram Media Post Sender:
  * Automatically dispatches Videos (sendVideo), Animations/GIFs (sendAnimation),
  * Photos (sendPhoto), or Text (sendMessage) with automatic HTML caption length
- * protection (1024 chars for media, 3900 for text) and multi-stage fallback.
+ * protection (strictly <= 980 chars to never exceed Telegram 1024 limit) and multi-stage fallback.
  * Employs direct buffer download + FormData upload to bypass CDN hotlink protections.
  */
 async function sendTelegramPostWithMedia(params: {
@@ -5652,22 +5670,29 @@ async function sendTelegramPostWithMedia(params: {
 }): Promise<{ success: boolean; messageId?: number; error?: string }> {
   const { chatId, text, videoUrl, imageUrl, mediaType, replyMarkup, silent } = params;
   const safeFullText = safeTelegramHtmlLength(text, 3900);
-  const caption = safeTelegramHtmlLength(text, 1024);
+  const caption = safeTelegramHtmlLength(text, 980);
+
+  const cleanVideoUrl = videoUrl ? videoUrl.replace(/&amp;/g, '&').trim() : null;
+  const cleanImageUrl = imageUrl ? imageUrl.replace(/&amp;/g, '&').trim() : null;
+
+  // Filter out webpage links (like t.me/channel/123) that are not direct video media streams
+  const isValidVideoUrl = Boolean(cleanVideoUrl && /^https?:\/\//i.test(cleanVideoUrl) && (!cleanVideoUrl.includes('t.me/') || cleanVideoUrl.includes('/file/')));
+  const isValidImageUrl = Boolean(cleanImageUrl && /^https?:\/\//i.test(cleanImageUrl) && (!cleanImageUrl.includes('t.me/') || cleanImageUrl.includes('/file/')));
 
   // 1. Try sending video or animation/gif if videoUrl is available
-  if (videoUrl && /^https?:\/\//i.test(videoUrl)) {
-    const isAnim = mediaType === 'animation' || /\.gif(\?|$)/i.test(videoUrl);
+  if (isValidVideoUrl && cleanVideoUrl) {
+    const isAnim = mediaType === 'animation' || /\.gif(\?|$)/i.test(cleanVideoUrl);
     const method = isAnim ? 'sendAnimation' : 'sendVideo';
     const payloadKey = isAnim ? 'animation' : 'video';
 
     // Step 1a: Attempt direct binary buffer download and upload via FormData
     try {
-      const mediaData = await downloadMediaToBlob(videoUrl, 15000);
-      if (mediaData) {
+      const mediaData = await downloadMediaToBlob(cleanVideoUrl, 15000);
+      if (mediaData && (mediaData.contentType.startsWith('video/') || mediaData.contentType.includes('octet-stream') || mediaData.filename.endsWith('.mp4') || mediaData.filename.endsWith('.gif'))) {
         const formData = new FormData();
         formData.append('chat_id', String(chatId));
         formData.append(payloadKey, mediaData.blob, mediaData.filename);
-        formData.append('caption', caption);
+        if (caption) formData.append('caption', caption);
         formData.append('parse_mode', 'HTML');
         if (replyMarkup) {
           formData.append('reply_markup', typeof replyMarkup === 'string' ? replyMarkup : JSON.stringify(replyMarkup));
@@ -5676,7 +5701,9 @@ async function sendTelegramPostWithMedia(params: {
         if (!isAnim) formData.append('supports_streaming', 'true');
 
         const result = await callTelegramApi(method, formData);
-        return { success: true, messageId: result?.message_id };
+        if (result?.message_id) {
+          return { success: true, messageId: result.message_id };
+        }
       }
     } catch (buffErr: any) {
       console.warn(`Buffer video upload failed (${buffErr?.message || buffErr}), attempting URL fallback...`);
@@ -5686,33 +5713,31 @@ async function sendTelegramPostWithMedia(params: {
     try {
       const result = await callTelegramApi(method, {
         chat_id: chatId,
-        [payloadKey]: videoUrl,
-        caption,
+        [payloadKey]: cleanVideoUrl,
+        caption: caption || undefined,
         parse_mode: 'HTML',
         reply_markup: replyMarkup,
         disable_notification: !!silent,
         supports_streaming: true
       });
-      return { success: true, messageId: result?.message_id };
+      if (result?.message_id) {
+        return { success: true, messageId: result.message_id };
+      }
     } catch (videoErr: any) {
-      addLog('warn', `ارسال ویدیوی پست به ${chatId} با خطا مواجه شد (${videoErr?.message || videoErr})، در حال تلاش برای ارسال با تصویر/متن...`);
+      addLog('warn', `ارسال ویدیوی پست به ${chatId} ناموفق بود (${videoErr?.message || videoErr})، در حال تلاش برای ارسال تصویر پست...`);
     }
   }
 
-  let forceTextFallbackForPhoto = false;
-  // 2. Try sending photo if imageUrl is available
-  if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
-    if (safeFullText.length > 1000) {
-      forceTextFallbackForPhoto = true;
-    } else {
-      // Step 2a: Attempt direct binary buffer download and upload via FormData
+  // 2. Try sending photo if imageUrl is available (or as fallback if video failed)
+  if (isValidImageUrl && cleanImageUrl) {
+    // Step 2a: Attempt direct binary buffer download and upload via FormData
     try {
-      const mediaData = await downloadMediaToBlob(imageUrl, 12000);
+      const mediaData = await downloadMediaToBlob(cleanImageUrl, 12000);
       if (mediaData) {
         const formData = new FormData();
         formData.append('chat_id', String(chatId));
         formData.append('photo', mediaData.blob, mediaData.filename);
-        formData.append('caption', caption);
+        if (caption) formData.append('caption', caption);
         formData.append('parse_mode', 'HTML');
         if (replyMarkup) {
           formData.append('reply_markup', typeof replyMarkup === 'string' ? replyMarkup : JSON.stringify(replyMarkup));
@@ -5720,7 +5745,9 @@ async function sendTelegramPostWithMedia(params: {
         if (silent) formData.append('disable_notification', 'true');
 
         const result = await callTelegramApi('sendPhoto', formData);
-        return { success: true, messageId: result?.message_id };
+        if (result?.message_id) {
+          return { success: true, messageId: result.message_id };
+        }
       }
     } catch (buffErr: any) {
       console.warn(`Buffer photo upload failed (${buffErr?.message || buffErr}), attempting URL fallback...`);
@@ -5730,40 +5757,25 @@ async function sendTelegramPostWithMedia(params: {
     try {
       const result = await callTelegramApi('sendPhoto', {
         chat_id: chatId,
-        photo: imageUrl,
-        caption,
+        photo: cleanImageUrl,
+        caption: caption || undefined,
         parse_mode: 'HTML',
         reply_markup: replyMarkup,
         disable_notification: !!silent
       });
-      return { success: true, messageId: result?.message_id };
+      if (result?.message_id) {
+        return { success: true, messageId: result.message_id };
+      }
     } catch (photoErr: any) {
-      addLog('warn', `ارسال تصویر پست به ${chatId} با خطا مواجه شد (${photoErr?.message || photoErr})، در حال ارسال متنی...`);
-    }
+      addLog('warn', `ارسال تصویر پست به ${chatId} ناموفق بود (${photoErr?.message || photoErr})، در حال ارسال متنی...`);
     }
   }
 
-  // 3. Fallback to sendMessage (Text)
+  // 3. Fallback to sendMessage (Text) ONLY if media was absent or completely failed
   try {
-    let finalPayloadText = safeFullText;
-    let linkPreviewOptions = undefined;
-    
-    // If we forced text fallback because the caption was too long,
-    // inject an invisible link at the top to force Telegram to render a rich image preview
-    if (forceTextFallbackForPhoto && imageUrl) {
-      finalPayloadText = `<a href="${imageUrl}">&#8205;</a>\n` + safeFullText;
-      linkPreviewOptions = {
-        is_disabled: false,
-        url: imageUrl,
-        prefer_large_media: true,
-        show_above_text: true
-      };
-    }
-
     const result = await callTelegramApi('sendMessage', {
       chat_id: chatId,
-      text: finalPayloadText,
-      link_preview_options: linkPreviewOptions,
+      text: safeFullText,
       parse_mode: 'HTML',
       reply_markup: replyMarkup,
       disable_notification: !!silent
@@ -7244,12 +7256,9 @@ async function executeConfigsAutoPost(
     };
 
     // 1. Check if Fun + Config combined mode is active
-    // If explicitPostMode === 'pure', do NOT attach any fun item
-    // If explicitPostMode === 'combined', force attach fun item
-    // If auto/undefined, follow settings.funWithConfigEnabled
-    const shouldLookForFun = explicitPostMode === 'pure' 
-      ? false 
-      : (explicitPostMode === 'combined' ? true : (channelTargetNum === 1 ? (settings.funWithConfigEnabled !== false) : (settings.funWithConfigEnabled === true)));
+    // Standard config posts are ALWAYS pure 20-configs without fun
+    // Combined mode (meme + 5 configs) ONLY runs when explicitPostMode === 'combined'
+    const shouldLookForFun = explicitPostMode === 'combined';
 
     let attachedFunItem: FunNewsItem | null = null;
 
@@ -7485,6 +7494,8 @@ async function executeConfigsAutoPost(
     }
 
     const showPing = settings.displayPingInPosts === true;
+    const hasMedia = Boolean(attachedFunItem && (attachedFunItem.imageUrl || attachedFunItem.videoUrl));
+    const maxAllowedChars = hasMedia ? 980 : 3850;
 
     // Helper to format post text with optional verbose intro/outro explanations
     const buildPostText = (includeVerboseExplanations: boolean, customInlineBatch?: string, customInlineCount?: number) => {
@@ -7493,7 +7504,9 @@ async function executeConfigsAutoPost(
       if (attachedFunItem) {
         const cleanFunText = sanitizeContentForTelegramPost(attachedFunItem.text || attachedFunItem.title || '', targetChannel);
         if (cleanFunText) {
-          const maxFunLen = includeVerboseExplanations ? 350 : 150;
+          const maxFunLen = hasMedia 
+            ? (includeVerboseExplanations ? 200 : 110) 
+            : (includeVerboseExplanations ? 350 : 150);
           t += `😂 <b>${escapeHtml(cleanFunText.slice(0, maxFunLen))}</b>\n`;
           t += `━━━━━━━━━━━━━━━━━━━━\n\n`;
         }
@@ -7509,43 +7522,20 @@ async function executeConfigsAutoPost(
 
       if (selectedConfigs.length > 0) {
         t += `🚀 <b>پک ${selectedConfigs.length} کانفیگ اختصاصی V2Ray:</b>\n\n`;
-        
-        if (showPing) {
-          for (let i = 0; i < previewCount; i++) {
-            const conf = selectedConfigs[i];
-            const loc = configLocations[i] || { country: 'آلمان', flag: '🇩🇪' };
-            const pingText = conf.latency ? `⚡ <code>${conf.latency}ms</code>` : '🟢 فعال';
-            const proto = (conf.protocol || 'V2RAY').toUpperCase();
-            t += `▫️ <b>[${proto}]</b> ${loc.country} ${loc.flag} ╶─╴ ${pingText}\n`;
-          }
-
-          if (selectedConfigs.length > previewCount) {
-            t += `\n<i>▫️ و ${selectedConfigs.length - previewCount} کانفیگ دیگر در کادر زیر...</i>\n`;
-          }
-        }
 
         if (activeBatch) {
           const copyTitle = activeCount === selectedConfigs.length 
             ? `📋 <b>کپی یکجای تمامی ${selectedConfigs.length} کانفیگ (روی کادر زیر لمس کنید):</b>`
             : `📋 <b>کپی یکجای کانفیگ‌ها (${activeCount} از ${selectedConfigs.length} عدد):</b>`;
-          t += `\n${copyTitle}\n`;
+          t += `${copyTitle}\n`;
           t += `<blockquote expandable><code>${escapeHtml(activeBatch)}</code></blockquote>\n\n`;
         }
       }
 
       // Append proxies
       if (selectedProxies.length > 0) {
-        t += `🔌 <b>پروکسی‌های فعال و بدون قطعی تلگرام:</b>\n\n`;
-        if (showPing) {
-          for (let i = 0; i < proxyPreviewCount; i++) {
-            const proxy = selectedProxies[i];
-            const loc = proxyLocations[i] || { country: 'آلمان', flag: '🇩🇪' };
-            const pingText = proxy.latency ? `⚡ <code>${proxy.latency}ms</code>` : '🟢 فعال';
-            const pType = (proxy.type || 'MTPROTO').toUpperCase();
-            t += `▫️ <b>[${pType}]</b> ${loc.country} ${loc.flag} ╶─╴ ${pingText}\n`;
-          }
-        }
-        t += `\n<i>👇 جهت اتصال به پروکسی‌ها دکمه‌های زیر را لمس نمایید:</i>\n\n`;
+        t += `🔌 <b>پروکسی‌های فعال و بدون قطعی تلگرام:</b>\n`;
+        t += `<i>👇 جهت اتصال به پروکسی‌ها دکمه‌های زیر را لمس نمایید:</i>\n\n`;
       }
 
       if (needsFullPackFile || (activeCount < selectedConfigs.length)) {
@@ -7559,16 +7549,12 @@ async function executeConfigsAutoPost(
       return t;
     };
 
-    // Determine strict character limit based on post media type
-    const hasMedia = Boolean(attachedFunItem && (attachedFunItem.imageUrl || attachedFunItem.videoUrl));
-    const maxAllowedChars = hasMedia ? 1010 : 3850;
-
     // Try full text first
     let text = buildPostText(true);
 
-    // If text exceeds Telegram character limit for this media type, automatically strip verbose intro/outro descriptions (Panther fluff)!
+    // If text exceeds Telegram character limit for this media type, automatically strip verbose intro/outro descriptions
     if (text.length > maxAllowedChars) {
-      addLog('info', `طول متن پست (${text.length} کاراکتر) از سقف مجاز تلگرام (${maxAllowedChars}) بیشتر بود. توضیحات تشریحی اضافه جهت جاگیری کامل کانفیگ‌ها و عدم تجاوز از سقف تلگرام حذف گردید.`);
+      addLog('info', `طول متن پست (${text.length} کاراکتر) از سقف مجاز تلگرام (${maxAllowedChars}) بیشتر بود. توضیحات تشریحی اضافه جهت جاگیری کامل تصویر/ویدیو تطبیق داده شد.`);
       text = buildPostText(false);
     }
 
@@ -10037,17 +10023,20 @@ async function extractFunNewsFromSources(specificSourceId?: string, extraHandles
         const msgIdParts = postAttr.split('/');
         const msgId = msgIdParts.length > 1 ? parseInt(msgIdParts[1], 10) : undefined;
 
-        // Extract video URL if present (MP4, round video, telesco.pe CDN, webm, etc.)
+        // Extract video URL if present (direct MP4, round video, telesco.pe CDN direct video, webm)
         let videoUrl: string | undefined = undefined;
         let isAnimation = false;
         const videoMatch = fullBlock.match(/<video[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/i)
-          || fullBlock.match(/<source[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/i)
-          || fullBlock.match(/class=["'][^"']*tgme_widget_message_video_player[^"']*["'][^>]*href=["'](https?:\/\/[^"']+)["']/i);
+          || fullBlock.match(/<source[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/i);
         
         if (videoMatch && videoMatch[1]) {
-          videoUrl = videoMatch[1].trim();
-          if (fullBlock.includes('autoplay') || fullBlock.includes('tgme_widget_message_video_thumb') || /\.gif(\?|$)/i.test(videoUrl)) {
-            isAnimation = true;
+          const rawV = videoMatch[1].trim();
+          // Direct media streams only, never generic t.me message links
+          if (!rawV.includes('t.me/') || rawV.includes('/file/')) {
+            videoUrl = rawV.replace(/&amp;/g, '&');
+            if (fullBlock.includes('autoplay') || fullBlock.includes('tgme_widget_message_video_thumb') || /\.gif(\?|$)/i.test(videoUrl)) {
+              isAnimation = true;
+            }
           }
         }
 
@@ -10055,15 +10044,15 @@ async function extractFunNewsFromSources(specificSourceId?: string, extraHandles
         let imageUrl: string | undefined = undefined;
         const bgMatch = fullBlock.match(/background-image:\s*url\(\s*(?:&quot;|['"])?(https?:\/\/[^'"\)\s&;]+)(?:&quot;|['"])?\s*\)/i);
         if (bgMatch && bgMatch[1] && !bgMatch[1].includes('favicon') && !bgMatch[1].includes('avatar')) {
-          imageUrl = bgMatch[1].trim();
+          imageUrl = bgMatch[1].trim().replace(/&amp;/g, '&');
         } else {
           const imgTagMatch = fullBlock.match(/<img[^>]+(?:src|data-src)=["'](https?:\/\/[^"']+)["']/i);
           if (imgTagMatch && imgTagMatch[1] && !imgTagMatch[1].includes('favicon') && !imgTagMatch[1].includes('avatar')) {
-            imageUrl = imgTagMatch[1].trim();
+            imageUrl = imgTagMatch[1].trim().replace(/&amp;/g, '&');
           } else {
             const posterMatch = fullBlock.match(/<video[^>]*\bposter=["'](https?:\/\/[^"']+)["']/i);
             if (posterMatch && posterMatch[1]) {
-              imageUrl = posterMatch[1].trim();
+              imageUrl = posterMatch[1].trim().replace(/&amp;/g, '&');
             }
           }
         }
@@ -10205,7 +10194,7 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'pr
   }
 
   if (mode === 'configs') {
-    return await executeConfigsAutoPost(channelTarget, settings.targetChannel);
+    return await executeConfigsAutoPost(channelTarget, settings.targetChannel, 'pure');
   }
   if (mode === 'news') {
     return await executeTechNewsAutoPost(channelTarget, settings.targetChannel);
@@ -10233,9 +10222,9 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'pr
     }
     return await executeFunNewsAutoPost(2, settings.targetChannel);
   } else {
-    // Channel 1: Post primary Configs pack (with fun attachment if enabled) or first active category
+    // Channel 1: Post primary Pure Configs pack (strictly 20 configs) or first active category
     if (settings.configsEnabled !== false && ((settings.configCount || 0) > 0 || (settings.proxyCount || 0) > 0)) {
-      return await executeConfigsAutoPost(1, settings.targetChannel);
+      return await executeConfigsAutoPost(1, settings.targetChannel, 'pure');
     }
     if (settings.techNewsEnabled !== false && (settings.techNewsCount || 0) > 0) {
       return await executeTechNewsAutoPost(1, settings.targetChannel);
@@ -10252,7 +10241,7 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'pr
     if (settings.aiPromptsEnabled !== false && (settings.aiPromptsCount || 0) > 0) {
       return await executeAiPromptsAutoPost(1, settings.targetChannel);
     }
-    return await executeConfigsAutoPost(1, settings.targetChannel);
+    return await executeConfigsAutoPost(1, settings.targetChannel, 'pure');
   }
 }
 
@@ -10295,7 +10284,7 @@ async function checkAndTriggerAutoPost() {
 
     const candidates: PostCandidate[] = [];
 
-    // 1. Configs & Proxies Schedule Check (Channel 1 Primary Core)
+    // 1. Configs & Proxies Schedule Check (Channel 1 Pure Configs - strictly 20 configs, every 4 hours)
     if (ap.configsEnabled !== false && ((ap.configCount || 0) > 0 || (ap.proxyCount || 0) > 0)) {
       const configMinutes = Number(ap.configIntervalMinutes) || (Number(ap.configIntervalHours) ? Number(ap.configIntervalHours) * 60 : (Number(ap.postIntervalHours) ? Number(ap.postIntervalHours) * 60 : 240));
       const intervalMs = Math.max(30, configMinutes) * 60 * 1000;
@@ -10308,7 +10297,31 @@ async function checkAndTriggerAutoPost() {
           isDue: true,
           timeSinceDueMs: elapsed - intervalMs,
           goldenPriority: p,
-          run: () => executeConfigsAutoPost(1, ap.targetChannel)
+          run: () => executeConfigsAutoPost(1, ap.targetChannel, 'pure')
+        });
+      }
+    }
+
+    // 1.b. Combined Fun + Configs Schedule (Meme + 5 configs)
+    if (ap.funWithConfigEnabled === true) {
+      const funConfigMinutes = Number(ap.funNewsIntervalMinutes) || 180;
+      const intervalMs = Math.max(30, funConfigMinutes) * 60 * 1000;
+      const lastTime = ap.lastFunConfigsPostedAt;
+      const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
+      if (elapsed >= intervalMs) {
+        candidates.push({
+          category: 'fun',
+          isDue: true,
+          timeSinceDueMs: elapsed - intervalMs,
+          goldenPriority: 8,
+          run: async () => {
+            const ok = await executeConfigsAutoPost(1, ap.targetChannel, 'combined');
+            if (ok) {
+              ap.lastFunConfigsPostedAt = new Date().toISOString();
+              saveDatabase();
+            }
+            return ok;
+          }
         });
       }
     }
@@ -16474,16 +16487,26 @@ async function startExpressServer() {
 
   // API: Test All Configs
   app.post('/api/configs/test-all', (req, res) => {
-    const limit = Number(req.body?.limit || req.query?.limit) || db.settings.testBatchLimit || 100;
-    const recentConfigs = db.configs.slice(0, limit);
-    const ids = recentConfigs.map(c => c.id);
+    const isAll = req.body?.all === true || req.body?.limit === 'all' || req.query?.all === 'true';
+    let targetConfigs = db.configs;
+    if (!isAll) {
+      const limit = Number(req.body?.limit || req.query?.limit) || db.settings.testBatchLimit || 100;
+      const untested = db.configs.filter(c => c.status === 'untested');
+      if (untested.length >= limit) {
+        targetConfigs = untested.slice(0, limit);
+      } else {
+        const others = db.configs.filter(c => c.status !== 'untested');
+        targetConfigs = [...untested, ...others].slice(0, limit);
+      }
+    }
+    const ids = targetConfigs.map(c => c.id);
     if (ids.length === 0) {
       return res.json({ success: true, message: 'هیچ کانفیگی جهت تست موجود نیست.' });
     }
 
     // Async run to not block express response
     testConfigsBatch(ids);
-    res.json({ success: true, message: `تست اتصال تعداد ${ids.length} کانفیگ اخیر در پس‌زمینه آغاز شد.`, count: ids.length });
+    res.json({ success: true, message: `تست اتصال تعداد ${ids.length} کانفیگ در پس‌زمینه آغاز شد.`, count: ids.length });
   });
 
   // API: Clear Failed Configs
