@@ -935,7 +935,8 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   targetChannel: '',
   adText: 'Sponsor: @MyChannel',
   silentMode: true,
-  postFiles: false,
+  postFiles: true,
+  displayPingInPosts: false,
   includeTechImportanceBadge: true,
   autoPurgeOldTechDays: 7,
   lastPostedAt: null,
@@ -943,15 +944,15 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   lastAnyPostAt: null,
 
   // Smart Channel Growth, Traffic & Anti-Churn Controls
-  maxDailyPosts: 4, // Maximum 4 posts per day for Channel 1 (Tech & Configs)
-  minPostSpacingMinutes: 180, // Minimum 3 hours between ANY post in Channel 1
+  maxDailyPosts: 16, // Up to 16 posts per day for Channel 1 to accommodate 20-configs every 4h, fun+5configs, prompts & tricks
+  minPostSpacingMinutes: 30, // 30 minutes safe spacing between interleaved post categories
   smartGoldenHours: true, // Prioritize peak Iranian hours
   sleepHoursProtection: true, // Halt auto-posts during sleeping hours (00:30 - 08:30 Tehran time)
-  singlePostMode: true, // Strictly 1 telegram message per drop (no duplicate files/messages at the same minute)
+  singlePostMode: true, // Strictly 1 telegram message per drop
 
-  // 1. Configs & Proxies Schedule
+  // 1. Configs & Proxies Schedule (Pure 20 Configs Pack with attached file every 4 hours)
   configsEnabled: true,
-  funWithConfigEnabled: true, // Fun + Config combined posts get 5 configs; Pure config posts get 20 configs
+  funWithConfigEnabled: true, // Fun Meme + 5 Configs combined posts interleaved at regular intervals
   postIntervalHours: 4,
   configIntervalHours: 4,
   configIntervalMinutes: 240,
@@ -967,15 +968,15 @@ const DEFAULT_AUTO_POST: AutoPostSettings = {
   techNewsCount: 2,
   lastTechNewsPostedAt: null,
 
-  // 3. Tech Tricks & Secrets Schedule
-  techTricksEnabled: false,
-  techTricksIntervalHours: 6,
-  techTricksIntervalMinutes: 360,
-  techTricksCount: 2,
+  // 3. Tech Tricks & Secrets Schedule (Strictly Once a Day)
+  techTricksEnabled: true,
+  techTricksIntervalHours: 24,
+  techTricksIntervalMinutes: 1440,
+  techTricksCount: 1,
   lastTechTricksPostedAt: null,
 
-  // 4. AI Prompts Schedule
-  aiPromptsEnabled: false,
+  // 4. AI Prompts Schedule (Rotated in turn, auto-updated online)
+  aiPromptsEnabled: true,
   aiPromptsIntervalHours: 6,
   aiPromptsIntervalMinutes: 360,
   aiPromptsCount: 1,
@@ -5172,6 +5173,125 @@ async function fetchLiveAiPromptsFromWeb(): Promise<number> {
     console.error('Error fetching OpenArt prompts:', oaErr.message || oaErr);
   }
 
+  // 3. SCRAPE & PARSE AWESOME CHATGPT PROMPTS (Popular GitHub Repository)
+  try {
+    const ghRes = await fetch('https://raw.githubusercontent.com/f/awesome-chatgpt-prompts/main/prompts.csv', {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (ghRes.ok) {
+      const csvText = await ghRes.text();
+      const lines = csvText.split('\n');
+
+      const PROMPT_ACT_FA_MAP: Record<string, { title: string; desc: string; tags: string[] }> = {
+        'Linux Terminal': {
+          title: '💻 شبیه‌ساز حرفه‌ای ترمینال لینوکس (Linux Bash)',
+          desc: 'تبدیل چت‌جی‌پی‌تی به یک ترمینال واقعی لینوکس جهت تست کامندها، اسکریپت‌ها و آموزش لینوکس.',
+          tags: ['لینوکس', 'ترمینال', 'برنامه‌نویسی', 'کدنویسی']
+        },
+        'English Translator and Improver': {
+          title: '🌐 مترجم هوشمند و ارتقادهنده تخصصی زبان انگلیسی',
+          desc: 'ترجمه متون به انگلیسی با گرامر بی‌نقص، دایره واژگان پیشرفته و استایل نگارش طبیعی نیتیو.',
+          tags: ['ترجمه', 'زبان_انگلیسی', 'ویرایش_متن', 'آموزش']
+        },
+        'Job Interviewer': {
+          title: '🎯 شبیه‌ساز مصاحبه شغلی و آماده‌سازی برای استخدام',
+          desc: 'ایفای نقش مدیر مصاحبه‌کننده سخت‌گیر برای تست مهارت‌ها، سوالات تخصصی و شبیه‌سازی جلسه واقعی مصاحبه کاری.',
+          tags: ['استخدام', 'مصاحبه_شغلی', 'کاریابی', 'رزومه']
+        },
+        'JavaScript Console': {
+          title: '⚡ کنسول تعاملی و مفسر کد جاوااسکریپت',
+          desc: 'اجرای کد جاوااسکریپت، اشکال‌زدایی فوری اسکریپت‌ها و نمایش دقیق خروجی کنسول مرورگر.',
+          tags: ['جاوااسکریپت', 'فرانت‌اند', 'وب', 'کد']
+        },
+        'Excel Sheet': {
+          title: '📊 دستیار فرمول‌نویسی و تحلیل داده اکسل (Excel & Sheets)',
+          desc: 'تولید فرمول‌های پیشرفته، تحلیل جداول داده و انجام محاسبات پیچیده اکسل به صورت متنی.',
+          tags: ['اکسل', 'آفیس', 'فرمول_نویسی', 'تحلیل_داده']
+        },
+        'Travel Guide': {
+          title: '✈️ راهنمای جامع سفر و برنامه‌ریزی توریسم',
+          desc: 'پیشنهاد بهترین مقاصد، جاذبه‌های دیدنی، برنامه‌ریزی روزانه سفر و بودجه‌بندی هوشمندانه.',
+          tags: ['سفر', 'گردشگری', 'توریسم', 'برنامه‌ریزی']
+        },
+        'Cyber Security Specialist': {
+          title: '🛡️ متخصص امنیت سایبری و تست نفوذ اخلاقی',
+          desc: 'بررسی راهکارهای ارتقای امنیت سرورها، تحلیل آسیب‌پذیری‌ها و ایمن‌سازی شبکه‌های دیجیتال.',
+          tags: ['امنیت_سایبری', 'هک_قانونمند', 'امنیت_شبکه', 'فناوری']
+        },
+        'Storyteller': {
+          title: '📖 داستان‌سرای خلاق و نویسنده سناریوهای جذاب',
+          desc: 'خلق داستان‌های مهیج، شخصیت‌پردازی عمیق و نگارش متون احساسی و روایی متناسب با سلیقه شما.',
+          tags: ['داستان', 'نویسندگی', 'خلاقیت', 'سناریو']
+        },
+        'Midjourney Prompt Generator': {
+          title: '🎨 مهندس فوق‌تخصصی پرامپت‌های میدجرنی (Midjourney Prompter)',
+          desc: 'تبدیل ایده‌های ساده شما به پرامپت‌های خارق‌العاده و پرجزئیات همراه با تگ‌های نوری و دوربین برای میدجرنی v6.',
+          tags: ['میدجرنی', 'پرامپت_میدجرنی', 'تولید_تصویر', 'هوش_مصنوعی']
+        },
+        'Social Media Influencer': {
+          title: '📱 استراتژیست شبکه‌های اجتماعی و رشد پیج',
+          desc: 'نگارش کپشن‌های ویروسی، سناریوهای جذب مخاطب در اینستاگرام و یوتیوب و ترفندهای وایرال شدن.',
+          tags: ['اینستاگرام', 'سوشال_مدیا', 'تولید_محتوا', 'مارکتینگ']
+        },
+        'Senior Frontend Developer': {
+          title: '⚛️ مشاور ارشد برنامه‌نویسی فرانت‌اند (React & Next.js)',
+          desc: 'معماری پروژه‌های وب مدرن، بهینه‌سازی پرفورمنس رندرینگ و کدنویسی تمیز با تایپ‌اسکریپت.',
+          tags: ['فرانت_اند', 'ری‌اکت', 'وب', 'توسعه_نرم_افزار']
+        },
+        'Tech Writer': {
+          title: '📝 نویسنده تخصصی مقالات فنی و وبلاگ فناوری',
+          desc: 'نگارش محتوای عمیق و جذاب درباره ابزارهای نوظهور تکنولوژی و هوش مصنوعی با بیان روان.',
+          tags: ['تولید_محتوا', 'مقاله_فنی', 'تکنولوژی', 'بلاگری']
+        }
+      };
+
+      let ghAdded = 0;
+      for (let i = 1; i < lines.length && ghAdded < 20; i++) {
+        const l = lines[i].trim();
+        if (!l) continue;
+        const firstComma = l.indexOf(',');
+        if (firstComma === -1) continue;
+        const act = l.slice(0, firstComma).replace(/^"|"$/g, '').trim();
+        let prompt = l.slice(firstComma + 1).trim();
+        if (prompt.startsWith('"')) {
+          const closingQuote = prompt.indexOf('"', 1);
+          if (closingQuote !== -1) prompt = prompt.slice(1, closingQuote);
+        } else {
+          const nextComma = prompt.indexOf(',');
+          if (nextComma !== -1) prompt = prompt.slice(0, nextComma);
+        }
+
+        if (!act || !prompt || prompt.length < 25) continue;
+        if (existingTexts.has(prompt.toLowerCase())) continue;
+
+        const knownMeta = PROMPT_ACT_FA_MAP[act];
+        const title = knownMeta ? knownMeta.title : `🤖 پرامپت چت‌جی‌پی‌تی: ${act}`;
+        const desc = knownMeta ? knownMeta.desc : `پرامپت کاربردی و استاندارد جهت تبدیل چت‌جی‌پی‌تی به نقش تخصصی ${act} برای ارائه پاسخ‌های حرفه‌ای.`;
+        const tags = knownMeta ? knownMeta.tags : ['هوش_مصنوعی', 'پرامپت_چت', 'چت_جی_پی_تی', 'آموزش'];
+
+        db.aiPrompts.unshift({
+          id: 'prompt-gh-' + Date.now() + '-' + Math.floor(Math.random() * 10000),
+          title,
+          category: 'chat',
+          styleCategory: 'chat',
+          description: desc,
+          promptText: prompt.trim(),
+          tipsForPersonalPhoto: 'متن پرامپت را کپی کرده و داخل چت‌جی‌پی‌تی، کلاود یا هوش مصنوعی دلخواه ارسال کنید.',
+          tags,
+          importance: 'hot',
+          createdAt: new Date().toISOString()
+        });
+
+        existingTexts.add(prompt.toLowerCase());
+        addedCount++;
+        ghAdded++;
+      }
+    }
+  } catch (ghErr: any) {
+    console.error('Error fetching GitHub awesome-chatgpt-prompts:', ghErr.message || ghErr);
+  }
+
   return addedCount;
 }
 
@@ -5531,7 +5651,8 @@ function purgeOldAiPrompts(maxDays = 7): number {
     if (item.promptText && item.promptText.includes('[your description/photo]')) {
       return false;
     }
-    if (!item.imageUrl) {
+    // Only purge image category items if missing image
+    if (!item.imageUrl && item.category === 'image') {
       return false;
     }
 
@@ -5849,20 +5970,26 @@ async function sendTelegramPostWithMedia(params: {
     }
   }
 
-  // 3. Fallback to sendMessage (Text) ONLY if media was absent or completely failed
-  try {
-    const result = await callTelegramApi('sendMessage', {
-      chat_id: chatId,
-      text: safeFullText,
-      parse_mode: 'HTML',
-      reply_markup: replyMarkup,
-      disable_notification: !!silent
-    });
-    return { success: true, messageId: result?.message_id };
-  } catch (textErr: any) {
-    addLog('error', `ارسال پیام متنی به ${chatId} با خطا مواجه شد: ${textErr?.message || textErr}`);
-    return { success: false, error: textErr?.message || String(textErr) };
+  // 3. Send text message ONLY if post was intended as plain text (no video and no image)
+  if (!isValidVideoUrl && !isValidImageUrl) {
+    try {
+      const result = await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: safeFullText,
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup,
+        disable_notification: !!silent
+      });
+      return { success: true, messageId: result?.message_id };
+    } catch (textErr: any) {
+      addLog('error', `ارسال پیام متنی به ${chatId} با خطا مواجه شد: ${textErr?.message || textErr}`);
+      return { success: false, error: textErr?.message || String(textErr) };
+    }
   }
+
+  // If media was intended, but both binary buffer and URL uploads failed, do NOT send plain text!
+  addLog('warn', `ارسال مدیا (عکس/ویدیو) به ${chatId} ناموفق بود. جهت حفظ کیفیت کانال از ارسال متن خالی بدون تصویر خودداری شد.`);
+  return { success: false, error: 'Media transmission failed' };
 }
 
 // ==========================================================
@@ -6265,7 +6392,7 @@ async function evaluateChannelPostingAllowance(channelNum: 1 | 2, bypassTimeChec
       reason: `آیدی کانال ${channelNum} مشخص نشده است.`,
       statusLevel: 'blocked' as const,
       postsToday: 0,
-      maxDailyPosts: settings.maxDailyPosts || (isCh2 ? 6 : 4),
+      maxDailyPosts: settings.maxDailyPosts || (isCh2 ? 12 : 16),
       minutesSinceLastPost: 9999,
       inCooldown: false,
       cooldownRemainingMinutes: 0,
@@ -6276,8 +6403,8 @@ async function evaluateChannelPostingAllowance(channelNum: 1 | 2, bypassTimeChec
   }
 
   const tehran = getTehranTimeInfo();
-  const maxDaily = settings.maxDailyPosts || (isCh2 ? 6 : 4);
-  const minSpacingMin = settings.minPostSpacingMinutes || (isCh2 ? 120 : 180);
+  const maxDaily = settings.maxDailyPosts || (isCh2 ? 12 : 16);
+  const minSpacingMin = settings.minPostSpacingMinutes || (isCh2 ? 45 : 30);
 
   // 1. Calculate posts today in Tehran date
   if (!db.channelPostHistory) db.channelPostHistory = [];
@@ -7441,6 +7568,32 @@ async function executeConfigsAutoPost(
           }
         }
       }
+
+      // Pre-verify media download so expired telesco.pe tokens are refreshed before posting
+      if (attachedFunItem && (attachedFunItem.imageUrl || attachedFunItem.videoUrl)) {
+        const mediaUrl = attachedFunItem.videoUrl || attachedFunItem.imageUrl;
+        if (mediaUrl) {
+          const testBlob = await downloadMediaToBlob(mediaUrl, 12000);
+          if (!testBlob) {
+            addLog('info', 'مدیای مطلب طنز منقضی شده بود. در حال استخراج و دریافت زنده تازه‌ترین مطالب با عکس/ویدیو...');
+            try {
+              await extractFunNewsFromSources(undefined, funChannelHandles.length > 0 ? funChannelHandles : undefined);
+              const freshCandidates = (db.funNewsItems || []).filter(item => {
+                if (isCh2 ? item.postedToChannel2 : item.postedToChannel1) return false;
+                if (isTelegramSourceAd(item.text, item.title).isAd) return false;
+                return Boolean(item.imageUrl || item.videoUrl);
+              });
+              for (const cand of freshCandidates.slice(0, 5)) {
+                const candBlob = await downloadMediaToBlob(cand.videoUrl || cand.imageUrl || '', 12000);
+                if (candBlob) {
+                  attachedFunItem = cand;
+                  break;
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      }
     }
 
     // 2. Determine config count rule:
@@ -7492,6 +7645,18 @@ async function executeConfigsAutoPost(
       } else {
         const unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
         selectedConfigs = [...unpostedWorking, ...unpostedUntested.slice(0, configLimit - unpostedWorking.length)];
+      }
+
+      // If still fewer than configLimit, recycle working configs sorted by least recently posted to guarantee full count
+      if (selectedConfigs.length < configLimit) {
+        const recyclable = db.configs
+          .filter(c => c.status === 'working' && !selectedConfigs.some(sc => sc.id === c.id))
+          .sort((a, b) => {
+            const dateA = a[targetChannelKey] && a.lastChecked ? new Date(a.lastChecked).getTime() : 0;
+            const dateB = b[targetChannelKey] && b.lastChecked ? new Date(b.lastChecked).getTime() : 0;
+            return dateA - dateB;
+          });
+        selectedConfigs.push(...recyclable.slice(0, configLimit - selectedConfigs.length));
       }
     }
 
@@ -7567,7 +7732,10 @@ async function executeConfigsAutoPost(
       }
     }
 
-    if (settings.postFiles && inlineCount < selectedConfigs.length) {
+    // For Channel 1 pure config pack (20 configs), ALWAYS attach the full pack .txt file!
+    if (!isCh2 && !isCombinedPost) {
+      needsFullPackFile = true;
+    } else if (settings.postFiles && inlineCount < selectedConfigs.length) {
       needsFullPackFile = true;
     }
 
@@ -7616,8 +7784,8 @@ async function executeConfigsAutoPost(
         t += `<i>👇 جهت اتصال به پروکسی‌ها دکمه‌های زیر را لمس نمایید:</i>\n\n`;
       }
 
-      if (needsFullPackFile || (activeCount < selectedConfigs.length)) {
-        t += `\n📁 <i>فایل متنی شامل تمام ${selectedConfigs.length} کانفیگ نیز ضمیمه شد.</i>\n`;
+      if (needsFullPackFile || (!isCh2 && !isCombinedPost) || (activeCount < selectedConfigs.length)) {
+        t += `\n📁 <i>فایل متنی شامل تمام ${selectedConfigs.length} کانفیگ نیز در زیر ضمیمه شد 👇</i>\n`;
       }
 
       if (channelBranding) {
@@ -7748,8 +7916,8 @@ async function executeConfigsAutoPost(
       `کانفیگ ویتوری پروکسی`
     );
 
-    // If config pack has large count, upload full .txt pack file
-    if (needsFullPackFile && fullPackConfigsContent) {
+    // If config pack has large count or pure pack on Channel 1, upload full .txt pack file reliably
+    if ((needsFullPackFile || (!isCh2 && !isCombinedPost)) && fullPackConfigsContent) {
       try {
         const formData = new FormData();
         formData.append('chat_id', channelHandle);
@@ -7766,15 +7934,16 @@ async function executeConfigsAutoPost(
         formData.append('document', blob, packFilename);
         formData.append('caption', `📦 <b>فایل کامل ${selectedConfigs.length} کانفیگ V2Ray</b>\n\n🆔 ${escapeHtml(brandingTag || '')}`);
         formData.append('parse_mode', 'HTML');
-        // ALWAYS send secondary pack document silently to prevent double-notification spam in channels
         formData.append('disable_notification', 'true');
 
-        await fetch(`https://api.telegram.org/bot${db.settings.botToken}/sendDocument`, {
-          method: 'POST',
-          body: formData
-        });
-      } catch (err) {
-        console.error('Failed to send auto-post configs text file:', err);
+        const docResult = await callTelegramApi('sendDocument', formData);
+        if (docResult?.message_id) {
+          addLog('success', `فایل ضمیمه متنی کانفیگ‌ها (${packFilename}) با موفقیت به کانال ${channelTargetNum} ارسال شد.`);
+        } else {
+          addLog('warn', `ارسال فایل متنی کانفیگ‌ها به کانال انجام نشد: نتیجه نامعتبر از تلگرام.`);
+        }
+      } catch (err: any) {
+        addLog('error', `خطا در ارسال فایل متنی کانفیگ‌ها: ${err?.message || err}`);
       }
     }
 
@@ -9915,6 +10084,33 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
         inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
       }
 
+      // Pre-verify media download so expired telesco.pe tokens are refreshed before posting
+      if (item.imageUrl || item.videoUrl) {
+        const testBlob = await downloadMediaToBlob(item.videoUrl || item.imageUrl || '', 15000);
+        if (!testBlob) {
+          addLog('info', `مدیای مطلب ${item.id} منقضی شده بود. در حال استخراج و دریافت زنده مطالب تازه با عکس/ویدیو...`);
+          try {
+            await extractFunNewsFromSources(undefined, activeHandles.length > 0 ? activeHandles : undefined);
+            const freshItems = (db.funNewsItems || []).filter(fi => {
+              if (isCh2 ? fi.postedToChannel2 : fi.postedToChannel1) return false;
+              if (isTelegramSourceAd(fi.text, fi.title).isAd) return false;
+              return Boolean(fi.imageUrl || fi.videoUrl);
+            });
+            for (const fi of freshItems.slice(0, 5)) {
+              const freshBlob = await downloadMediaToBlob(fi.videoUrl || fi.imageUrl || '', 15000);
+              if (freshBlob) {
+                item.videoUrl = fi.videoUrl;
+                item.imageUrl = fi.imageUrl;
+                item.mediaType = fi.mediaType;
+                item.text = fi.text;
+                item.title = fi.title;
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
       const postResult = await sendTelegramPostWithMedia({
         chatId: channelHandle,
         text,
@@ -10327,6 +10523,7 @@ async function executeAutoPost(mode: 'all' | 'configs' | 'news' | 'tricks' | 'pr
 
 // --- Granular Auto-Post Scheduler ---
 let autoPostCheckIntervalRef: NodeJS.Timeout | null = null;
+let aiPromptsAutoUpdateIntervalRef: NodeJS.Timeout | null = null;
 
 function setupAutoPostInterval() {
   if (autoPostCheckIntervalRef) {
@@ -10340,6 +10537,24 @@ function setupAutoPostInterval() {
       console.error('Error during auto-post schedule check:', err);
     });
   }, 60 * 1000);
+
+  // Auto-refresh AI Prompts online from GitHub and popular web sources every 6 hours
+  if (aiPromptsAutoUpdateIntervalRef) {
+    clearInterval(aiPromptsAutoUpdateIntervalRef);
+    aiPromptsAutoUpdateIntervalRef = null;
+  }
+  aiPromptsAutoUpdateIntervalRef = setInterval(() => {
+    refreshAiPromptsAndPurgeOld().catch(err => {
+      console.error('Error during auto AI prompts online refresh:', err);
+    });
+  }, 6 * 60 * 60 * 1000);
+
+  // Trigger initial online prompt sync if pool is low
+  if (!db.aiPrompts || db.aiPrompts.length < 20) {
+    setTimeout(() => {
+      refreshAiPromptsAndPurgeOld().catch(() => {});
+    }, 5000);
+  }
 }
 
 async function checkAndTriggerAutoPost() {
@@ -10423,18 +10638,23 @@ async function checkAndTriggerAutoPost() {
       }
     }
 
-    // 3. Tech Tricks & Secrets Schedule Check (Only if explicitly enabled)
+    // 3. Tech Tricks & Secrets Schedule Check (Strictly once a day: "در روز یکی یه بار")
     if (ap.techTricksEnabled === true && (ap.techTricksCount || 0) > 0) {
-      const tricksMinutes = Number(ap.techTricksIntervalMinutes) || (Number(ap.techTricksIntervalHours) ? Number(ap.techTricksIntervalHours) * 60 : 360);
+      const tricksMinutes = Number(ap.techTricksIntervalMinutes) || (Number(ap.techTricksIntervalHours) ? Number(ap.techTricksIntervalHours) * 60 : 1440);
       const intervalMs = Math.max(30, tricksMinutes) * 60 * 1000;
       const lastTime = ap.lastTechTricksPostedAt;
       const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
-      if (elapsed >= intervalMs) {
+      
+      const alreadyPostedToday = (db.channelPostHistory || []).some(
+        h => h.channelTarget === 1 && h.category === 'tricks' && h.tehranDate === tehran.dateStr
+      );
+
+      if (elapsed >= intervalMs && !alreadyPostedToday) {
         candidates.push({
           category: 'tricks',
           isDue: true,
           timeSinceDueMs: elapsed - intervalMs,
-          goldenPriority: 5,
+          goldenPriority: 6,
           run: () => executeTechTricksAutoPost(1, ap.targetChannel)
         });
       }
@@ -10534,18 +10754,17 @@ async function checkAndTriggerAutoPost() {
       const recentStats = getChannelRecentPostStats(1, 10);
       
       // Filter out non-config candidates if:
-      // 1. The last post on Channel 1 was already non-config (strict 1:1 or 2:1 config interleave)
-      // 2. OR less than 4 hours (240 minutes) have passed since the last non-config post on Channel 1
+      // 1. More than 2 non-config posts happened consecutively
+      // 2. OR less than 45 minutes have passed since the last non-config post
       let filteredCandidates = candidates.filter(c => {
         if (c.category === 'configs') return true; // Configs/VPN always allowed
         
         // Non-config checks for Channel 1:
-        if (recentStats.consecutiveNonConfigs >= 1) {
-          // Channel 1 MUST receive a config/VPN post before another non-config post is allowed
+        if (recentStats.consecutiveNonConfigs >= 2) {
           return false;
         }
-        if (recentStats.minutesSinceLastNonConfig < 240) {
-          // Keep at least 4 hours between any non-config posts in Channel 1 to avoid clustering
+        if (recentStats.minutesSinceLastNonConfig < 45) {
+          // Keep at least 45 minutes between non-config posts in Channel 1 to avoid clustering
           return false;
         }
         return true;
