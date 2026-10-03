@@ -354,13 +354,5 @@
       "extractedCount": 2,
       "lastExtracted": "2026-10-03T09:20:33.487Z"
     }
-  ],
-  "lastPostedFunSourceMap": {
-    "1": "",
-    "2": ""
-  },
-  "sourceRoundRobinPointer": {
-    "1": 0,
-    "2": 0
-  }
+  ]
 }

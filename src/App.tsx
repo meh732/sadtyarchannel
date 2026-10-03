@@ -1097,23 +1097,22 @@ export default function App() {
   const handleTestAllPorts = async () => {
     setActionLoading('test_all');
     try {
-      const limit = settings.testBatchLimit || 100;
       const [res1, res2] = await Promise.all([
         fetch('/api/configs/test-all', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ limit })
+          body: JSON.stringify({ all: true })
         }),
         fetch('/api/proxies/test-all', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ limit })
+          body: JSON.stringify({ all: true })
         })
       ]);
       const data1 = await res1.json();
       const data2 = await res2.json();
       if (data1.success || data2.success) {
-        showToast(`بررسی اتصال ${limit} کانفیگ و پروکسی اخیر در پس‌زمینه با سرعت بالا آغاز شد.`, 'success');
+        showToast('بررسی اتصال پورت تمامی کانفیگ‌ها و پروکسی‌ها در پس‌زمینه با سرعت بالا آغاز شد.', 'success');
       }
     } catch (err) {
       showToast('خطا در آغاز فرآیند تست اتصال', 'error');

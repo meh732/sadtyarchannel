@@ -2747,10 +2747,42 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
   });
 }
 
+// High-performance DNS resolution cache to eliminate libuv threadpool bottlenecks during mass ping checks
+const dnsResolutionCache = new Map<string, { ip: string; expires: number }>();
+
+async function resolveHostFast(host: string): Promise<string> {
+  const clean = host.trim();
+  if (!clean || net.isIP(clean)) return clean;
+  
+  const now = Date.now();
+  const cached = dnsResolutionCache.get(clean);
+  if (cached && cached.expires > now) {
+    return cached.ip;
+  }
+
+  try {
+    const lookupRes = await dns.promises.lookup(clean, { family: 4 });
+    if (lookupRes && lookupRes.address) {
+      dnsResolutionCache.set(clean, { ip: lookupRes.address, expires: now + 15 * 60 * 1000 });
+      return lookupRes.address;
+    }
+  } catch (err) {
+    // If IPv4 lookup fails, try default
+    try {
+      const fallbackLookup = await dns.promises.lookup(clean);
+      if (fallbackLookup && fallbackLookup.address) {
+        dnsResolutionCache.set(clean, { ip: fallbackLookup.address, expires: now + 15 * 60 * 1000 });
+        return fallbackLookup.address;
+      }
+    } catch (_) {}
+  }
+  return clean;
+}
+
 /**
  * Checks if a TLS handshake can be successfully completed
  */
-function checkTlsHandshake(host: string, port: number, sni: string, timeout = 2800): Promise<{ working: boolean; latency: number }> {
+function checkTlsHandshake(host: string, port: number, sni: string, timeout = 3500): Promise<{ working: boolean; latency: number }> {
   return new Promise((resolve) => {
     if (!host || !port) {
       return resolve({ working: false, latency: 999 });
@@ -2808,15 +2840,23 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // Fast direct TCP socket check
-    const portCheck = await checkPort(details.host, details.port, 2800);
+    // 1. Fast direct TCP socket check to destination host/IP
+    const portCheck = await checkPort(details.host, details.port, 3800);
     if (portCheck.working) {
       return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
     }
 
-    // Fallback: If TLS is enabled with a valid domain SNI, verify via TLS handshake
+    // 2. If destination host was an unreachable IP or CDN front, but SNI contains a valid domain, test SNI
+    if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
+      const sniCheck = await checkPort(details.sni.trim(), details.port, 3500);
+      if (sniCheck.working) {
+        return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
+      }
+    }
+
+    // 3. Fallback: If TLS is enabled, verify via TLS handshake
     if (details.tls) {
-      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 2800);
+      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 3500);
       if (tlsCheck.working) {
         return { working: true, latency: Math.max(10, Math.round(tlsCheck.latency)) };
       }
@@ -2829,12 +2869,14 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
 }
 
 // --- Connection Port Tester ---
-function checkPort(host: string, port: number, timeout = 2800): Promise<{ working: boolean; latency: number }> {
-  return new Promise((resolve) => {
-    if (!host || !port || isNaN(port)) {
-      return resolve({ working: false, latency: 999 });
-    }
+async function checkPort(host: string, port: number, timeout = 3800): Promise<{ working: boolean; latency: number }> {
+  if (!host || !port || isNaN(port)) {
+    return { working: false, latency: 999 };
+  }
 
+  const targetHost = await resolveHostFast(host);
+
+  return new Promise((resolve) => {
     const start = Date.now();
     let resolved = false;
 
@@ -2847,7 +2889,7 @@ function checkPort(host: string, port: number, timeout = 2800): Promise<{ workin
       resolve({ working, latency: working ? Math.max(10, latency) : 999 });
     };
 
-    const timer = setTimeout(() => finish(false), timeout + 200);
+    const timer = setTimeout(() => finish(false), timeout + 150);
 
     const socket = new net.Socket();
     socket.setTimeout(timeout);
@@ -2858,7 +2900,7 @@ function checkPort(host: string, port: number, timeout = 2800): Promise<{ workin
     socket.on('close', () => finish(false));
 
     try {
-      socket.connect(port, host.trim());
+      socket.connect(port, targetHost);
     } catch (e) {
       finish(false);
     }
@@ -4189,7 +4231,7 @@ async function testConfigsBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 25;
+  const CONCURRENCY = 35;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
@@ -4198,7 +4240,7 @@ async function testConfigsBatch(ids: string[]) {
 
       const checkResult = await withHardTimeout(
         () => checkConfigFully(config.raw),
-        3500,
+        5200,
         { working: false, latency: 999 }
       );
       
@@ -4217,7 +4259,7 @@ async function testConfigsBatch(ids: string[]) {
     if (i % (CONCURRENCY * 3) === 0 || i + CONCURRENCY >= ids.length) {
       saveDatabase();
     }
-    await new Promise(r => setTimeout(r, 15));
+    await new Promise(r => setTimeout(r, 10));
   }
 
   // Final sanity cleanup for any config still in 'checking' status in this batch
@@ -4449,19 +4491,31 @@ function extractImageUrlFromXmlBlock(block: string): string | undefined {
   // 1. Check <enclosure url="..." type="image/..." />
   const enclosureMatch = block.match(/<enclosure[^>]*url=["']([^"']+)["'][^>]*>/i);
   if (enclosureMatch && enclosureMatch[1] && (/\.(jpe?g|png|webp|gif)/i.test(enclosureMatch[1]) || /image/i.test(enclosureMatch[0]))) {
-    return enclosureMatch[1].trim();
+    return enclosureMatch[1].trim().replace(/&amp;/g, '&');
   }
 
   // 2. Check <media:content url="..." /> or <media:thumbnail url="..." />
   const mediaMatch = block.match(/<media:(?:content|thumbnail)[^>]*url=["']([^"']+)["'][^>]*>/i);
   if (mediaMatch && mediaMatch[1]) {
-    return mediaMatch[1].trim();
+    return mediaMatch[1].trim().replace(/&amp;/g, '&');
   }
 
   // 3. Check standard <img src="..." /> inside content or description
   const imgMatch = block.match(/<img[^>]+src=["']([^"']+)["']/i);
   if (imgMatch && imgMatch[1] && /^https?:\/\//i.test(imgMatch[1])) {
-    return imgMatch[1].trim();
+    return imgMatch[1].trim().replace(/&amp;/g, '&');
+  }
+
+  // 4. Check HTML-entity encoded &lt;img ... src=&quot;...&quot; (very common in CDATA / content:encoded)
+  const encodedImgMatch = block.match(/&lt;img[^&]+(?:src)=["']?&quot;?(https?:\/\/[^"'\s&;]+(?:&amp;[^"'\s;]+)*)&quot;?["']?/i);
+  if (encodedImgMatch && encodedImgMatch[1]) {
+    return encodedImgMatch[1].trim().replace(/&amp;/g, '&');
+  }
+
+  // 5. Check <featuredImage>, <image>, or <thumbnail>
+  const tagMatch = block.match(/<(?:image|thumbnail|featuredImage|cover)[^>]*>(https?:\/\/[^<]+)<\/(?:image|thumbnail|featuredImage|cover)>/i);
+  if (tagMatch && tagMatch[1]) {
+    return tagMatch[1].trim().replace(/&amp;/g, '&');
   }
 
   return undefined;
@@ -5614,11 +5668,14 @@ function formatTechItemForTelegram(item: TechItem, showBadge = true, skipSummary
  * Helper: Downloads remote media (photo/video/gif) to a Blob buffer with browser headers
  * so Telegram API receives the binary data directly rather than failing on remote URL scrapers.
  */
-async function downloadMediaToBlob(url: string, timeoutMs = 12000): Promise<{ blob: Blob; filename: string; contentType: string } | null> {
+async function downloadMediaToBlob(url: string, timeoutMs = 35000): Promise<{ blob: Blob; filename: string; contentType: string } | null> {
   if (!url || !/^https?:\/\//i.test(url)) return null;
   const cleanUrl = url.replace(/&amp;/g, '&').trim();
-  // Filter out webpage links that are not direct CDN media files
-  if (cleanUrl.includes('t.me/') && !cleanUrl.includes('/file/')) return null;
+  
+  // Filter out webpage links that are not direct CDN media files (e.g. t.me/channel/123 or t.me/s/channel)
+  if (/^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)\/(?:s\/)?[a-zA-Z0-9_]+(?:\/\d+)?\/?$/i.test(cleanUrl)) {
+    return null;
+  }
 
   try {
     const res = await fetch(cleanUrl, {
@@ -5630,7 +5687,7 @@ async function downloadMediaToBlob(url: string, timeoutMs = 12000): Promise<{ bl
       signal: AbortSignal.timeout(timeoutMs)
     });
     if (!res.ok) return null;
-    const contentType = (res.headers.get('content-type') || 'application/octet-stream').toLowerCase();
+    let contentType = (res.headers.get('content-type') || 'application/octet-stream').toLowerCase();
     if (contentType.includes('text/html') || contentType.includes('application/json')) {
       return null;
     }
@@ -5640,6 +5697,26 @@ async function downloadMediaToBlob(url: string, timeoutMs = 12000): Promise<{ bl
     if (buffer.length === 0 || buffer.length > 50 * 1024 * 1024) return null;
 
     let ext = 'jpg';
+    // Magic byte sniffing if generic octet-stream
+    if (buffer.length >= 8) {
+      if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+        ext = 'jpg';
+        contentType = 'image/jpeg';
+      } else if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+        ext = 'png';
+        contentType = 'image/png';
+      } else if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+        ext = 'gif';
+        contentType = 'image/gif';
+      } else if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
+        ext = 'webp';
+        contentType = 'image/webp';
+      } else if (buffer.includes(Buffer.from('ftyp')) || cleanUrl.includes('.mp4') || contentType.includes('video')) {
+        ext = 'mp4';
+        contentType = 'video/mp4';
+      }
+    }
+
     if (contentType.includes('video') || cleanUrl.includes('.mp4')) ext = 'mp4';
     else if (contentType.includes('gif') || cleanUrl.includes('.gif')) ext = 'gif';
     else if (contentType.includes('png') || cleanUrl.includes('.png')) ext = 'png';
@@ -5675,9 +5752,10 @@ async function sendTelegramPostWithMedia(params: {
   const cleanVideoUrl = videoUrl ? videoUrl.replace(/&amp;/g, '&').trim() : null;
   const cleanImageUrl = imageUrl ? imageUrl.replace(/&amp;/g, '&').trim() : null;
 
-  // Filter out webpage links (like t.me/channel/123) that are not direct video media streams
-  const isValidVideoUrl = Boolean(cleanVideoUrl && /^https?:\/\//i.test(cleanVideoUrl) && (!cleanVideoUrl.includes('t.me/') || cleanVideoUrl.includes('/file/')));
-  const isValidImageUrl = Boolean(cleanImageUrl && /^https?:\/\//i.test(cleanImageUrl) && (!cleanImageUrl.includes('t.me/') || cleanImageUrl.includes('/file/')));
+  // Filter out pure channel html pages (not media links)
+  const isChannelPage = (u: string) => /^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)\/(?:s\/)?[a-zA-Z0-9_]+(?:\/\d+)?\/?$/i.test(u);
+  const isValidVideoUrl = Boolean(cleanVideoUrl && /^https?:\/\//i.test(cleanVideoUrl) && !isChannelPage(cleanVideoUrl));
+  const isValidImageUrl = Boolean(cleanImageUrl && /^https?:\/\//i.test(cleanImageUrl) && !isChannelPage(cleanImageUrl));
 
   // 1. Try sending video or animation/gif if videoUrl is available
   if (isValidVideoUrl && cleanVideoUrl) {
@@ -5687,7 +5765,7 @@ async function sendTelegramPostWithMedia(params: {
 
     // Step 1a: Attempt direct binary buffer download and upload via FormData
     try {
-      const mediaData = await downloadMediaToBlob(cleanVideoUrl, 15000);
+      const mediaData = await downloadMediaToBlob(cleanVideoUrl, 35000);
       if (mediaData && (mediaData.contentType.startsWith('video/') || mediaData.contentType.includes('octet-stream') || mediaData.filename.endsWith('.mp4') || mediaData.filename.endsWith('.gif'))) {
         const formData = new FormData();
         formData.append('chat_id', String(chatId));
@@ -5706,7 +5784,7 @@ async function sendTelegramPostWithMedia(params: {
         }
       }
     } catch (buffErr: any) {
-      console.warn(`Buffer video upload failed (${buffErr?.message || buffErr}), attempting URL fallback...`);
+      console.warn(`Buffer video upload failed (${buffErr?.message || buffErr}), checking fallback...`);
     }
 
     // Step 1b: Fallback to remote URL JSON payload
@@ -5724,7 +5802,7 @@ async function sendTelegramPostWithMedia(params: {
         return { success: true, messageId: result.message_id };
       }
     } catch (videoErr: any) {
-      addLog('warn', `ارسال ویدیوی پست به ${chatId} ناموفق بود (${videoErr?.message || videoErr})، در حال تلاش برای ارسال تصویر پست...`);
+      console.warn(`Direct URL video failed (${videoErr?.message || videoErr}), attempting image fallback...`);
     }
   }
 
@@ -5732,7 +5810,7 @@ async function sendTelegramPostWithMedia(params: {
   if (isValidImageUrl && cleanImageUrl) {
     // Step 2a: Attempt direct binary buffer download and upload via FormData
     try {
-      const mediaData = await downloadMediaToBlob(cleanImageUrl, 12000);
+      const mediaData = await downloadMediaToBlob(cleanImageUrl, 20000);
       if (mediaData) {
         const formData = new FormData();
         formData.append('chat_id', String(chatId));
@@ -7256,9 +7334,9 @@ async function executeConfigsAutoPost(
     };
 
     // 1. Check if Fun + Config combined mode is active
-    // Standard config posts are ALWAYS pure 20-configs without fun
-    // Combined mode (meme + 5 configs) ONLY runs when explicitPostMode === 'combined'
-    const shouldLookForFun = explicitPostMode === 'combined';
+    // Combined mode (meme with photo/video + configs) runs when explicitPostMode === 'combined'
+    // or for Channel 2 when funWithConfigEnabled is turned on and not forced pure
+    const shouldLookForFun = explicitPostMode === 'combined' || (isCh2 && settings.funWithConfigEnabled !== false && explicitPostMode !== 'pure');
 
     let attachedFunItem: FunNewsItem | null = null;
 
@@ -10023,38 +10101,40 @@ async function extractFunNewsFromSources(specificSourceId?: string, extraHandles
         const msgIdParts = postAttr.split('/');
         const msgId = msgIdParts.length > 1 ? parseInt(msgIdParts[1], 10) : undefined;
 
-        // Extract video URL if present (direct MP4, round video, telesco.pe CDN direct video, webm)
+        // Separate user header from message media content so channel avatar is never mistaken for post media
+        const contentBlock = fullBlock.replace(/<div[^>]*class="[^"]*tgme_widget_message_user\b[^"]*"[\s\S]*?<\/a>\s*<\/div>/i, '');
+
+        // 1. Extract video URL if present (direct MP4, round video, telesco.pe CDN direct video, webm)
         let videoUrl: string | undefined = undefined;
         let isAnimation = false;
-        const videoMatch = fullBlock.match(/<video[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/i)
-          || fullBlock.match(/<source[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/i);
+        const videoMatch = contentBlock.match(/<video[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/i)
+          || contentBlock.match(/<source[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/i);
         
         if (videoMatch && videoMatch[1]) {
           const rawV = videoMatch[1].trim();
-          // Direct media streams only, never generic t.me message links
           if (!rawV.includes('t.me/') || rawV.includes('/file/')) {
             videoUrl = rawV.replace(/&amp;/g, '&');
-            if (fullBlock.includes('autoplay') || fullBlock.includes('tgme_widget_message_video_thumb') || /\.gif(\?|$)/i.test(videoUrl)) {
+            if (contentBlock.includes('autoplay') || contentBlock.includes('tgme_widget_message_video_thumb') || /\.gif(\?|$)/i.test(videoUrl)) {
               isAnimation = true;
             }
           }
         }
 
-        // Extract image url or video thumbnail if present (supports quotes, &quot;, data-src, background-image)
+        // 2. Extract image url or video thumbnail from content block only
         let imageUrl: string | undefined = undefined;
-        const bgMatch = fullBlock.match(/background-image:\s*url\(\s*(?:&quot;|['"])?(https?:\/\/[^'"\)\s&;]+)(?:&quot;|['"])?\s*\)/i);
-        if (bgMatch && bgMatch[1] && !bgMatch[1].includes('favicon') && !bgMatch[1].includes('avatar')) {
-          imageUrl = bgMatch[1].trim().replace(/&amp;/g, '&');
-        } else {
-          const imgTagMatch = fullBlock.match(/<img[^>]+(?:src|data-src)=["'](https?:\/\/[^"']+)["']/i);
-          if (imgTagMatch && imgTagMatch[1] && !imgTagMatch[1].includes('favicon') && !imgTagMatch[1].includes('avatar')) {
-            imageUrl = imgTagMatch[1].trim().replace(/&amp;/g, '&');
-          } else {
-            const posterMatch = fullBlock.match(/<video[^>]*\bposter=["'](https?:\/\/[^"']+)["']/i);
-            if (posterMatch && posterMatch[1]) {
-              imageUrl = posterMatch[1].trim().replace(/&amp;/g, '&');
-            }
-          }
+        const photoWrapMatch = contentBlock.match(/class="[^"]*tgme_widget_message_photo(?:_wrap)?[^"]*"[^>]*style="[^"]*background-image:\s*url\(\s*(?:&quot;|['"])?(https?:\/\/[^'"]+?)(?:&quot;|['"])?\s*\)/i);
+        const linkPreviewMatch = contentBlock.match(/class="[^"]*link_preview_image[^"]*"[^>]*style="[^"]*background-image:\s*url\(\s*(?:&quot;|['"])?(https?:\/\/[^'"]+?)(?:&quot;|['"])?\s*\)/i);
+        const vidThumbMatch = contentBlock.match(/class="[^"]*tgme_widget_message_video_thumb[^"]*"[^>]*style="[^"]*background-image:\s*url\(\s*(?:&quot;|['"])?(https?:\/\/[^'"]+?)(?:&quot;|['"])?\s*\)/i);
+        const posterMatch = contentBlock.match(/<video[^>]*\bposter=["'](https?:\/\/[^"']+)["']/i);
+
+        if (photoWrapMatch && photoWrapMatch[1]) {
+          imageUrl = photoWrapMatch[1].trim().replace(/&amp;/g, '&');
+        } else if (linkPreviewMatch && linkPreviewMatch[1]) {
+          imageUrl = linkPreviewMatch[1].trim().replace(/&amp;/g, '&');
+        } else if (posterMatch && posterMatch[1]) {
+          imageUrl = posterMatch[1].trim().replace(/&amp;/g, '&');
+        } else if (vidThumbMatch && vidThumbMatch[1]) {
+          imageUrl = vidThumbMatch[1].trim().replace(/&amp;/g, '&');
         }
 
         let mediaType: 'photo' | 'video' | 'animation' | undefined = undefined;
@@ -11357,11 +11437,12 @@ async function callTelegramApi(method: string, body: object | FormData): Promise
     headers['Content-Type'] = 'application/json';
   }
 
+  const timeoutMs = isFormData ? 85000 : 20000;
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
     headers,
     body: isFormData ? (body as any) : JSON.stringify(body),
-    signal: AbortSignal.timeout(15000)
+    signal: AbortSignal.timeout(timeoutMs)
   });
 
   const data = await response.json();
@@ -11369,37 +11450,60 @@ async function callTelegramApi(method: string, body: object | FormData): Promise
     const errorDesc = String(data.description || '');
 
     // Fallback 1: If Markdown/HTML parsing failed (e.g. unescaped character), retry without parse_mode
-    if (!isFormData && typeof body === 'object' && (body as any).parse_mode && (
+    if (
       errorDesc.includes("can't parse entities") || 
       errorDesc.includes("character '") || 
       errorDesc.includes("tag")
-    )) {
+    ) {
       try {
-        const cleanBody = { ...(body as any) };
-        delete cleanBody.parse_mode;
-        const retryRes = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(cleanBody),
-          signal: AbortSignal.timeout(15000)
-        });
-        const retryData = await retryRes.json();
-        if (retryData.ok) return retryData.result;
+        if (isFormData) {
+          const retryForm = body as FormData;
+          retryForm.delete('parse_mode');
+          const retryRes = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+            method: 'POST',
+            body: retryForm as any,
+            signal: AbortSignal.timeout(timeoutMs)
+          });
+          const retryData = await retryRes.json();
+          if (retryData.ok) return retryData.result;
+        } else if (typeof body === 'object' && (body as any).parse_mode) {
+          const cleanBody = { ...(body as any) };
+          delete cleanBody.parse_mode;
+          const retryRes = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cleanBody),
+            signal: AbortSignal.timeout(timeoutMs)
+          });
+          const retryData = await retryRes.json();
+          if (retryData.ok) return retryData.result;
+        }
       } catch (_) {}
     }
 
     // Fallback 2: If reply_markup was rejected (e.g. invalid URL, unsupported button type or style property)
-    if (!isFormData && typeof body === 'object' && (body as any).reply_markup) {
-      const isMarkupError = 
-        errorDesc.includes("reply keyboard") || 
-        errorDesc.includes("BUTTON_") || 
-        errorDesc.includes("URL") ||
-        errorDesc.includes("can't parse") ||
-        errorDesc.includes("style") ||
-        errorDesc.includes("markup");
-
-      if (isMarkupError) {
-        console.warn(`[Telegram API] Markup error on ${method}: ${errorDesc}. Attempting intelligent repair...`);
+    if (
+      errorDesc.includes("reply keyboard") || 
+      errorDesc.includes("BUTTON_") || 
+      errorDesc.includes("URL") ||
+      errorDesc.includes("can't parse") ||
+      errorDesc.includes("style") ||
+      errorDesc.includes("markup")
+    ) {
+      console.warn(`[Telegram API] Markup error on ${method}: ${errorDesc}. Attempting intelligent repair...`);
+      if (isFormData) {
+        try {
+          const retryForm = body as FormData;
+          retryForm.delete('reply_markup');
+          const retryRes = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+            method: 'POST',
+            body: retryForm as any,
+            signal: AbortSignal.timeout(timeoutMs)
+          });
+          const retryData = await retryRes.json();
+          if (retryData.ok) return retryData.result;
+        } catch (_) {}
+      } else if (typeof body === 'object' && (body as any).reply_markup) {
         // Step 2a: Try sanitizing keyboard (remove style attribute if rejected, validate URLs)
         try {
           const sanitizedBody = JSON.parse(JSON.stringify(body));
@@ -11430,7 +11534,7 @@ async function callTelegramApi(method: string, body: object | FormData): Promise
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(sanitizedBody),
-            signal: AbortSignal.timeout(15000)
+            signal: AbortSignal.timeout(timeoutMs)
           });
           const retryData1 = await retryRes1.json();
           if (retryData1.ok) return retryData1.result;
@@ -11444,7 +11548,7 @@ async function callTelegramApi(method: string, body: object | FormData): Promise
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(cleanBody),
-            signal: AbortSignal.timeout(15000)
+            signal: AbortSignal.timeout(timeoutMs)
           });
           const retryData2 = await retryRes2.json();
           if (retryData2.ok) return retryData2.result;
