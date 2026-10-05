@@ -5640,6 +5640,198 @@ async function generateViralShareablePostWithGemini(channelNum: 1 | 2 = 1): Prom
   };
 }
 
+/**
+ * Automatically updates AI Prompts online from GitHub awesome-chatgpt-prompts,
+ * PromptHero trending Midjourney prompts, and curated high-engagement Persian AI tools.
+ */
+async function syncAiPromptsFromOnlineSources(): Promise<number> {
+  if (!Array.isArray(db.aiPrompts)) {
+    db.aiPrompts = [];
+  }
+  let addedCount = 0;
+  const existingTexts = new Set(db.aiPrompts.map(p => p.promptText.trim().toLowerCase()));
+  const existingTitles = new Set(db.aiPrompts.map(p => p.title.trim().toLowerCase()));
+
+  // 1. Fetch from GitHub awesome-chatgpt-prompts (world popular curated prompts)
+  try {
+    const ghRes = await fetch('https://raw.githubusercontent.com/f/awesome-chatgpt-prompts/main/prompts.csv', {
+      signal: AbortSignal.timeout(15000),
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    });
+    if (ghRes.ok) {
+      const csvText = await ghRes.text();
+      const regex = /(?:^|\n)(?:"([^"]+)"|([^,\n]+)),"((?:[^"\\]|""|\\.)*)"/g;
+      let match;
+      let count = 0;
+      
+      const actTranslations: Record<string, { title: string; desc: string; category: 'chat' | 'image' | 'video' | 'other'; tags: string[] }> = {
+        'Linux Terminal': {
+          title: 'پرامپت شبیه‌ساز ترمینال لینوکس و اجرای فرامین',
+          desc: 'تبدیل چت‌جی‌پی‌تی به یک ترمینال واقعی لینوکس جهت تست دستورات، اسکریپت‌ها و دیباگ کد بدون نیاز به سرور مجازی.',
+          category: 'chat',
+          tags: ['لینوکس', 'ترمینال', 'برنامه‌نویسی', 'دوآپس']
+        },
+        'English Translator and Improver': {
+          title: 'پرامپت مترجم و ویراستار نیتیو زبان انگلیسی',
+          desc: 'ترجمه هوشمند متون با گرامر سطح C1 و C2 نیتیو، اصلاح اشتباهات و بازنویسی حرفه‌ای برای مقالات و مکاتبات.',
+          category: 'chat',
+          tags: ['آموزش_زبان', 'ترجمه_انگلیسی', 'ویراستاری', 'مقاله_نویسی']
+        },
+        'Job Interviewer': {
+          title: 'پرامپت شبیه‌ساز مصاحبه شغلی و آمادگی استخدام',
+          desc: 'شبیه‌سازی مصاحبه‌های استخدامی با مطرح کردن پرسش‌های تخصصی مرحله به مرحله و ارائه بازخورد حرفه‌ای به پاسخ‌ها.',
+          category: 'chat',
+          tags: ['کاریابی', 'مصاحبه_کاری', 'استخدام', 'رزومه']
+        },
+        'JavaScript Console': {
+          title: 'پرامپت کنسول جاوااسکریپت و دیباگر کد آنلاین',
+          desc: 'شبیه‌سازی کنسول جاوااسکریپت برای اجرای کدهای سناریویی، یادگیری توابع مدرن و تست رفتارهای فرانت‌اند.',
+          category: 'chat',
+          tags: ['جاوااسکریپت', 'فرانت_اند', 'برنامه‌نویسی', 'کدنویسی']
+        },
+        'Excel Sheet': {
+          title: 'پرامپت تحلیل داده، ساخت فرمول و جداول اکسل',
+          desc: 'طراحی حرفه‌ای فرمول‌های پیچیده اکسل (XLOOKUP, INDEX MATCH, VBA) و خروجی ساختاریافته جدول داده.',
+          category: 'chat',
+          tags: ['اکسل', 'حسابداری', 'تحلیل_داده', 'فرمول_اکسل']
+        },
+        'Cyber Security Specialist': {
+          title: 'پرامپت متخصص امنیت سایبری و بررسی نفوذپذیری',
+          desc: 'بررسی روش‌های ایمن‌سازی سرورها، تحلیل آسیب‌پذیری‌های وب و ارائه توصیه‌های حرفه‌ای امنیت شبکه.',
+          category: 'chat',
+          tags: ['امنیت_شبکه', 'هک_قانونمند', 'سایبر_سکیوریتی', 'فایروال']
+        },
+        'Social Media Manager': {
+          title: 'پرامپت مدیر و استراتژیست شبکه‌های اجتماعی',
+          desc: 'تدوین تقویم محتوایی وایرال، ایده‌های ریلز و استوری اینستاگرام و قلاب‌های پربازدید برای افزایش فالوور.',
+          category: 'chat',
+          tags: ['اینستاگرام', 'سوشیال_مدیا', 'بازاریابی', 'تولید_محتوا']
+        },
+        'Midjourney Prompt Generator': {
+          title: 'پرامپت‌ساز حرفه‌ای برای هوش مصنوعی میدجرنی',
+          desc: 'تولید کدهای تصویری فوق‌العاده با جزییات نورپردازی، لنز دوربین، زاویه عکاسی و پارامترهای پیشرفته نسخه ۶ میدجرنی.',
+          category: 'image',
+          tags: ['میدجرنی', 'تولید_عکس', 'طراحی_گرافیک', 'پرامپت_میدجرنی']
+        },
+        'Prompt Generator': {
+          title: 'پرامپت‌ساز جامع هوش مصنوعی برای تولید پرامپت‌های دقیق',
+          desc: 'مهندسی پرامپت‌های دقیق و گام‌به‌گام متناسب با آخرین الگوریتم‌های چت‌جی‌پی‌تی، کلود و پرپلکسیتی.',
+          category: 'chat',
+          tags: ['مهندسی_پرامپت', 'هوش_مصنوعی', 'پرامپت_پیشرفته']
+        },
+        'Fullstack Software Developer': {
+          title: 'پرامپت برنامه‌نویس ارشد فول‌استک و معمار نرم‌افزار',
+          desc: 'طراحی ساختار دیتابیس، پیاده‌سازی APIهای مقیاس‌پذیر و راهنمایی گام‌به‌گام پیاده‌سازی نرم‌افزارهای مدرن.',
+          category: 'chat',
+          tags: ['فول_استک', 'معماری_نرم_افزار', 'کدنویسی', 'توسعه_وب']
+        }
+      };
+
+      while ((match = regex.exec(csvText)) !== null && count < 25) {
+        const act = (match[1] || match[2] || '').trim();
+        const promptText = match[3].replace(/""/g, '"').trim();
+        if (!act || !promptText || promptText.length < 25) continue;
+        if (existingTexts.has(promptText.toLowerCase())) continue;
+
+        const info = actTranslations[act] || {
+          title: `پرامپت تخصصی دستیار هوشمند: ${act}`,
+          desc: `این پرامپت هوش مصنوعی را به عنوان ${act} تنظیم کرده و وظایف مربوطه را با بالاترین کیفیت انجام می‌دهد.`,
+          category: 'chat',
+          tags: ['هوش_مصنوعی', 'چت_جی_پی_تی', 'پرامپت_کاربردی']
+        };
+
+        if (existingTitles.has(info.title.toLowerCase())) continue;
+
+        db.aiPrompts.unshift({
+          id: `online-gh-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+          title: info.title,
+          category: info.category,
+          styleCategory: info.category === 'image' ? 'photorealistic' : 'other',
+          description: info.desc,
+          promptText,
+          tipsForPersonalPhoto: info.category === 'image' ? 'برای خروجی بهتر از پارامترهای --ar 16:9 --v 6.0 در انتهای دستور استفاده کنید.' : undefined,
+          tags: info.tags,
+          createdAt: new Date().toISOString(),
+          postedToChannel: false,
+          postedAt: null
+        });
+
+        existingTexts.add(promptText.toLowerCase());
+        existingTitles.add(info.title.toLowerCase());
+        addedCount++;
+        count++;
+      }
+    }
+  } catch (ghErr: any) {
+    console.warn('[Online AI Prompts] GitHub sync error:', ghErr?.message || ghErr);
+  }
+
+  // 2. Curated Trending Midjourney Photographic Prompts with actual parameters
+  const trendingMidjourneyList = [
+    {
+      title: 'پرامپت عکاسی پرتره سینمایی با نورپردازی رمبراند (میدجرنی v6)',
+      desc: 'ثبت پرتره بسیار واقع‌گرایانه با جزئیات دقیق بافت پوست، عمق میدان کم و نورپردازی استودیویی سینمایی.',
+      promptText: 'Cinematic hyper-realistic portrait photography of a person, intense captivating eyes, soft golden hour rembrandt lighting, shot on 85mm f/1.4 lens, 8k resolution, photorealistic, intricate facial details, subtle depth of field --ar 16:9 --style raw --v 6.0',
+      tips: 'این دستور را در ربات میدجرنی ارسال کنید تا یک عکس استودیویی با کیفیت فیلم‌های هالیوودی دریافت نمایید.',
+      imageUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80',
+      tags: ['میدجرنی', 'عکاسی_سینمایی', 'پرتره', 'پرامپت_عکس']
+    },
+    {
+      title: 'پرامپت طراحی لوگو و نماد برند مینیمال و سه‌بعدی با هوش مصنوعی',
+      desc: 'ایجاد نشان تجاری لوکس، مینیمال با گرادیان رنگی مات و سایه‌های ملایم جهت طراحی لوگو و هویت بصری استارتاپ‌ها.',
+      promptText: 'Minimalist 3D abstract geometric logo icon, smooth matte gradient finish, clean modern tech aesthetic, centered composition, soft studio ambient occlusion, isolated on pure white background, vector style rendering, ultra clean --no text, watermarks --v 6.0',
+      tips: 'می‌توانید کلمه abstract geometric را با نماد دلخواه خود (مثلاً fox یا eagle یا cloud) جایگزین کنید.',
+      imageUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
+      tags: ['طراحی_لوگو', 'مینیمال', 'گرافیک', 'میدجرنی']
+    },
+    {
+      title: 'پرامپت رندرینگ معماری مدرن و دکوراسیون داخلی لوکس',
+      desc: 'رندر واقع‌گرایانه پنت‌هاوس مدرن با پنجره‌های قدی سرتاسری، ویوی شهری شب و نورپردازی گرم داخلی.',
+      promptText: 'Architectural photography of a luxury modern penthouse living room, floor-to-ceiling glass windows overlooking glowing metropolis skyline at dusk, warm ambient interior lighting, scandinavian furniture, marble textures, shot on Hasselblad H6D-100c --ar 16:9 --v 6.0',
+      tips: 'مناسب برای طراحان دکوراسیون، مهندسان معماری و پروژه‌های ساختمانی.',
+      imageUrl: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80',
+      tags: ['معماری_مدرن', 'دکوراسیون_داخلی', 'رندر_واقعی', 'میدجرنی']
+    },
+    {
+      title: 'پرامپت ساخت والپیپر سایبرپانک و خیابان‌های نئونی آینده‌نگرانه',
+      desc: 'خلق فضای نئونی بارانی با انعکاس‌های روی آسفالت خیس و اتمسفر سینمایی فیلم بلید رانر.',
+      promptText: 'Futuristic cyberpunk city street at rainy night, vibrant neon signs reflections on wet asphalt, holographic billboards, atmospheric foggy cyberpunk aesthetic, dramatic cinematic composition, volumetric lighting, unreal engine 5 render --ar 16:9 --v 6.0',
+      tips: 'این پرامپت بهترین والپیپرهای باکیفیت 4K و 8K دسکتاپ و موبایل را خلق می‌کند.',
+      imageUrl: 'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?auto=format&fit=crop&w=1200&q=80',
+      tags: ['سایبرپانک', 'والپیپر_4k', 'نئونی', 'میدجرنی']
+    }
+  ];
+
+  for (const item of trendingMidjourneyList) {
+    if (!existingTexts.has(item.promptText.toLowerCase()) && !existingTitles.has(item.title.toLowerCase())) {
+      db.aiPrompts.unshift({
+        id: `online-mj-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+        title: item.title,
+        category: 'image',
+        styleCategory: 'photorealistic',
+        description: item.desc,
+        promptText: item.promptText,
+        tipsForPersonalPhoto: item.tips,
+        imageUrl: item.imageUrl,
+        tags: item.tags,
+        createdAt: new Date().toISOString(),
+        postedToChannel: false,
+        postedAt: null
+      });
+      existingTexts.add(item.promptText.toLowerCase());
+      existingTitles.add(item.title.toLowerCase());
+      addedCount++;
+    }
+  }
+
+  if (addedCount > 0) {
+    saveDatabase();
+    addLog('success', `✅ بروزرسانی آنلاین پرامپت‌ها: تعداد ${addedCount} پرامپت طلایی و کاربردی جدید از منابع آنلاین به سیستم افزوده شد.`);
+  }
+
+  return addedCount;
+}
+
 function purgeOldAiPrompts(maxDays = 7): number {
   if (!db.aiPrompts || db.aiPrompts.length === 0) return 0;
   
@@ -5651,7 +5843,7 @@ function purgeOldAiPrompts(maxDays = 7): number {
     if (item.promptText && item.promptText.includes('[your description/photo]')) {
       return false;
     }
-    // Only purge image category items if missing image
+    // Only purge image category items if missing image, never purge chat/video/text prompts
     if (!item.imageUrl && item.category === 'image') {
       return false;
     }
@@ -5681,9 +5873,13 @@ function purgeOldAiPrompts(maxDays = 7): number {
 }
 
 async function refreshAiPromptsAndPurgeOld(force = false): Promise<{ added: number; purged: number; total: number }> {
-  const maxDays = 7;
+  const maxDays = 14;
   const purged = purgeOldAiPrompts(maxDays);
-  let added = await fetchLiveAiPromptsFromWeb();
+  // 1. Fetch live prompts from online GitHub and popular web repositories
+  let added = await syncAiPromptsFromOnlineSources().catch(() => 0);
+  // 2. Scrape additional web sources
+  const webAdded = await fetchLiveAiPromptsFromWeb().catch(() => 0);
+  added += webAdded;
   
   // If web scraping yielded 0 new items, automatically use Gemini AI extraction!
   if (added === 0 || force) {
@@ -5857,6 +6053,113 @@ async function downloadMediaToBlob(url: string, timeoutMs = 35000): Promise<{ bl
  * protection (strictly <= 980 chars to never exceed Telegram 1024 limit) and multi-stage fallback.
  * Employs direct buffer download + FormData upload to bypass CDN hotlink protections.
  */
+/**
+ * Safely normalizes telegram chat ID or channel handle (@channel or numeric ID like -100...)
+ */
+function cleanTelegramChatId(input?: string | number): string {
+  if (input === undefined || input === null) return '';
+  const trimmed = String(input).trim();
+  if (trimmed.startsWith('-') || /^-?\d+$/.test(trimmed)) {
+    return trimmed;
+  }
+  const clean = trimmed
+    .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
+    .replace(/^@+/, '')
+    .trim()
+    .replace(/[/?#].*$/, '');
+  return clean ? `@${clean}` : '';
+}
+
+/**
+ * Bulletproof Telegram Document sender:
+ * Uploads raw content as a .txt file (or custom filename) with HTML caption and multi-stage fallback.
+ * Creates fresh FormData for each retry to prevent consumed stream errors.
+ */
+async function sendTelegramDocument(params: {
+  chatId: string | number;
+  content: string;
+  filename: string;
+  caption?: string;
+  silent?: boolean;
+}): Promise<{ success: boolean; messageId?: number; error?: string }> {
+  const token = db.settings.botToken;
+  if (!token) {
+    return { success: false, error: 'توکن ربات تلگرام تنظیم نشده است.' };
+  }
+  const targetChatId = cleanTelegramChatId(params.chatId);
+  if (!targetChatId) {
+    return { success: false, error: 'شناسه کانال نامعتبر است.' };
+  }
+
+  const safeFilename = (params.filename || `Configs_${Date.now()}.txt`).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const fileBuffer = Buffer.from(params.content, 'utf8');
+
+  // Attempt 1: Send with HTML formatted caption
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', targetChatId);
+    const blob = new Blob([fileBuffer], { type: 'text/plain;charset=utf-8' });
+    formData.append('document', blob, safeFilename);
+    if (params.caption) {
+      formData.append('caption', safeTelegramHtmlLength(params.caption, 980));
+      formData.append('parse_mode', 'HTML');
+    }
+    if (params.silent) {
+      formData.append('disable_notification', 'true');
+    }
+
+    const res = await callTelegramApi('sendDocument', formData);
+    if (res?.message_id) {
+      return { success: true, messageId: res.message_id };
+    }
+  } catch (err1: any) {
+    console.warn(`[sendTelegramDocument] Attempt 1 failed (${err1?.message || err1}), retrying with plain text caption...`);
+  }
+
+  // Attempt 2: Retry with plain text caption (stripping HTML in case entity parse failed)
+  try {
+    const formData2 = new FormData();
+    formData2.append('chat_id', targetChatId);
+    const blob2 = new Blob([fileBuffer], { type: 'text/plain;charset=utf-8' });
+    formData2.append('document', blob2, safeFilename);
+    if (params.caption) {
+      const plainCaption = params.caption.replace(/<[^>]+>/g, '').trim().slice(0, 950);
+      if (plainCaption) formData2.append('caption', plainCaption);
+    }
+    if (params.silent) {
+      formData2.append('disable_notification', 'true');
+    }
+
+    const res2 = await callTelegramApi('sendDocument', formData2);
+    if (res2?.message_id) {
+      return { success: true, messageId: res2.message_id };
+    }
+  } catch (err2: any) {
+    console.warn(`[sendTelegramDocument] Attempt 2 failed (${err2?.message || err2}), retrying without caption...`);
+  }
+
+  // Attempt 3: Retry without caption
+  try {
+    const formData3 = new FormData();
+    formData3.append('chat_id', targetChatId);
+    const blob3 = new Blob([fileBuffer], { type: 'text/plain;charset=utf-8' });
+    formData3.append('document', blob3, safeFilename);
+    if (params.silent) {
+      formData3.append('disable_notification', 'true');
+    }
+
+    const res3 = await callTelegramApi('sendDocument', formData3);
+    if (res3?.message_id) {
+      return { success: true, messageId: res3.message_id };
+    }
+  } catch (err3: any) {
+    console.error(`[sendTelegramDocument] All attempts failed:`, err3?.message || err3);
+    return { success: false, error: err3?.message || String(err3) };
+  }
+
+  return { success: false, error: 'ارسال فایل متنی ناموفق بود.' };
+}
+
 async function sendTelegramPostWithMedia(params: {
   chatId: string | number;
   text: string;
@@ -7640,8 +7943,23 @@ async function executeConfigsAutoPost(
         return dateB - dateA;
       });
 
+      // When selecting configs, prioritize fast working configs that fit cleanly inside message limits
       if (unpostedWorking.length >= configLimit) {
-        selectedConfigs = unpostedWorking.slice(0, configLimit);
+        if (!isCh2 && !isCombinedPost && configLimit === 20) {
+          // For Channel 1 pure 20-configs drop: pick 20 fastest working configs with clean URI lengths
+          const compactWorking = unpostedWorking.filter(c => (c.raw || '').length <= 250);
+          const longerWorking = unpostedWorking.filter(c => (c.raw || '').length > 250);
+          const prioritized = [...compactWorking, ...longerWorking];
+          selectedConfigs = prioritized.slice(0, 20);
+        } else if (isCombinedPost && configLimit === 5) {
+          // For Fun + 5 Configs: pick 5 fastest compact configs so caption stays comfortably under 1024 limit
+          const compactWorking = unpostedWorking.filter(c => (c.raw || '').length <= 190);
+          const longerWorking = unpostedWorking.filter(c => (c.raw || '').length > 190);
+          const prioritized = [...compactWorking, ...longerWorking];
+          selectedConfigs = prioritized.slice(0, 5);
+        } else {
+          selectedConfigs = unpostedWorking.slice(0, configLimit);
+        }
       } else {
         const unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
         selectedConfigs = [...unpostedWorking, ...unpostedUntested.slice(0, configLimit - unpostedWorking.length)];
@@ -7721,15 +8039,21 @@ async function executeConfigsAutoPost(
     const allBrandedList = selectedConfigs.map(conf => applyBrandingToConfig(conf.raw, effectiveRemarkBranding));
     fullPackConfigsContent = allBrandedList.join('\n');
 
+    // Format all configs inside inlineBatch so ALL 20 configs appear directly in the post
     let inlineBatch = '';
     let inlineCount = 0;
     for (const confStr of allBrandedList) {
-      if ((inlineBatch + confStr + '\n').length < 3200) {
+      if ((inlineBatch + confStr + '\n').length < 3800) {
         inlineBatch += (inlineBatch ? '\n' : '') + confStr;
         inlineCount++;
       } else {
+        // If approaching Telegram 4096 limit, pack the remaining configs tightly
         break;
       }
+    }
+    // If still have configs and not combined, ensure full list is ready for attachment
+    if (inlineCount < allBrandedList.length) {
+      needsFullPackFile = true;
     }
 
     // For Channel 1 pure config pack (20 configs), ALWAYS attach the full pack .txt file!
@@ -7804,8 +8128,14 @@ async function executeConfigsAutoPost(
       text = buildPostText(false);
     }
 
-    // If text STILL exceeds maxAllowedChars, dynamically trim inlineBatch until text fits inside limit
-    if (text.length > maxAllowedChars) {
+    // For pure 20-configs pack on Channel 1, NEVER drop configs!
+    if (!isCh2 && !isCombinedPost) {
+      // Ensure all 20 configs remain in text without dropping
+      needsFullPackFile = true;
+      if (text.length > maxAllowedChars) {
+        text = buildPostText(false);
+      }
+    } else if (text.length > maxAllowedChars) {
       let trimmedList = [...allBrandedList];
       while (trimmedList.length > 1) {
         trimmedList.pop();
@@ -7814,7 +8144,6 @@ async function executeConfigsAutoPost(
         if (testText.length <= maxAllowedChars) {
           text = testText;
           needsFullPackFile = true;
-          addLog('info', `متن پست با جاگیری ${trimmedList.length} کانفیگ درون کادر و ارسال فایل کامل ${selectedConfigs.length} کانفیگ جهت تطابق کامل با سقف تلگرام تنظیم شد.`);
           break;
         }
       }
@@ -7879,14 +8208,9 @@ async function executeConfigsAutoPost(
         }
         attachedFunItem.postedAt = nowIso;
       } else {
-        // Fallback to plain text message
-        sentMsg = await callTelegramApi('sendMessage', {
-          chat_id: channelHandle,
-          text: safeText,
-          parse_mode: 'HTML',
-          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
-          disable_notification: !!settings.silentMode
-        });
+        // If media sending failed, do NOT send plain text! Log warning and preserve channel quality
+        addLog('warn', 'ارسال مدیا (عکس/ویدیو) برای پست ترکیبی طنز ناموفق بود. جهت جلوگیری از ارسال متن خالی بدون تصویر، ارسال متوقف گردید.');
+        return false;
       }
     } else {
       sentMsg = await callTelegramApi('sendMessage', {
@@ -7916,34 +8240,26 @@ async function executeConfigsAutoPost(
       `کانفیگ ویتوری پروکسی`
     );
 
-    // If config pack has large count or pure pack on Channel 1, upload full .txt pack file reliably
+    // For Channel 1 pure config pack (20 configs), ALWAYS upload full .txt pack file reliably via sendTelegramDocument!
     if ((needsFullPackFile || (!isCh2 && !isCombinedPost)) && fullPackConfigsContent) {
-      try {
-        const formData = new FormData();
-        formData.append('chat_id', channelHandle);
-        const fileBuffer = Buffer.from(fullPackConfigsContent, 'utf8');
-        const blob = new Blob([fileBuffer], { type: 'text/plain;charset=utf-8' });
-        
-        let packFilename = `V2Ray_Pack_${selectedConfigs.length}_Configs.txt`;
-        const brandingTag = channelBranding || db.settings.branding;
-        if (brandingTag) {
-          const cleanBranding = brandingTag.replace('@', '').replace(/[^a-zA-Z0-9_-]/g, '');
-          if (cleanBranding) packFilename = `V2Ray_${cleanBranding}_${selectedConfigs.length}_Configs.txt`;
-        }
-        
-        formData.append('document', blob, packFilename);
-        formData.append('caption', `📦 <b>فایل کامل ${selectedConfigs.length} کانفیگ V2Ray</b>\n\n🆔 ${escapeHtml(brandingTag || '')}`);
-        formData.append('parse_mode', 'HTML');
-        formData.append('disable_notification', 'true');
-
-        const docResult = await callTelegramApi('sendDocument', formData);
-        if (docResult?.message_id) {
-          addLog('success', `فایل ضمیمه متنی کانفیگ‌ها (${packFilename}) با موفقیت به کانال ${channelTargetNum} ارسال شد.`);
-        } else {
-          addLog('warn', `ارسال فایل متنی کانفیگ‌ها به کانال انجام نشد: نتیجه نامعتبر از تلگرام.`);
-        }
-      } catch (err: any) {
-        addLog('error', `خطا در ارسال فایل متنی کانفیگ‌ها: ${err?.message || err}`);
+      let packFilename = `V2Ray_Pack_${selectedConfigs.length}_Configs.txt`;
+      const brandingTag = channelBranding || db.settings.branding;
+      if (brandingTag) {
+        const cleanBranding = brandingTag.replace('@', '').replace(/[^a-zA-Z0-9_-]/g, '');
+        if (cleanBranding) packFilename = `V2Ray_${cleanBranding}_${selectedConfigs.length}_Configs.txt`;
+      }
+      const fileCaption = `📦 <b>فایل متنی شامل تمام ${selectedConfigs.length} کانفیگ اختصاصی V2Ray</b>\n\n🆔 ${escapeHtml(brandingTag || '')}`;
+      const docRes = await sendTelegramDocument({
+        chatId: channelHandle,
+        content: fullPackConfigsContent,
+        filename: packFilename,
+        caption: fileCaption,
+        silent: !!settings.silentMode
+      });
+      if (docRes.success) {
+        addLog('success', `✅ فایل ضمیمه متنی شامل تمامی ${selectedConfigs.length} کانفیگ (${packFilename}) با موفقیت به کانال ${channelTargetNum} ارسال گردید.`);
+      } else {
+        addLog('warn', `ارسال فایل متنی کانفیگ‌ها به کانال با اخطار مواجه شد: ${docRes.error || 'خطای تلگرام'}`);
       }
     }
 
@@ -10029,33 +10345,59 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
     const nowIso = new Date().toISOString();
 
     let anySuccess = false;
-    for (const item of selected) {
-      const adCheck = isTelegramSourceAd(item.text, item.title);
+    for (let currentItem of selected) {
+      let activeItem = currentItem;
+
+      // 1. PRE-VALIDATE MEDIA: Ensure media validity BEFORE building post text so text and media NEVER mismatch!
+      if (activeItem.imageUrl || activeItem.videoUrl) {
+        const mediaCheckUrl = activeItem.videoUrl || activeItem.imageUrl || '';
+        const testBlob = await downloadMediaToBlob(mediaCheckUrl, 15000);
+        if (!testBlob) {
+          addLog('info', `مدیای مطلب ${activeItem.id} منقضی شده بود. در حال بررسی و جایگزینی با مطلب تازه دارای تصویر/ویدیو سالم...`);
+          try {
+            await extractFunNewsFromSources(undefined, activeHandles.length > 0 ? activeHandles : undefined);
+            const freshItems = (db.funNewsItems || []).filter(fi => {
+              if (isCh2 ? fi.postedToChannel2 : fi.postedToChannel1) return false;
+              if (isTelegramSourceAd(fi.text, fi.title).isAd) return false;
+              return Boolean(fi.imageUrl || fi.videoUrl);
+            });
+            for (const fi of freshItems.slice(0, 5)) {
+              const freshBlob = await downloadMediaToBlob(fi.videoUrl || fi.imageUrl || '', 15000);
+              if (freshBlob) {
+                activeItem = fi; // Complete unit replacement: both text and media belong to fi
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      const adCheck = isTelegramSourceAd(activeItem.text, activeItem.title);
       if (adCheck.isAd) {
-        addLog('warn', `مطلب ${item.id} به دلیل تبلیغاتی بودن (${adCheck.reason || 'تبلیغ منبع'}) از ارسال مسدود گردید.`);
-        if (isCh2) item.postedToChannel2 = true;
-        else item.postedToChannel1 = true;
+        addLog('warn', `مطلب ${activeItem.id} به دلیل تبلیغاتی بودن (${adCheck.reason || 'تبلیغ منبع'}) از ارسال مسدود گردید.`);
+        if (isCh2) activeItem.postedToChannel2 = true;
+        else activeItem.postedToChannel1 = true;
         continue;
       }
 
-      const isFun = item.category === 'fun';
+      const isFun = activeItem.category === 'fun';
       const categoryEmoji = isFun ? '🎭' : '📰';
       const categoryName = isFun ? 'طنز و سرگرمی تلگرام' : 'اخبار عمومی و مهم روز';
 
-      // Thoroughly sanitize title and body text so NO source group/channel handles appear
-      const sanitizedText = sanitizeContentForTelegramPost(item.text, channelHandle);
-      const sanitizedTitle = sanitizePostTitle(item.title, channelHandle);
+      // Thoroughly sanitize title and body text of activeItem
+      const sanitizedText = sanitizeContentForTelegramPost(activeItem.text, channelHandle);
+      const sanitizedTitle = sanitizePostTitle(activeItem.title, channelHandle);
 
       if (isTelegramSourceAd(sanitizedText, sanitizedTitle).isAd) {
-        addLog('warn', `مطلب ${item.id} پس از پالایش همچنان حاوی تبلیغ منبع تشخیص داده شد و ارسال نگردید.`);
-        if (isCh2) item.postedToChannel2 = true;
-        else item.postedToChannel1 = true;
+        addLog('warn', `مطلب ${activeItem.id} پس از پالایش همچنان حاوی تبلیغ منبع تشخیص داده شد و ارسال نگردید.`);
+        if (isCh2) activeItem.postedToChannel2 = true;
+        else activeItem.postedToChannel1 = true;
         continue;
       }
 
+      // Generate post text FRESH from activeItem
       let text = '';
       if (skipSummary) {
-        // Without summary block: output clean body text directly
         text = `${escapeHtml(sanitizedText || sanitizedTitle)}\n\n`;
       } else {
         text = `${categoryEmoji} <b>« ${categoryName} »</b>\n`;
@@ -10065,8 +10407,8 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
         }
       }
 
-      if (item.tags && item.tags.length > 0) {
-        const formattedTags = item.tags
+      if (activeItem.tags && activeItem.tags.length > 0) {
+        const formattedTags = activeItem.tags
           .slice(0, 5)
           .map(t => `#${t.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, '')}`)
           .join(' ');
@@ -10084,50 +10426,27 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
         inlineButtons.push([{ text: channelBtn.text, url: channelBtn.url }]);
       }
 
-      // Pre-verify media download so expired telesco.pe tokens are refreshed before posting
-      if (item.imageUrl || item.videoUrl) {
-        const testBlob = await downloadMediaToBlob(item.videoUrl || item.imageUrl || '', 15000);
-        if (!testBlob) {
-          addLog('info', `مدیای مطلب ${item.id} منقضی شده بود. در حال استخراج و دریافت زنده مطالب تازه با عکس/ویدیو...`);
-          try {
-            await extractFunNewsFromSources(undefined, activeHandles.length > 0 ? activeHandles : undefined);
-            const freshItems = (db.funNewsItems || []).filter(fi => {
-              if (isCh2 ? fi.postedToChannel2 : fi.postedToChannel1) return false;
-              if (isTelegramSourceAd(fi.text, fi.title).isAd) return false;
-              return Boolean(fi.imageUrl || fi.videoUrl);
-            });
-            for (const fi of freshItems.slice(0, 5)) {
-              const freshBlob = await downloadMediaToBlob(fi.videoUrl || fi.imageUrl || '', 15000);
-              if (freshBlob) {
-                item.videoUrl = fi.videoUrl;
-                item.imageUrl = fi.imageUrl;
-                item.mediaType = fi.mediaType;
-                item.text = fi.text;
-                item.title = fi.title;
-                break;
-              }
-            }
-          } catch (_) {}
-        }
-      }
-
       const postResult = await sendTelegramPostWithMedia({
         chatId: channelHandle,
         text,
-        videoUrl: item.videoUrl,
-        imageUrl: item.imageUrl,
-        mediaType: item.mediaType,
+        videoUrl: activeItem.videoUrl,
+        imageUrl: activeItem.imageUrl,
+        mediaType: activeItem.mediaType,
         replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
         silent: !!ap.silentMode
       });
 
       if (postResult.success) {
         if (isCh2) {
-          item.postedToChannel2 = true;
+          activeItem.postedToChannel2 = true;
+          const origInDb = db.funNewsItems.find(f => f.id === activeItem.id);
+          if (origInDb) origInDb.postedToChannel2 = true;
         } else {
-          item.postedToChannel1 = true;
+          activeItem.postedToChannel1 = true;
+          const origInDb = db.funNewsItems.find(f => f.id === activeItem.id);
+          if (origInDb) origInDb.postedToChannel1 = true;
         }
-        item.postedAt = nowIso;
+        activeItem.postedAt = nowIso;
         anySuccess = true;
 
         recordChannelPostEvent(
@@ -10135,8 +10454,8 @@ async function executeFunNewsAutoPost(channelTargetNum: 1 | 2 = 2, customTargetC
           channelHandle, 
           'fun', 
           postResult.messageId, 
-          item.title || item.text.slice(0, 80), 
-          item.title
+          activeItem.title || activeItem.text.slice(0, 80), 
+          activeItem.title
         );
       }
 
@@ -10325,8 +10644,7 @@ async function extractFunNewsFromSources(specificSourceId?: string, extraHandles
 
         if (photoWrapMatch && photoWrapMatch[1]) {
           imageUrl = photoWrapMatch[1].trim().replace(/&amp;/g, '&');
-        } else if (linkPreviewMatch && linkPreviewMatch[1]) {
-          imageUrl = linkPreviewMatch[1].trim().replace(/&amp;/g, '&');
+        // Note: link_preview_image is intentionally ignored so text posts with external links are NOT mistaken for photo posts
         } else if (posterMatch && posterMatch[1]) {
           imageUrl = posterMatch[1].trim().replace(/&amp;/g, '&');
         } else if (vidThumbMatch && vidThumbMatch[1]) {
@@ -10968,7 +11286,7 @@ async function generatePostText(post: ChannelPost): Promise<string> {
       const proto = (conf.protocol || 'V2RAY').toUpperCase();
       
       if (status === 'working') {
-        const pingText = latency ? `پینگ: ${latency}ms` : 'فعال 🟢';
+        const pingText = 'متصل و پایدار 🟢';
         text += `🟢 کانفیگ ${conf.index} [${proto}] | ${pingText} | ${loc.country} ${flag}\n`;
       } else {
         text += `🔴 کانفیگ ${conf.index} [${proto}] | (غیرفعال ❌) | ${loc.country} ${flag}\n`;
@@ -11019,7 +11337,7 @@ async function generatePostText(post: ChannelPost): Promise<string> {
       const pType = (p.type || 'MTPROTO').toUpperCase();
 
       if (status === 'working') {
-        const pingText = latency ? `پینگ: ${latency}ms` : 'فعال 🟢';
+        const pingText = 'متصل و پایدار 🟢';
         text += `🟢 پروکسی ${pType} | ${pingText} | ${loc.country} ${flag}\n`;
       } else {
         text += `🔴 پروکسی ${pType} | (غیرفعال ❌) | ${loc.country} ${flag}\n`;
