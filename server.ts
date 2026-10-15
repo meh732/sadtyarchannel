@@ -2844,64 +2844,21 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // STRICT FULL CONFIG VALIDATION VIA IRAN RELAY PROXY & XRAY CORE:
+    // STRICT ROUTING VIA IRAN RELAY PROXY:
+    // When an Iran proxy is configured, ALL verification runs strictly through the Iran proxy
     if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
       const proxyUri = db.settings.iranRelayProxy.trim();
-
-      // 1. First run full Xray client connection test if Xray binary exists
-      const xrayRes = await checkConfigWithXray(rawConfig);
-      if (xrayRes.working) {
-        return { working: true, latency: xrayRes.latency };
-      }
-
-      // 2. Fallback to full HTTP/TLS handshake check through the Iran proxy (not just TCP port ping)
-      const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 4000);
+      const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500);
       if (portCheck.working) {
-        // Perform actual HTTP GET request through proxy to verify configuration handshake/tunnel validity
-        const httpValid = await new Promise((resolve) => {
-          const { pHost, pPort, auth } = parseProxyUri(proxyUri);
-          const socket = new net.Socket();
-          socket.setTimeout(4000);
-          let finished = false;
-          const done = (ok: boolean) => {
-            if (finished) return;
-            finished = true;
-            try { socket.destroy(); } catch (_) {}
-            resolve(ok);
-          };
-          socket.on('error', () => done(false));
-          socket.on('timeout', () => done(false));
-          socket.connect(pPort, pHost, () => {
-            let req = `CONNECT ${details.host}:${details.port} HTTP/1.1\r\nHost: ${details.host}:${details.port}\r\n`;
-            if (auth) {
-              const authBase64 = Buffer.from(auth).toString('base64');
-              req += `Proxy-Authorization: Basic ${authBase64}\r\n`;
-            }
-            req += `\r\n`;
-            socket.write(req);
-            socket.once('data', (data) => {
-              const resp = data.toString('utf8');
-              if (resp.includes(' 200 ') || resp.startsWith('HTTP/1.1 200') || resp.startsWith('HTTP/1.0 200')) {
-                done(true);
-              } else {
-                done(false);
-              }
-            });
-          });
-        });
-
-        if (httpValid) {
-          return { working: true, latency: Math.max(15, Math.round(portCheck.latency)) };
+        return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
+      }
+      if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
+        const sniCheck = await checkPortViaProxy(proxyUri, details.sni.trim(), details.port, 3500);
+        if (sniCheck.working) {
+          return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
         }
       }
-
       return { working: false, latency: 999 };
-    }
-
-    // If no Iran proxy, use Xray core if available
-    const xrayRes = await checkConfigWithXray(rawConfig);
-    if (xrayRes.working) {
-      return { working: true, latency: xrayRes.latency };
     }
 
     // 1. Fast direct TCP socket check to destination host/IP (foreign server fallback)
