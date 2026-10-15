@@ -1030,7 +1030,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   autoTestInterval: 10,
   testBatchLimit: 100,
   autoExtractInterval: 30, // minutes
-  iranRelayProxy: '',
+  iranRelayProxy: process.env.IRAN_RELAY_PROXY || 'socks5://proxyuser:DfroUpvpeTCj@95.38.68.158:1080',
   autoPost: DEFAULT_AUTO_POST,
   postMonitoringEnabled: false,
   backupEnabled: false,
@@ -1204,12 +1204,14 @@ function loadDatabase() {
 
     const resolvedBotToken = envBotToken || loadedSettings?.settings?.botToken || loadedDataStore?.settings?.botToken || '';
     const resolvedAdminId = envAdminId || loadedSettings?.settings?.adminId || loadedDataStore?.settings?.adminId || '';
+    const resolvedIranRelayProxy = process.env.IRAN_RELAY_PROXY || loadedSettings?.settings?.iranRelayProxy || loadedDataStore?.settings?.iranRelayProxy || 'socks5://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
 
     const finalSettings = { 
       ...DEFAULT_SETTINGS, 
       ...(loadedSettings?.settings || {}),
       adminId: resolvedAdminId,
       botToken: resolvedBotToken,
+      iranRelayProxy: resolvedIranRelayProxy,
       // If a valid bot token is configured, ensure bot is marked as running by default
       isBotRunning: Boolean(resolvedBotToken && (loadedSettings?.settings?.isBotRunning !== false)),
       adminUsername: envAdminUsername || loadedSettings?.settings?.adminUsername || loadedDataStore?.settings?.adminUsername || 'admin',
@@ -3051,14 +3053,14 @@ async function checkPort(host: string, port: number, timeout = 3800): Promise<{ 
     return { working: false, latency: 999 };
   }
 
-  // If Iran relay proxy is configured in system settings, test port via proxy first!
+  // If Iran relay proxy is configured in system settings, test port strictly via the Iran proxy
   if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
     try {
       const proxyCheck = await checkPortViaProxy(db.settings.iranRelayProxy.trim(), host, port, timeout);
-      if (proxyCheck.working) {
-        return proxyCheck;
-      }
-    } catch (_) {}
+      return proxyCheck;
+    } catch (_) {
+      return { working: false, latency: 999 };
+    }
   }
 
   const targetHost = await resolveHostFast(host);
@@ -4404,7 +4406,13 @@ async function testProxiesBatch(ids: string[]) {
  * Run test on specific config IDs
  */
 async function testConfigsBatch(ids: string[]) {
-  addLog('info', `در حال آغاز تست اتصال پورت برای تعداد ${ids.length} کانفیگ...`);
+  const isIranProxyActive = Boolean(db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim());
+  const proxyDisplay = isIranProxyActive ? db.settings.iranRelayProxy.replace(/:[^@]+@/, ':***@') : null;
+  if (isIranProxyActive) {
+    addLog('info', `در حال آغاز تست اتصال پورت برای تعداد ${ids.length} کانفیگ از مسیر پروکسی ایران (${proxyDisplay})...`);
+  } else {
+    addLog('info', `در حال آغاز تست اتصال پورت برای تعداد ${ids.length} کانفیگ...`);
+  }
   
   let workingCount = 0;
   let failedCount = 0;
@@ -4418,7 +4426,7 @@ async function testConfigsBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = 35;
+  const CONCURRENCY = isIranProxyActive ? 10 : 35;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
@@ -17027,6 +17035,37 @@ async function startExpressServer() {
         success: false,
         message: `خطا در اتصال به هوش مصنوعی: ${err.message || 'کلید نامعتبر است یا دسترسی به سرور گوگل مسدود می‌باشد.'}`
       });
+    }
+  });
+
+  // API: Test Iran Relay Proxy
+  app.post('/api/settings/test-iran-proxy', async (req, res) => {
+    try {
+      const proxyUri = req.body?.proxyUri || db.settings.iranRelayProxy;
+      if (!proxyUri || !proxyUri.trim()) {
+        return res.status(400).json({ success: false, message: 'آدرس پروکسی ایران وارد نشده است.' });
+      }
+      const cleanUri = proxyUri.trim();
+      const testResult = await checkPortViaProxy(cleanUri, '1.1.1.1', 443, 4000);
+      const finalResult = testResult.working ? testResult : await checkPortViaProxy(cleanUri, '8.8.8.8', 53, 4000);
+
+      if (finalResult.working) {
+        db.settings.iranRelayProxy = cleanUri;
+        saveDatabase(true);
+        addLog('success', `✅ اتصال به پروکسی ایران برقرار شد! (پینگ: ${finalResult.latency}ms) - تنظیمات ذخیره گردید.`);
+        return res.json({
+          success: true,
+          latency: finalResult.latency,
+          message: `✅ اتصال به پروکسی ایران برقرار است! پینگ: ${finalResult.latency}ms (تنظیمات پروکسی با موفقیت ذخیره شد)`
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: '❌ برقراری ارتباط با پروکسی ایران ناموفق بود. لطفاً آدرس IP، پورت و نام‌کاربری/رمزعبور را بررسی نمایید.'
+        });
+      }
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: `خطا در تست پروکسی: ${err.message || err}` });
     }
   });
 

@@ -877,6 +877,29 @@ export default function App() {
     }
   };
 
+  // Handle Test Iran Relay Proxy
+  const handleTestIranProxy = async () => {
+    setActionLoading('test_iran_proxy');
+    try {
+      const res = await fetch('/api/settings/test-iran-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proxyUri: settings.iranRelayProxy })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message, 'success');
+        fetchData(true);
+      } else {
+        showToast(data.message || 'خطا در برقراری ارتباط با پروکسی ایران', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'خطا در ارتباط با سرور', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   // Handle Save Settings
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -5085,7 +5108,6 @@ export default function App() {
                         </label>
                         <input
                           type="password"
-                          required
                           placeholder="مثال: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
                           value={settings.botToken}
                           onChange={(e) => setSettings(prev => ({ ...prev, botToken: e.target.value }))}
@@ -5203,21 +5225,46 @@ export default function App() {
                       </div>
 
                       {/* Iran Relay Proxy Input */}
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                          <span>پروکسی/واسط تست از داخل ایران (Iran Relay Proxy - اختیاری)</span>
-                          <span className="text-[10px] text-emerald-600 font-semibold">تست ۱۰۰٪ واقعی از داخل نت ایران</span>
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="مثال: socks5://user:pass@185.x.x.x:1080 یا http://185.x.x.x:3128"
-                          value={settings.iranRelayProxy || ''}
-                          onChange={(e) => setSettings(prev => ({ ...prev, iranRelayProxy: e.target.value }))}
-                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-mono text-left focus:border-indigo-500 focus:outline-none"
-                          dir="ltr"
-                        />
-                        <p className="text-[10px] text-slate-400">
-                          در صورت وارد کردن آدرس SOCKS5 یا HTTP پروکسی/سرور داخل ایران، تمام تست‌های دست‌تکانی Xray از مسیر این پروکسی و دقیقاً از داخل ایران صورت می‌گیرد.
+                      <div className="space-y-2 p-4 rounded-xl bg-gradient-to-r from-emerald-50/70 via-teal-50/50 to-slate-50 border border-emerald-100/80">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            <span>پروکسی/واسط تست از داخل ایران (Iran Relay Proxy)</span>
+                          </label>
+                          <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-100/80 px-2 py-0.5 rounded-md">
+                            تست ۱۰۰٪ واقعی از داخل نت ایران
+                          </span>
+                        </div>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="مثال: socks5://user:pass@95.38.68.158:1080 یا http://..."
+                            value={settings.iranRelayProxy || ''}
+                            onChange={(e) => setSettings(prev => ({ ...prev, iranRelayProxy: e.target.value }))}
+                            className="w-full px-4 py-2.5 pl-24 rounded-xl border border-slate-200 bg-white text-sm font-mono text-left focus:border-emerald-500 focus:outline-none"
+                            dir="ltr"
+                          />
+                          <div className="absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={handleTestIranProxy}
+                              disabled={actionLoading === 'test_iran_proxy' || !settings.iranRelayProxy?.trim()}
+                              className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 active:scale-95 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer"
+                              title="تست اتصال و سنجش پینگ پروکسی ایران"
+                            >
+                              {actionLoading === 'test_iran_proxy' ? (
+                                <>
+                                  <RefreshCw className="w-3 h-3 animate-spin" />
+                                  <span>تست...</span>
+                                </>
+                              ) : (
+                                <span>تست اتصال</span>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-slate-500 leading-relaxed">
+                          در صورت وارد کردن پروکسی ایران، تمام تست‌های پورت و پینگ کانفیگ‌ها از مسیر این سرور در داخل ایران انجام شده و فقط کانفیگ‌هایی که در ایران بدون فیلتر پاسخ دهند سبز می‌شوند.
                         </p>
                       </div>
 
