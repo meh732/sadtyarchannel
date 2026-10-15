@@ -2542,30 +2542,17 @@ function buildXrayConfig(rawConfig: string, localPort: number): { configJson: an
   if (db.settings.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
     const relayUri = db.settings.iranRelayProxy.trim();
     try {
-      const isSocks = relayUri.startsWith('socks5://') || relayUri.startsWith('socks://');
-      const cleanRelay = relayUri.replace(/^(socks5?|http):\/\//i, '');
-      let auth = '';
-      let hostPort = cleanRelay;
-      if (cleanRelay.includes('@')) {
-        [auth, hostPort] = cleanRelay.split('@');
-      }
-      const [rHost, rPortStr] = hostPort.split(':');
-      const rPort = parseInt(rPortStr, 10);
-      
-      if (rHost && rPort) {
-        let user = '', pass = '';
-        if (auth.includes(':')) {
-          [user, pass] = auth.split(':');
-        }
-        
+      const { pHost, pPort, user, pass } = parseProxyUri(relayUri);
+      if (pHost && pPort) {
+        const isTrueSocks = cachedIranProxyProtocol === 'socks5';
         const relayOutbound: any = {
           tag: 'iran_relay',
-          protocol: isSocks ? 'socks' : 'http',
+          protocol: isTrueSocks ? 'socks' : 'http',
           settings: {
             servers: [
               {
-                address: rHost,
-                port: rPort,
+                address: pHost,
+                port: pPort,
                 users: (user || pass) ? [{ user: user || '', pass: pass || '' }] : undefined
               }
             ]
@@ -2658,18 +2645,18 @@ function cleanupCheckingStates() {
 cleanupCheckingStates();
 
 /**
- * Performs real-world client handshake verification of a configuration using Xray and curl SOCKS5
+ * Performs real-world client handshake verification of a configuration using Xray core and curl SOCKS5
  */
 function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   return new Promise((resolve) => {
-    const localPort = Math.floor(Math.random() * 10000) + 15000;
+    const localPort = Math.floor(Math.random() * 20000) + 20000;
     const result = buildXrayConfig(rawConfig, localPort);
     if (!result) {
       return resolve({ working: false, latency: 999 });
     }
 
     const { configJson } = result;
-    const configPath = path.join(process.cwd(), `bin/xray_config_${Date.now()}_${Math.floor(Math.random() * 10000)}.json`);
+    const configPath = path.join(process.cwd(), `bin/xray_config_${Date.now()}_${localPort}.json`);
     
     try {
       fs.writeFileSync(configPath, JSON.stringify(configJson, null, 2));
@@ -2704,7 +2691,7 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
 
     const globalTimeout = setTimeout(() => {
       finish(false, 999);
-    }, 12000);
+    }, 5500);
 
     try {
       child = spawn(xrayPath, ['-config', configPath], { stdio: 'ignore' });
@@ -2716,9 +2703,9 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
     const curlTimer = setTimeout(() => {
       if (isFinished) return;
 
-      const curlCmd1 = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://connectivitycheck.gstatic.com/generate_204 --max-time 6`;
+      const curlCmd1 = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://connectivitycheck.gstatic.com/generate_204 --max-time 4`;
       
-      exec(curlCmd1, { timeout: 6500 }, (error, stdout) => {
+      exec(curlCmd1, { timeout: 4500 }, (error, stdout) => {
         if (isFinished) return;
 
         if (!error && stdout) {
@@ -2726,28 +2713,28 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
           const httpCode = parseInt(parts[0], 10);
           const timeStartTransfer = parseFloat(parts[1]) || 0;
           if ([200, 204, 301, 302].includes(httpCode)) {
-            const latencyMs = Math.round(timeStartTransfer * 1000) || 50;
+            const latencyMs = Math.round(timeStartTransfer * 1000) || 120;
             return finish(true, latencyMs);
           }
         }
 
-        // Fallback target: HTTPS Google
-        const curlCmd2 = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" https://www.google.com/generate_204 --max-time 6`;
-        exec(curlCmd2, { timeout: 6500 }, (error2, stdout2) => {
+        // Fallback target: Cloudflare 204
+        const curlCmd2 = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 3`;
+        exec(curlCmd2, { timeout: 3500 }, (error2, stdout2) => {
           if (isFinished) return;
           if (!error2 && stdout2) {
             const parts = stdout2.trim().split(':');
             const httpCode = parseInt(parts[0], 10);
             const timeStartTransfer = parseFloat(parts[1]) || 0;
             if ([200, 204, 301, 302].includes(httpCode)) {
-              const latencyMs = Math.round(timeStartTransfer * 1000) || 50;
+              const latencyMs = Math.round(timeStartTransfer * 1000) || 150;
               return finish(true, latencyMs);
             }
           }
           finish(false, 999);
         });
       });
-    }, 400);
+    }, 250);
   });
 }
 
@@ -2834,8 +2821,8 @@ function checkTlsHandshake(host: string, port: number, sni: string, timeout = 35
 }
 
 /**
- * Performs fast, accurate TCP/TLS port ping verification of a configuration
- * Matches the standard TCP Ping behavior of V2Ray clients (v2rayN, v2rayNG, Nekoray)
+ * Performs deep, real-world protocol verification of a configuration using Xray core and HTTP 204 connectivity test
+ * Chained through the Iran Relay Proxy if configured in settings
  */
 async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   try {
@@ -2844,43 +2831,11 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // STRICT ROUTING VIA IRAN RELAY PROXY:
-    // When an Iran proxy is configured, ALL verification runs strictly through the Iran proxy
-    if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
-      const proxyUri = db.settings.iranRelayProxy.trim();
-      const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500);
-      if (portCheck.working) {
-        return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
-      }
-      if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
-        const sniCheck = await checkPortViaProxy(proxyUri, details.sni.trim(), details.port, 3500);
-        if (sniCheck.working) {
-          return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
-        }
-      }
-      return { working: false, latency: 999 };
-    }
-
-    // 1. Fast direct TCP socket check to destination host/IP (foreign server fallback)
-    const portCheck = await checkPort(details.host, details.port, 3800);
-    if (portCheck.working) {
-      return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
-    }
-
-    // 2. If destination host was an unreachable IP or CDN front, but SNI contains a valid domain, test SNI
-    if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
-      const sniCheck = await checkPort(details.sni.trim(), details.port, 3500);
-      if (sniCheck.working) {
-        return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
-      }
-    }
-
-    // 3. Fallback: If TLS is enabled, verify via TLS handshake
-    if (details.tls) {
-      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 3500);
-      if (tlsCheck.working) {
-        return { working: true, latency: Math.max(10, Math.round(tlsCheck.latency)) };
-      }
+    // REAL PROTOCOL VERIFICATION USING XRAY CORE:
+    // Runs full V2Ray/Xray handshake & chained Iran relay proxy to verify actual internet HTTP 204 connectivity
+    const xrayRes = await checkConfigWithXray(rawConfig);
+    if (xrayRes.working) {
+      return xrayRes;
     }
 
     return { working: false, latency: 999 };
@@ -4516,8 +4471,19 @@ async function testConfigsBatch(ids: string[]) {
 
 /**
  * Triggers bulk extraction across all active sources
+ * Automatically purges previous configs before loading fresh ones as requested by user
  */
 async function triggerBulkScrape(): Promise<number> {
+  // Automatically purge/flush previous configs before extracting fresh new ones
+  allowEmptyConfigsWipe = true;
+  const countBefore = db.configs.length;
+  db.configs = [];
+  db.postedConfigSignatures = [];
+  saveDatabase(true);
+  if (countBefore > 0) {
+    addLog('info', `🧹 تخلیه خودکار آرشیو قبلی (${countBefore} کانفیگ) جهت جایگزینی با کانفیگ‌های تازه استخراج شده...`);
+  }
+
   const enabledSources = db.sources.filter(s => s.enabled);
   const results = await Promise.allSettled(enabledSources.map(src => scrapeSource(src)));
   let totalExtracted = 0;
@@ -17324,6 +17290,14 @@ async function startExpressServer() {
     }
 
     try {
+      allowEmptyConfigsWipe = true;
+      const countBefore = db.configs.length;
+      db.configs = [];
+      db.postedConfigSignatures = [];
+      saveDatabase(true);
+      if (countBefore > 0) {
+        addLog('info', `🧹 تخلیه خودکار آرشیو قبلی (${countBefore} کانفیگ) جهت استخراج تازه از منبع ${src.name}...`);
+      }
       const count = await scrapeSource(src);
       res.json({ success: true, extractedCount: count });
     } catch(err: any) {
