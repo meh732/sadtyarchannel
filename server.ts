@@ -2869,101 +2869,181 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
   }
 }
 
-// --- Connection Port Tester with Iran Relay Proxy Support ---
-async function checkPortViaProxy(
-  proxyUri: string,
-  targetHost: string,
-  targetPort: number,
-  timeout = 3800
-): Promise<{ working: boolean; latency: number }> {
+// --- Universal Iran Relay Proxy Tester (Supports HTTP CONNECT with Basic Auth & SOCKS5 with RFC 1929 Auth) ---
+function parseProxyUri(proxyUri: string): { pHost: string; pPort: number; auth: string; user?: string; pass?: string } {
+  let clean = proxyUri.replace(/^(socks5?|https?):\/\//i, '').trim();
+  let auth = '';
+  let user = '';
+  let pass = '';
+  let hostPort = clean;
+
+  if (clean.includes('@')) {
+    const parts = clean.split('@');
+    auth = parts[0];
+    hostPort = parts[1];
+    if (auth.includes(':')) {
+      const uParts = auth.split(':');
+      user = uParts[0];
+      pass = uParts.slice(1).join(':');
+    }
+  }
+
+  const hpParts = hostPort.split(':');
+  const pHost = hpParts[0];
+  const pPort = parseInt(hpParts[1], 10) || 1080;
+
+  return { pHost, pPort, auth, user, pass };
+}
+
+async function checkPortHttpProxy(proxyUri: string, targetHost: string, targetPort: number, timeout = 3800): Promise<{ working: boolean; latency: number }> {
+  const { pHost, pPort, auth } = parseProxyUri(proxyUri);
+  if (!pHost || !pPort) return { working: false, latency: 999 };
+
   return new Promise((resolve) => {
     const start = Date.now();
     let resolved = false;
-
-    const finish = (working: boolean) => {
-      if (resolved) return;
-      resolved = true;
-      try { socket.destroy(); } catch (e) {}
-      clearTimeout(timer);
-      const latency = Date.now() - start;
-      resolve({ working, latency: working ? Math.max(10, latency) : 999 });
-    };
-
-    const timer = setTimeout(() => finish(false), timeout + 250);
-
-    let isSocks = proxyUri.startsWith('socks5://') || proxyUri.startsWith('socks://');
-    let cleanUri = proxyUri.replace(/^(socks5?|http):\/\//i, '');
-    let auth = '';
-    let hostPort = cleanUri;
-    if (cleanUri.includes('@')) {
-      const parts = cleanUri.split('@');
-      auth = parts[0];
-      hostPort = parts[1];
-    }
-    const hostPortParts = hostPort.split(':');
-    const pHost = hostPortParts[0];
-    const pPort = parseInt(hostPortParts[1], 10) || (isSocks ? 1080 : 8080);
-
-    if (!pHost) return finish(false);
-
     const socket = new net.Socket();
     socket.setTimeout(timeout);
+
+    const finish = (working: boolean, lat = 999) => {
+      if (resolved) return;
+      resolved = true;
+      try { socket.destroy(); } catch (_) {}
+      clearTimeout(timer);
+      resolve({ working, latency: working ? Math.max(10, Math.round(lat)) : 999 });
+    };
+
+    const timer = setTimeout(() => finish(false), timeout + 200);
 
     socket.on('error', () => finish(false));
     socket.on('timeout', () => finish(false));
     socket.on('close', () => finish(false));
 
     try {
-      if (isSocks) {
-        socket.connect(pPort, pHost, () => {
-          socket.write(Buffer.from([0x05, 0x01, 0x00]));
-          socket.once('data', (data) => {
-            if (data.length >= 2 && data[0] === 0x05) {
-              const hostBuf = Buffer.from(targetHost);
-              const req = Buffer.alloc(4 + 1 + hostBuf.length + 2);
-              req[0] = 0x05;
-              req[1] = 0x01;
-              req[2] = 0x00;
-              req[3] = 0x03;
-              req[4] = hostBuf.length;
-              hostBuf.copy(req, 5);
-              req.writeUInt16BE(targetPort, 5 + hostBuf.length);
-              socket.write(req);
-              socket.once('data', (rep) => {
-                if (rep.length >= 2 && rep[1] === 0x00) {
-                  finish(true);
-                } else {
-                  finish(false);
-                }
-              });
-            } else {
-              finish(false);
-            }
-          });
-        });
-      } else {
-        socket.connect(pPort, pHost, () => {
-          let connectHeader = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n`;
-          if (auth) {
-            const authBase64 = Buffer.from(auth).toString('base64');
-            connectHeader += `Proxy-Authorization: Basic ${authBase64}\r\n`;
+      socket.connect(pPort, pHost, () => {
+        let req = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n`;
+        if (auth) {
+          const authBase64 = Buffer.from(auth).toString('base64');
+          req += `Proxy-Authorization: Basic ${authBase64}\r\n`;
+        }
+        req += `\r\n`;
+        socket.write(req);
+        socket.once('data', (data) => {
+          const resp = data.toString('utf8');
+          if (resp.includes(' 200 ') || resp.startsWith('HTTP/1.1 200') || resp.startsWith('HTTP/1.0 200')) {
+            finish(true, Date.now() - start);
+          } else {
+            finish(false);
           }
-          connectHeader += `\r\n`;
-          socket.write(connectHeader);
-          socket.once('data', (data) => {
-            const resp = data.toString('utf8');
-            if (resp.includes('200')) {
-              finish(true);
-            } else {
-              finish(false);
-            }
-          });
         });
-      }
-    } catch (e) {
+      });
+    } catch (_) {
       finish(false);
     }
   });
+}
+
+async function checkPortSocks5Proxy(proxyUri: string, targetHost: string, targetPort: number, timeout = 3800): Promise<{ working: boolean; latency: number }> {
+  const { pHost, pPort, user, pass } = parseProxyUri(proxyUri);
+  if (!pHost || !pPort) return { working: false, latency: 999 };
+
+  return new Promise((resolve) => {
+    const start = Date.now();
+    let resolved = false;
+    const socket = new net.Socket();
+    socket.setTimeout(timeout);
+
+    const finish = (working: boolean, lat = 999) => {
+      if (resolved) return;
+      resolved = true;
+      try { socket.destroy(); } catch (_) {}
+      clearTimeout(timer);
+      resolve({ working, latency: working ? Math.max(10, Math.round(lat)) : 999 });
+    };
+
+    const timer = setTimeout(() => finish(false), timeout + 200);
+
+    socket.on('error', () => finish(false));
+    socket.on('timeout', () => finish(false));
+    socket.on('close', () => finish(false));
+
+    try {
+      socket.connect(pPort, pHost, () => {
+        socket.write(Buffer.from([0x05, 0x02, 0x00, 0x02]));
+        socket.once('data', (data) => {
+          if (data.length < 2 || data[0] !== 0x05) return finish(false);
+          const method = data[1];
+
+          const sendSocksConnect = () => {
+            const hBuf = Buffer.from(targetHost);
+            const req = Buffer.alloc(4 + 1 + hBuf.length + 2);
+            req[0] = 0x05;
+            req[1] = 0x01;
+            req[2] = 0x00;
+            req[3] = 0x03;
+            req[4] = hBuf.length;
+            hBuf.copy(req, 5);
+            req.writeUInt16BE(targetPort, 5 + hBuf.length);
+
+            socket.write(req);
+            socket.once('data', (rep) => {
+              if (rep.length >= 2 && rep[1] === 0x00) {
+                finish(true, Date.now() - start);
+              } else {
+                finish(false);
+              }
+            });
+          };
+
+          if (method === 0x02 && user && pass) {
+            const uBuf = Buffer.from(user);
+            const pBuf = Buffer.from(pass);
+            const authReq = Buffer.alloc(1 + 1 + uBuf.length + 1 + pBuf.length);
+            authReq[0] = 0x01;
+            authReq[1] = uBuf.length;
+            uBuf.copy(authReq, 2);
+            authReq[2 + uBuf.length] = pBuf.length;
+            pBuf.copy(authReq, 3 + uBuf.length);
+
+            socket.write(authReq);
+            socket.once('data', (authResp) => {
+              if (authResp.length >= 2 && authResp[1] === 0x00) {
+                sendSocksConnect();
+              } else {
+                finish(false);
+              }
+            });
+          } else if (method === 0x00) {
+            sendSocksConnect();
+          } else {
+            finish(false);
+          }
+        });
+      });
+    } catch (_) {
+      finish(false);
+    }
+  });
+}
+
+async function checkPortViaProxy(
+  proxyUri: string,
+  targetHost: string,
+  targetPort: number,
+  timeout = 3800
+): Promise<{ working: boolean; latency: number }> {
+  if (!proxyUri || !proxyUri.trim()) return { working: false, latency: 999 };
+  const cleanUri = proxyUri.trim();
+
+  // 1. Try HTTP CONNECT proxy mode (with Basic Auth if specified)
+  const httpRes = await checkPortHttpProxy(cleanUri, targetHost, targetPort, timeout);
+  if (httpRes.working) {
+    return httpRes;
+  }
+
+  // 2. Fallback to SOCKS5 proxy mode (with RFC 1929 Auth if specified)
+  const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, timeout);
+  return socksRes;
 }
 
 async function checkPort(host: string, port: number, timeout = 3800): Promise<{ working: boolean; latency: number }> {
