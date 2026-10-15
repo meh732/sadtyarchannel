@@ -1260,8 +1260,8 @@ function loadDatabase() {
     let finalPosted = Array.isArray(loadedDataStore?.postedMessages) ? loadedDataStore.postedMessages : [];
     let finalTechItems = Array.isArray(loadedDataStore?.techItems) ? loadedDataStore.techItems : [];
 
-    // Zero-Wipe Auto-Recovery Protection: If configs are empty, scan backups to restore healthy data
-    if (finalConfigs.length === 0) {
+    // Zero-Wipe Auto-Recovery Protection: Only restore from backups if database file was missing or unreadable
+    if (!loadedDataStore && finalConfigs.length === 0) {
       const bestBackup = findBestDataStoreBackup();
       if (bestBackup && Array.isArray(bestBackup.configs) && bestBackup.configs.length > 0) {
         console.log(`[Auto-Recovery] Restored ${bestBackup.configs.length} configs and items from healthy backup snapshot.`);
@@ -1535,6 +1535,7 @@ function loadDatabase() {
 
 let saveTimer: NodeJS.Timeout | null = null;
 let savePending = false;
+let allowEmptyConfigsWipe = false;
 
 function saveDatabase(immediate = false) {
   const doSave = () => {
@@ -1574,8 +1575,8 @@ function saveDatabase(immediate = false) {
         postedTricksHistory: db.postedTricksHistory || []
       };
 
-      // Zero-Wipe Safe Guard: If memory configs is 0, but disk or healthy backups contain configs, do not wipe!
-      if ((!db.configs || db.configs.length === 0) && fs.existsSync(DB_FILE)) {
+      // Zero-Wipe Safe Guard: Only guard against accidental crash wipe when NOT explicitly requested by user
+      if (!allowEmptyConfigsWipe && (!db.configs || db.configs.length === 0) && fs.existsSync(DB_FILE)) {
         try {
           const diskContent = safeReadJson(DB_FILE);
           if (diskContent && Array.isArray(diskContent.configs) && diskContent.configs.length > 0) {
@@ -2843,7 +2844,24 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // 1. Fast direct TCP socket check to destination host/IP
+    // STRICT ROUTING VIA IRAN RELAY PROXY:
+    // When an Iran proxy is configured, ALL verification runs strictly through the Iran proxy
+    if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
+      const proxyUri = db.settings.iranRelayProxy.trim();
+      const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500);
+      if (portCheck.working) {
+        return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
+      }
+      if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
+        const sniCheck = await checkPortViaProxy(proxyUri, details.sni.trim(), details.port, 3500);
+        if (sniCheck.working) {
+          return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
+        }
+      }
+      return { working: false, latency: 999 };
+    }
+
+    // 1. Fast direct TCP socket check to destination host/IP (foreign server fallback)
     const portCheck = await checkPort(details.host, details.port, 3800);
     if (portCheck.working) {
       return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
@@ -2872,32 +2890,46 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
 }
 
 // --- Universal Iran Relay Proxy Tester (Supports HTTP CONNECT with Basic Auth & SOCKS5 with RFC 1929 Auth) ---
-function parseProxyUri(proxyUri: string): { pHost: string; pPort: number; auth: string; user?: string; pass?: string } {
-  let clean = proxyUri.replace(/^(socks5?|https?):\/\//i, '').trim();
+function parseProxyUri(proxyUri: string): { protocol: string; pHost: string; pPort: number; auth: string; user?: string; pass?: string } {
+  let clean = proxyUri.trim();
+  let protocol = 'auto';
+  if (clean.includes('://')) {
+    const pIdx = clean.indexOf('://');
+    protocol = clean.substring(0, pIdx).toLowerCase();
+    clean = clean.substring(pIdx + 3);
+  }
+  clean = clean.split('/')[0].split('?')[0].trim();
+
   let auth = '';
   let user = '';
   let pass = '';
   let hostPort = clean;
 
   if (clean.includes('@')) {
-    const parts = clean.split('@');
-    auth = parts[0];
-    hostPort = parts[1];
+    const atIdx = clean.lastIndexOf('@');
+    auth = clean.substring(0, atIdx);
+    hostPort = clean.substring(atIdx + 1);
     if (auth.includes(':')) {
-      const uParts = auth.split(':');
-      user = uParts[0];
-      pass = uParts.slice(1).join(':');
+      const cIdx = auth.indexOf(':');
+      user = decodeURIComponent(auth.substring(0, cIdx));
+      pass = decodeURIComponent(auth.substring(cIdx + 1));
+    } else {
+      user = decodeURIComponent(auth);
     }
   }
 
-  const hpParts = hostPort.split(':');
-  const pHost = hpParts[0];
-  const pPort = parseInt(hpParts[1], 10) || 1080;
+  let pHost = hostPort;
+  let pPort = 1080;
+  if (hostPort.includes(':')) {
+    const lastColon = hostPort.lastIndexOf(':');
+    pHost = hostPort.substring(0, lastColon);
+    pPort = parseInt(hostPort.substring(lastColon + 1), 10) || 1080;
+  }
 
-  return { pHost, pPort, auth, user, pass };
+  return { protocol, pHost, pPort, auth: (user && pass) ? `${user}:${pass}` : auth, user, pass };
 }
 
-async function checkPortHttpProxy(proxyUri: string, targetHost: string, targetPort: number, timeout = 3800): Promise<{ working: boolean; latency: number }> {
+async function checkPortHttpProxy(proxyUri: string, targetHost: string, targetPort: number, timeout = 3500): Promise<{ working: boolean; latency: number }> {
   const { pHost, pPort, auth } = parseProxyUri(proxyUri);
   if (!pHost || !pPort) return { working: false, latency: 999 };
 
@@ -2915,7 +2947,7 @@ async function checkPortHttpProxy(proxyUri: string, targetHost: string, targetPo
       resolve({ working, latency: working ? Math.max(10, Math.round(lat)) : 999 });
     };
 
-    const timer = setTimeout(() => finish(false), timeout + 200);
+    const timer = setTimeout(() => finish(false), timeout + 150);
 
     socket.on('error', () => finish(false));
     socket.on('timeout', () => finish(false));
@@ -2945,7 +2977,7 @@ async function checkPortHttpProxy(proxyUri: string, targetHost: string, targetPo
   });
 }
 
-async function checkPortSocks5Proxy(proxyUri: string, targetHost: string, targetPort: number, timeout = 3800): Promise<{ working: boolean; latency: number }> {
+async function checkPortSocks5Proxy(proxyUri: string, targetHost: string, targetPort: number, timeout = 3500): Promise<{ working: boolean; latency: number }> {
   const { pHost, pPort, user, pass } = parseProxyUri(proxyUri);
   if (!pHost || !pPort) return { working: false, latency: 999 };
 
@@ -2963,7 +2995,7 @@ async function checkPortSocks5Proxy(proxyUri: string, targetHost: string, target
       resolve({ working, latency: working ? Math.max(10, Math.round(lat)) : 999 });
     };
 
-    const timer = setTimeout(() => finish(false), timeout + 200);
+    const timer = setTimeout(() => finish(false), timeout + 150);
 
     socket.on('error', () => finish(false));
     socket.on('timeout', () => finish(false));
@@ -3028,24 +3060,37 @@ async function checkPortSocks5Proxy(proxyUri: string, targetHost: string, target
   });
 }
 
+let cachedIranProxyProtocol: 'http' | 'socks5' = 'http';
+
 async function checkPortViaProxy(
   proxyUri: string,
   targetHost: string,
   targetPort: number,
-  timeout = 3800
+  timeout = 3500
 ): Promise<{ working: boolean; latency: number }> {
   if (!proxyUri || !proxyUri.trim()) return { working: false, latency: 999 };
   const cleanUri = proxyUri.trim();
 
-  // 1. Try HTTP CONNECT proxy mode (with Basic Auth if specified)
+  // 1. Try HTTP CONNECT proxy mode first (works for HTTP proxy, Squid, CCProxy on 1080)
   const httpRes = await checkPortHttpProxy(cleanUri, targetHost, targetPort, timeout);
   if (httpRes.working) {
+    cachedIranProxyProtocol = 'http';
     return httpRes;
   }
 
-  // 2. Fallback to SOCKS5 proxy mode (with RFC 1929 Auth if specified)
-  const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, timeout);
-  return socksRes;
+  // 2. If already detected as HTTP proxy, don't waste time on SOCKS5 timeout
+  if (cachedIranProxyProtocol === 'http') {
+    return { working: false, latency: 999 };
+  }
+
+  // 3. Fallback to SOCKS5 proxy mode
+  const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, Math.min(timeout, 2000));
+  if (socksRes.working) {
+    cachedIranProxyProtocol = 'socks5';
+    return socksRes;
+  }
+
+  return { working: false, latency: 999 };
 }
 
 async function checkPort(host: string, port: number, timeout = 3800): Promise<{ working: boolean; latency: number }> {
@@ -17046,8 +17091,22 @@ async function startExpressServer() {
         return res.status(400).json({ success: false, message: 'آدرس پروکسی ایران وارد نشده است.' });
       }
       const cleanUri = proxyUri.trim();
-      const testResult = await checkPortViaProxy(cleanUri, '1.1.1.1', 443, 4000);
-      const finalResult = testResult.working ? testResult : await checkPortViaProxy(cleanUri, '8.8.8.8', 53, 4000);
+
+      // Test connectivity against multiple destinations accessible in Iran
+      const testTargets = [
+        { host: 'varzesh3.com', port: 80 },
+        { host: 'google.com', port: 80 },
+        { host: 'isna.ir', port: 80 }
+      ];
+
+      let finalResult = { working: false, latency: 999 };
+      for (const t of testTargets) {
+        const tr = await checkPortViaProxy(cleanUri, t.host, t.port, 3000);
+        if (tr.working) {
+          finalResult = tr;
+          break;
+        }
+      }
 
       if (finalResult.working) {
         db.settings.iranRelayProxy = cleanUri;
@@ -17374,7 +17433,10 @@ async function startExpressServer() {
     const countBefore = db.configs.length;
     db.configs = db.configs.filter(c => c.status !== 'failed');
     const removedCount = countBefore - db.configs.length;
-    saveDatabase();
+    if (db.configs.length === 0) {
+      allowEmptyConfigsWipe = true;
+    }
+    saveDatabase(true);
     addLog('warn', `تعداد ${removedCount} کانفیگ غیرفعال (خراب) از آرشیو پاکسازی شد.`);
     res.json({ success: true, removedCount });
   });
@@ -17382,10 +17444,37 @@ async function startExpressServer() {
   // API: Clear All Configs
   app.delete('/api/configs/all', (req, res) => {
     const count = db.configs.length;
+    allowEmptyConfigsWipe = true;
     db.configs = [];
-    saveDatabase();
+    db.postedConfigSignatures = [];
+    saveDatabase(true);
+
+    // Also synchronize backup files so old configs are not resurrected on server restart
+    try {
+      const backupCandidates = [
+        path.join(BACKUPS_DIR, 'data_store_latest_healthy.json'),
+        path.join(process.cwd(), 'data_store.json.bak'),
+        '/var/lib/sadtyar-data/data_store.json',
+        '/var/lib/sadtyar-data/data_store_latest_healthy.json',
+        '/var/lib/sadtyar-data/data_store.json.bak',
+        '/opt/sadtyar-permanent-backup/data_store.json',
+        '/opt/sadtyar-permanent-backup/data_store_latest_healthy.json',
+        '/tmp/data_store_rescue.json'
+      ];
+      for (const bp of backupCandidates) {
+        if (fs.existsSync(bp)) {
+          const content = safeReadJson(bp);
+          if (content) {
+            content.configs = [];
+            content.postedConfigSignatures = [];
+            writeJsonAtomic(bp, content);
+          }
+        }
+      }
+    } catch (_) {}
+
     addLog('warn', `آرشیو کلی کانفیگ‌ها کاملا پاکسازی شد. (تعداد ${count} کانفیگ حذف شد)`);
-    res.json({ success: true });
+    res.json({ success: true, count });
   });
 
   // API: Manually Update Config Status
@@ -17460,9 +17549,10 @@ async function startExpressServer() {
     if (!db.proxies) db.proxies = [];
     const count = db.proxies.length;
     db.proxies = [];
-    saveDatabase();
+    db.postedProxySignatures = [];
+    saveDatabase(true);
     addLog('warn', `آرشیو کلی پروکسی‌ها پاکسازی شد. (تعداد ${count} پروکسی حذف شد)`);
-    res.json({ success: true });
+    res.json({ success: true, count });
   });
 
   // API: Manually Update Proxy Status

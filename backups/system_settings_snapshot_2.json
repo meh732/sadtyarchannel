@@ -169,8 +169,8 @@
       "name": "V2Ray Alpha Configs",
       "urlOrHandle": "@v2ray_alpha",
       "enabled": true,
-      "extractedCount": 1323,
-      "lastExtracted": "2026-10-15T19:44:29.749Z"
+      "extractedCount": 2052,
+      "lastExtracted": "2026-10-15T20:48:25.772Z"
     },
     {
       "id": "src-2",
@@ -178,8 +178,8 @@
       "name": "V2Ray Free Configs",
       "urlOrHandle": "@v2ray_free_conf",
       "enabled": true,
-      "extractedCount": 207,
-      "lastExtracted": "2026-10-15T19:44:29.662Z"
+      "extractedCount": 321,
+      "lastExtracted": "2026-10-15T20:48:25.724Z"
     },
     {
       "id": "src-3",
@@ -187,8 +187,8 @@
       "name": "VPN Ocean (Configs & Proxies)",
       "urlOrHandle": "@vpn_ocean",
       "enabled": true,
-      "extractedCount": 110,
-      "lastExtracted": "2026-10-15T19:44:29.722Z"
+      "extractedCount": 180,
+      "lastExtracted": "2026-10-15T20:48:25.969Z"
     },
     {
       "id": "src-4",
@@ -196,8 +196,8 @@
       "name": "Private VPNs Channel",
       "urlOrHandle": "@PrivateVPNs",
       "enabled": true,
-      "extractedCount": 161,
-      "lastExtracted": "2026-10-15T19:44:29.685Z"
+      "extractedCount": 259,
+      "lastExtracted": "2026-10-15T20:48:25.744Z"
     },
     {
       "id": "src-5",
@@ -205,8 +205,8 @@
       "name": "Proxy MTProto Live",
       "urlOrHandle": "@ProxyMTProto",
       "enabled": true,
-      "extractedCount": 170,
-      "lastExtracted": "2026-10-15T19:37:35.204Z"
+      "extractedCount": 175,
+      "lastExtracted": "2026-10-15T20:44:42.078Z"
     },
     {
       "id": "src-6",
@@ -214,8 +214,8 @@
       "name": "BarryFar All Configs Sub",
       "urlOrHandle": "https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_Sub.txt",
       "enabled": true,
-      "extractedCount": 75958,
-      "lastExtracted": "2026-10-15T19:44:29.394Z"
+      "extractedCount": 124563,
+      "lastExtracted": "2026-10-15T20:48:25.432Z"
     },
     {
       "id": "src-7",
@@ -223,8 +223,8 @@
       "name": "MahdiBland V2Ray Aggregator",
       "urlOrHandle": "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
       "enabled": true,
-      "extractedCount": 44875,
-      "lastExtracted": "2026-10-15T19:44:30.173Z"
+      "extractedCount": 72807,
+      "lastExtracted": "2026-10-15T20:48:26.223Z"
     },
     {
       "id": "src-8",
@@ -232,8 +232,8 @@
       "name": "Epodonios All Configs Sub",
       "urlOrHandle": "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt",
       "enabled": true,
-      "extractedCount": 55909,
-      "lastExtracted": "2026-10-15T19:44:27.994Z"
+      "extractedCount": 90431,
+      "lastExtracted": "2026-10-15T20:48:23.683Z"
     },
     {
       "id": "src-9",
@@ -241,8 +241,8 @@
       "name": "Mineral Nodes Hub",
       "urlOrHandle": "https://raw.githubusercontent.com/LalatinaHub/Mineral/master/result/nodes",
       "enabled": true,
-      "extractedCount": 19241,
-      "lastExtracted": "2026-10-15T19:44:29.892Z"
+      "extractedCount": 29847,
+      "lastExtracted": "2026-10-15T20:48:25.909Z"
     }
   ],
   "forceJoinChannels": [
@@ -262,8 +262,8 @@
       "urlOrHandle": "@akharinkhabar",
       "enabled": true,
       "category": "news",
-      "extractedCount": 93,
-      "lastExtracted": "2026-10-15T19:44:27.140Z"
+      "extractedCount": 101,
+      "lastExtracted": "2026-10-15T20:47:06.086Z"
     },
     {
       "id": "fun-src-2",
@@ -272,7 +272,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 0,
-      "lastExtracted": "2026-10-15T19:44:25.916Z"
+      "lastExtracted": "2026-10-15T20:47:06.069Z"
     },
     {
       "id": "fun-src-3",
@@ -281,7 +281,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 20,
-      "lastExtracted": "2026-10-15T19:44:25.901Z"
+      "lastExtracted": "2026-10-15T20:47:06.177Z"
     },
     {
       "id": "fun-src-4",
@@ -289,8 +289,8 @@
       "urlOrHandle": "@khandehabadd",
       "enabled": true,
       "category": "fun",
-      "extractedCount": 69,
-      "lastExtracted": "2026-10-15T19:44:26.172Z"
+      "extractedCount": 70,
+      "lastExtracted": "2026-10-15T20:47:06.199Z"
     },
     {
       "id": "fun-src-5",
@@ -299,7 +299,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 15,
-      "lastExtracted": "2026-10-15T19:44:25.889Z"
+      "lastExtracted": "2026-10-15T20:47:06.038Z"
     },
     {
       "id": "fun-src-6",
@@ -307,8 +307,8 @@
       "urlOrHandle": "@khabar_fouri",
       "enabled": true,
       "category": "news",
-      "extractedCount": 86,
-      "lastExtracted": "2026-10-15T19:44:25.825Z"
+      "extractedCount": 94,
+      "lastExtracted": "2026-10-15T20:47:06.105Z"
     },
     {
       "id": "fun-src-7",
@@ -316,8 +316,8 @@
       "urlOrHandle": "@Farsna",
       "enabled": true,
       "category": "news",
-      "extractedCount": 80,
-      "lastExtracted": "2026-10-15T19:44:25.803Z"
+      "extractedCount": 86,
+      "lastExtracted": "2026-10-15T20:47:06.161Z"
     },
     {
       "id": "fun-src-8",
@@ -326,7 +326,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 20,
-      "lastExtracted": "2026-10-15T19:44:25.871Z"
+      "lastExtracted": "2026-10-15T20:47:06.054Z"
     },
     {
       "id": "fun-src-9",
@@ -335,7 +335,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 99,
-      "lastExtracted": "2026-10-15T19:44:26.123Z"
+      "lastExtracted": "2026-10-15T20:47:06.397Z"
     },
     {
       "id": "fun-src-10",
@@ -343,8 +343,8 @@
       "urlOrHandle": "@Kafiha",
       "enabled": true,
       "category": "fun",
-      "extractedCount": 85,
-      "lastExtracted": "2026-10-15T19:44:25.854Z"
+      "extractedCount": 99,
+      "lastExtracted": "2026-10-15T20:47:06.017Z"
     },
     {
       "id": "fun-src-11",
@@ -353,7 +353,7 @@
       "enabled": true,
       "category": "news",
       "extractedCount": 2,
-      "lastExtracted": "2026-10-15T19:44:25.806Z"
+      "lastExtracted": "2026-10-15T20:47:06.257Z"
     }
   ],
   "lastPostedFunSourceMap": {
