@@ -1932,14 +1932,16 @@ function isBase64(str: string): boolean {
 function applyBrandingToConfig(rawConfig: string, brandingText: string): string {
   if (!rawConfig) return rawConfig;
   const trimmed = rawConfig.trim();
+  const cleanBrand = (brandingText || 'V2Ray').trim();
   
   try {
     if (trimmed.startsWith('vmess://')) {
       const base64Part = trimmed.substring(8).trim();
       const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
       const parsed = JSON.parse(decoded);
-      parsed.ps = brandingText; // Set name of config (remarks)
-      const encoded = Buffer.from(JSON.stringify(parsed, null, 2)).toString('base64');
+      parsed.ps = cleanBrand; // Set name of config (remarks)
+      // Compact JSON stringify without newlines or multiline spaces for universal V2Ray client compatibility
+      const encoded = Buffer.from(JSON.stringify(parsed)).toString('base64');
       return `vmess://${encoded}`;
     }
 
@@ -1947,19 +1949,19 @@ function applyBrandingToConfig(rawConfig: string, brandingText: string): string 
       const payload = trimmed.replace('npv://', '').split('#')[0];
       const decoded = Buffer.from(payload, 'base64').toString('utf8');
       const json = JSON.parse(decoded);
-      json.remarks = brandingText;
-      if (json.configName) json.configName = brandingText;
+      json.remarks = cleanBrand;
+      if (json.configName) json.configName = cleanBrand;
       const encoded = Buffer.from(JSON.stringify(json)).toString('base64');
       return `npv://${encoded}`;
     }
 
     if (trimmed.startsWith('vless://') || trimmed.startsWith('trojan://') || trimmed.startsWith('ss://')) {
-      // Split by hash to update remarks
+      // Split by hash to update remarks cleanly
       const hashIndex = trimmed.lastIndexOf('#');
       if (hashIndex !== -1) {
-        return trimmed.substring(0, hashIndex + 1) + encodeURIComponent(brandingText);
+        return trimmed.substring(0, hashIndex + 1) + cleanBrand;
       } else {
-        return trimmed + '#' + encodeURIComponent(brandingText);
+        return trimmed + '#' + cleanBrand;
       }
     }
   } catch (e) {
@@ -15988,16 +15990,25 @@ async function handleBotUpdate(update: any) {
       let working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
         
       if (working.length < qty) {
-        // Trigger bulk scrape if total configs in DB is low
-        if (db.configs.length < qty * 3) {
-          try { await triggerBulkScrape(); } catch (_) {}
-        }
-        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+        // Scrape fresh configs if current green working count is below requested pack size
+        try { await triggerBulkScrape(); } catch (_) {}
+
+        let untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
         if (untested.length > 0) {
-          const testIds = untested.slice(0, Math.max(80, qty * 3)).map(c => c.id);
+          const testIds = untested.slice(0, Math.max(120, qty * 8)).map(c => c.id);
           await testConfigsBatch(testIds);
         }
         working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+
+        // Run second test batch if needed
+        if (working.length < qty) {
+          untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+          if (untested.length > 0) {
+            const testIds = untested.slice(0, Math.max(120, qty * 8)).map(c => c.id);
+            await testConfigsBatch(testIds);
+          }
+          working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+        }
       }
 
       if (working.length === 0) {
