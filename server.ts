@@ -4474,19 +4474,8 @@ async function testConfigsBatch(ids: string[]) {
 
 /**
  * Triggers bulk extraction across all active sources
- * Automatically purges previous configs before loading fresh ones as requested by user
  */
 async function triggerBulkScrape(): Promise<number> {
-  // Automatically purge/flush previous configs before extracting fresh new ones
-  allowEmptyConfigsWipe = true;
-  const countBefore = db.configs.length;
-  db.configs = [];
-  db.postedConfigSignatures = [];
-  saveDatabase(true);
-  if (countBefore > 0) {
-    addLog('info', `🧹 تخلیه خودکار آرشیو قبلی (${countBefore} کانفیگ) جهت جایگزینی با کانفیگ‌های تازه استخراج شده...`);
-  }
-
   const enabledSources = db.sources.filter(s => s.enabled);
   const results = await Promise.allSettled(enabledSources.map(src => scrapeSource(src)));
   let totalExtracted = 0;
@@ -15984,29 +15973,17 @@ async function handleBotUpdate(update: any) {
     if (callbackData && callbackData.startsWith('v2ray_qty_')) {
       const qty = parseInt(callbackData.split('_')[2]) || 3;
       
-      await answerCallback('در حال دریافت و آماده‌سازی کانفیگ‌ها...');
+      await answerCallback('در حال آماده‌سازی کانفیگ‌های تست‌شده...');
       
       const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss'];
       let working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
         
-      if (working.length < qty) {
-        // Scrape fresh configs if current green working count is below requested pack size
-        try { await triggerBulkScrape(); } catch (_) {}
-
-        let untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+      // If no working configs exist yet, attempt a fast batch test on untested ones
+      if (working.length === 0) {
+        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
         if (untested.length > 0) {
-          const testIds = untested.slice(0, Math.max(120, qty * 8)).map(c => c.id);
+          const testIds = untested.slice(0, 100).map(c => c.id);
           await testConfigsBatch(testIds);
-        }
-        working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
-
-        // Run second test batch if needed
-        if (working.length < qty) {
-          untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
-          if (untested.length > 0) {
-            const testIds = untested.slice(0, Math.max(120, qty * 8)).map(c => c.id);
-            await testConfigsBatch(testIds);
-          }
           working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
         }
       }
@@ -16014,7 +15991,7 @@ async function handleBotUpdate(update: any) {
       if (working.length === 0) {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده و سبز در دیتابیس موجود نیست. سیستم هم‌اکنون در حال بررسی خودکار موارد جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
+          text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده و سبز در دیتابیس موجود نیست. لطفاً چند دقیقه دیگر پس از پایش خودکار دوباره امتحان کنید.'
         });
         return;
       }
