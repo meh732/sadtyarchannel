@@ -16014,8 +16014,8 @@ async function handleBotUpdate(update: any) {
       const allBrandedList = selected.map(conf => applyBrandingToConfig(conf.raw, db.settings.branding));
       const fullPackTxt = allBrandedList.join('\n');
 
-      // Send attached .txt file containing ALL requested configs for packs of 15+
-      if (qty >= 15 || selected.length >= 15) {
+      // Send attached .txt file containing ALL requested configs for any pack size
+      if (selected.length > 0) {
         const packFilename = `V2Ray_Pack_${selected.length}_Configs.txt`;
         const fileCaption = `📦 <b>فایل متنی شامل تمامی ${selected.length} کانفیگ اختصاصی V2Ray</b>\n\n🆔 ${escapeHtml(db.settings.branding)}`;
         await sendTelegramDocument({
