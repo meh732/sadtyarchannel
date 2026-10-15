@@ -2869,10 +2869,116 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
   }
 }
 
-// --- Connection Port Tester ---
+// --- Connection Port Tester with Iran Relay Proxy Support ---
+async function checkPortViaProxy(
+  proxyUri: string,
+  targetHost: string,
+  targetPort: number,
+  timeout = 3800
+): Promise<{ working: boolean; latency: number }> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    let resolved = false;
+
+    const finish = (working: boolean) => {
+      if (resolved) return;
+      resolved = true;
+      try { socket.destroy(); } catch (e) {}
+      clearTimeout(timer);
+      const latency = Date.now() - start;
+      resolve({ working, latency: working ? Math.max(10, latency) : 999 });
+    };
+
+    const timer = setTimeout(() => finish(false), timeout + 250);
+
+    let isSocks = proxyUri.startsWith('socks5://') || proxyUri.startsWith('socks://');
+    let cleanUri = proxyUri.replace(/^(socks5?|http):\/\//i, '');
+    let auth = '';
+    let hostPort = cleanUri;
+    if (cleanUri.includes('@')) {
+      const parts = cleanUri.split('@');
+      auth = parts[0];
+      hostPort = parts[1];
+    }
+    const hostPortParts = hostPort.split(':');
+    const pHost = hostPortParts[0];
+    const pPort = parseInt(hostPortParts[1], 10) || (isSocks ? 1080 : 8080);
+
+    if (!pHost) return finish(false);
+
+    const socket = new net.Socket();
+    socket.setTimeout(timeout);
+
+    socket.on('error', () => finish(false));
+    socket.on('timeout', () => finish(false));
+    socket.on('close', () => finish(false));
+
+    try {
+      if (isSocks) {
+        socket.connect(pPort, pHost, () => {
+          socket.write(Buffer.from([0x05, 0x01, 0x00]));
+          socket.once('data', (data) => {
+            if (data.length >= 2 && data[0] === 0x05) {
+              const hostBuf = Buffer.from(targetHost);
+              const req = Buffer.alloc(4 + 1 + hostBuf.length + 2);
+              req[0] = 0x05;
+              req[1] = 0x01;
+              req[2] = 0x00;
+              req[3] = 0x03;
+              req[4] = hostBuf.length;
+              hostBuf.copy(req, 5);
+              req.writeUInt16BE(targetPort, 5 + hostBuf.length);
+              socket.write(req);
+              socket.once('data', (rep) => {
+                if (rep.length >= 2 && rep[1] === 0x00) {
+                  finish(true);
+                } else {
+                  finish(false);
+                }
+              });
+            } else {
+              finish(false);
+            }
+          });
+        });
+      } else {
+        socket.connect(pPort, pHost, () => {
+          let connectHeader = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n`;
+          if (auth) {
+            const authBase64 = Buffer.from(auth).toString('base64');
+            connectHeader += `Proxy-Authorization: Basic ${authBase64}\r\n`;
+          }
+          connectHeader += `\r\n`;
+          socket.write(connectHeader);
+          socket.once('data', (data) => {
+            const resp = data.toString('utf8');
+            if (resp.includes('200')) {
+              finish(true);
+            } else {
+              finish(false);
+            }
+          });
+        });
+      }
+    } catch (e) {
+      finish(false);
+    }
+  });
+}
+
 async function checkPort(host: string, port: number, timeout = 3800): Promise<{ working: boolean; latency: number }> {
   if (!host || !port || isNaN(port)) {
     return { working: false, latency: 999 };
+  }
+
+  // If Iran relay proxy is configured in system settings, test port via proxy first!
+  if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
+    try {
+      const proxyCheck = await checkPortViaProxy(db.settings.iranRelayProxy.trim(), host, port, timeout);
+      if (proxyCheck.working) {
+        return proxyCheck;
+      }
+    } catch (_) {}
   }
 
   const targetHost = await resolveHostFast(host);
@@ -7754,6 +7860,17 @@ async function executeConfigsAutoPost(
     const isChConfigValid = (c: ConfigItem) => {
       if (c[targetChannelKey]) return false;
       if (isConfigAlreadyOnChannelOrHistory(c, liveSnapshot, channelTargetNum)) return false;
+      
+      // STRICT REQUIREMENT FOR CHANNEL 1: Only post configs extracted or tested within the last 24 hours
+      if (!isCh2) {
+        const now = Date.now();
+        const extractedTime = c.extractedAt ? new Date(c.extractedAt).getTime() : 0;
+        const checkedTime = c.lastChecked ? new Date(c.lastChecked).getTime() : 0;
+        const newestTime = Math.max(extractedTime, checkedTime);
+        if (newestTime > 0 && (now - newestTime) > 24 * 60 * 60 * 1000) {
+          return false;
+        }
+      }
       return true;
     };
 
@@ -7915,14 +8032,14 @@ async function executeConfigsAutoPost(
     if (configLimit > 0) {
       let unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
 
-      // Quality control: If working configs are fewer than required, auto-scrape fresh subscriptions and live-test a batch
+      // Quality control: If working green configs are fewer than required, auto-scrape fresh sources and live-test
       if (unpostedWorking.length < configLimit) {
-        addLog('info', `موجودی کانفیگ‌های تست‌شده و سالم (${unpostedWorking.length} عدد) کمتر از سقف مجاز (${configLimit} عدد) است. در حال استخراج خودکار و تست اتصال فوری...`);
+        addLog('info', `موجودی کانفیگ‌های تست‌شده و سبز (${unpostedWorking.length} عدد) کمتر از سقف مجاز (${configLimit} عدد) است. در حال استخراج خودکار و تست اتصال فوری...`);
         try {
           await triggerBulkScrape();
           const untestedIds = db.configs
             .filter(c => c.status === 'untested' && isChConfigValid(c))
-            .slice(0, Math.max(50, configLimit * 3))
+            .slice(0, Math.max(80, configLimit * 4))
             .map(c => c.id);
           if (untestedIds.length > 0) {
             await testConfigsBatch(untestedIds);
@@ -7933,49 +8050,23 @@ async function executeConfigsAutoPost(
         unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
       }
 
-      // STRICT SPEED & QUALITY SORTING: Fastest ping latency first, then latest tested
+      // If still fewer than configLimit, recycle working green configs sorted by least recently posted
+      if (unpostedWorking.length < configLimit) {
+        const recycledWorking = db.configs.filter(c => c.status === 'working' && (!isCh2 ? isChConfigValid(c) : true));
+        unpostedWorking = Array.from(new Set([...unpostedWorking, ...recycledWorking]));
+      }
+
+      // STRICT SPEED & QUALITY SORTING: Lowest ping latency first (green working configs priority)
       unpostedWorking.sort((a, b) => {
-        const latA = (a.latency && a.latency > 0) ? a.latency : 999;
-        const latB = (b.latency && b.latency > 0) ? b.latency : 999;
+        const latA = (typeof a.latency === 'number' && a.latency > 0) ? a.latency : 9999;
+        const latB = (typeof b.latency === 'number' && b.latency > 0) ? b.latency : 9999;
         if (latA !== latB) return latA - latB;
         const dateA = a.lastChecked ? new Date(a.lastChecked).getTime() : 0;
         const dateB = b.lastChecked ? new Date(b.lastChecked).getTime() : 0;
         return dateB - dateA;
       });
 
-      // When selecting configs, prioritize fast working configs that fit cleanly inside message limits
-      if (unpostedWorking.length >= configLimit) {
-        if (!isCh2 && !isCombinedPost && configLimit === 20) {
-          // For Channel 1 pure 20-configs drop: pick 20 fastest working configs with clean URI lengths
-          const compactWorking = unpostedWorking.filter(c => (c.raw || '').length <= 250);
-          const longerWorking = unpostedWorking.filter(c => (c.raw || '').length > 250);
-          const prioritized = [...compactWorking, ...longerWorking];
-          selectedConfigs = prioritized.slice(0, 20);
-        } else if (isCombinedPost && configLimit === 5) {
-          // For Fun + 5 Configs: pick 5 fastest compact configs so caption stays comfortably under 1024 limit
-          const compactWorking = unpostedWorking.filter(c => (c.raw || '').length <= 190);
-          const longerWorking = unpostedWorking.filter(c => (c.raw || '').length > 190);
-          const prioritized = [...compactWorking, ...longerWorking];
-          selectedConfigs = prioritized.slice(0, 5);
-        } else {
-          selectedConfigs = unpostedWorking.slice(0, configLimit);
-        }
-      } else {
-        const unpostedUntested = db.configs.filter(c => c.status === 'untested' && isChConfigValid(c));
-        selectedConfigs = [...unpostedWorking, ...unpostedUntested.slice(0, configLimit - unpostedWorking.length)];
-      }
-
-      // If still fewer than configLimit, recycle working configs sorted by least recently posted to guarantee full count
-      if (selectedConfigs.length < configLimit) {
-        const recyclable = db.configs
-          .filter(c => c.status === 'working' && !selectedConfigs.some(sc => sc.id === c.id))
-          .sort((a, b) => {
-            const dateA = a[targetChannelKey] && a.lastChecked ? new Date(a.lastChecked).getTime() : 0;
-            const dateB = b[targetChannelKey] && b.lastChecked ? new Date(b.lastChecked).getTime() : 0;
-            return dateA - dateB;
-          });
-        selectedConfigs.push(...recyclable.slice(0, configLimit - selectedConfigs.length));
-      }
+      selectedConfigs = unpostedWorking.slice(0, configLimit);
     }
 
     // Get requested proxies count
@@ -8512,16 +8603,14 @@ async function executeTechNewsAutoPost(channelTargetNum: 1 | 2 = 1, customTarget
 
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
-    // Check if any selected news item has a video or image to attach
-    const itemWithVideo = selectedNews.find(n => !!n.videoUrl);
-    const itemWithImage = selectedNews.find(n => !!n.imageUrl);
-
+    // Attach media ONLY if the main selected item itself has a valid video or image
+    const mainNews = selectedNews[0];
     const postResult = await sendTelegramPostWithMedia({
       chatId: channelHandle,
       text,
-      videoUrl: itemWithVideo?.videoUrl,
-      imageUrl: itemWithImage?.imageUrl,
-      mediaType: itemWithVideo?.mediaType || itemWithImage?.mediaType,
+      videoUrl: mainNews?.videoUrl,
+      imageUrl: mainNews?.imageUrl,
+      mediaType: mainNews?.mediaType,
       replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
       silent: !!settings.silentMode
     });
@@ -8709,16 +8798,14 @@ async function executeTechTricksAutoPost(channelTargetNum: 1 | 2 = 1, customTarg
 
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
-    // Check if any selected trick item has a video or image to attach
-    const itemWithVideo = selectedTricks.find(n => !!n.videoUrl);
-    const itemWithImage = selectedTricks.find(n => !!n.imageUrl);
-
+    // Attach media ONLY if the main selected trick item itself has a valid video or image
+    const mainTrick = selectedTricks[0];
     const postResult = await sendTelegramPostWithMedia({
       chatId: channelHandle,
       text,
-      videoUrl: itemWithVideo?.videoUrl,
-      imageUrl: itemWithImage?.imageUrl,
-      mediaType: itemWithVideo?.mediaType || itemWithImage?.mediaType,
+      videoUrl: mainTrick?.videoUrl,
+      imageUrl: mainTrick?.imageUrl,
+      mediaType: mainTrick?.mediaType,
       replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
       silent: !!settings.silentMode
     });
@@ -9007,16 +9094,14 @@ async function executeAiPromptsAutoPost(channelTargetNum: 1 | 2 = 1, customTarge
 
     const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
     
-    // Check if any selected prompt item has a video or image to attach
-    const itemWithVideo = selectedPrompts.find(n => !!n.videoUrl);
-    const itemWithImage = selectedPrompts.find(n => !!n.imageUrl);
-
+    // Attach media ONLY if the main selected prompt item itself has a valid video or image
+    const mainPrompt = selectedPrompts[0];
     const postResult = await sendTelegramPostWithMedia({
       chatId: channelHandle,
       text,
-      videoUrl: itemWithVideo?.videoUrl,
-      imageUrl: itemWithImage?.imageUrl,
-      mediaType: itemWithVideo?.mediaType || itemWithImage?.mediaType,
+      videoUrl: mainPrompt?.videoUrl,
+      imageUrl: mainPrompt?.imageUrl,
+      mediaType: mainPrompt?.mediaType,
       replyMarkup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
       silent: !!settings.silentMode
     });
@@ -15797,43 +15882,59 @@ async function handleBotUpdate(update: any) {
     if (callbackData && callbackData.startsWith('v2ray_qty_')) {
       const qty = parseInt(callbackData.split('_')[2]) || 3;
       
-      await answerCallback('در حال آماده‌سازی و تغییر نام کانفیگ...');
+      await answerCallback('در حال دریافت و آماده‌سازی کانفیگ‌ها...');
       
-      let list = [];
-
       const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss'];
-      let available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+      let working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
         
-      if (available.length < qty) {
+      if (working.length < qty) {
+        // Trigger bulk scrape if total configs in DB is low
+        if (db.configs.length < qty * 3) {
+          try { await triggerBulkScrape(); } catch (_) {}
+        }
         const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
         if (untested.length > 0) {
-          const testIds = untested.slice(0, qty * 2).map(c => c.id);
-          testConfigsBatch(testIds).catch(console.error);
+          const testIds = untested.slice(0, Math.max(80, qty * 3)).map(c => c.id);
+          await testConfigsBatch(testIds);
         }
+        working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
       }
 
-      if (available.length < qty) {
-        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
-        available = [...available, ...untested];
-      }
-        
-      if (available.length === 0) {
-        available = db.configs.filter(c => allowedProtocols.includes(c.protocol) && c.status !== 'failed');
-      }
-        
-      list = available.length > 0 ? available : db.configs.filter(c => allowedProtocols.includes(c.protocol)).slice(0, 50);
-
-      if (list.length === 0) {
+      if (working.length === 0) {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده فعال در دیتابیس موجود نیست. سیستم هم‌اکنون در حال بررسی خودکار موارد جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
+          text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده و سبز در دیتابیس موجود نیست. سیستم هم‌اکنون در حال بررسی خودکار موارد جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
         });
         return;
       }
 
-      // Shuffle and pick requested quantity
-      const shuffled = [...list].sort(() => 0.5 - Math.random());
-      const selected = shuffled.slice(0, qty);
+      // STRICT LATENCY SORTING: Lowest ping latency first (fastest green configs priority)
+      working.sort((a, b) => {
+        const latA = (typeof a.latency === 'number' && a.latency > 0) ? a.latency : 9999;
+        const latB = (typeof b.latency === 'number' && b.latency > 0) ? b.latency : 9999;
+        if (latA !== latB) return latA - latB;
+        const dateA = a.lastChecked ? new Date(a.lastChecked).getTime() : 0;
+        const dateB = b.lastChecked ? new Date(b.lastChecked).getTime() : 0;
+        return dateB - dateA;
+      });
+
+      const selected = working.slice(0, Math.min(qty, working.length));
+
+      // Generate all branded configs for text file attachment
+      const allBrandedList = selected.map(conf => applyBrandingToConfig(conf.raw, db.settings.branding));
+      const fullPackTxt = allBrandedList.join('\n');
+
+      // Send attached .txt file containing ALL requested configs for packs of 15+
+      if (qty >= 15 || selected.length >= 15) {
+        const packFilename = `V2Ray_Pack_${selected.length}_Configs.txt`;
+        const fileCaption = `📦 <b>فایل متنی شامل تمامی ${selected.length} کانفیگ اختصاصی V2Ray</b>\n\n🆔 ${escapeHtml(db.settings.branding)}`;
+        await sendTelegramDocument({
+          chatId,
+          content: fullPackTxt,
+          filename: packFilename,
+          caption: fileCaption
+        });
+      }
 
       // Handle large batch packs (e.g. 10, 15, 30, 50) cleanly with expandable quotes
       if (selected.length > 5) {
@@ -15841,9 +15942,8 @@ async function handleBotUpdate(update: any) {
         intro += `🔔 تعداد کانفیگ‌ها: <b>${selected.length} عدد</b>\n`;
         intro += `⚡️ پشتیبانی کامل: همراه اول، ایرانسل، مخابرات و رایتل\n`;
         intro += `🏷️ برندینگ انحصاری: <code>${escapeHtml(db.settings.branding)}</code>\n\n`;
-        intro += `💡 <b>چرا استفاده از این پک ${selected.length}تایی برتر است؟</b>\n`;
-        intro += `با توجه به تفاوت‌های شبکه اپراتورها و فیلترینگ منطقه‌ای، تمام کانفیگ‌ها در کادر خلاصه‌شده آکاردئونی زیک قرار داده شده‌اند تا پیام طولانی نشود.\n\n`;
-        intro += `👇 <b>جهت کپی، کافیست روی کادر زیر لمس کنید:</b>`;
+        intro += `📁 <i>فایل متنی شامل تمامی ${selected.length} کانفیگ نیز به صورت فایل ضمیمه ارسال گردید.</i>\n\n`;
+        intro += `👇 <b>جهت کپی، کافیست روی کادرهای زیر لمس کنید:</b>`;
 
         const sponsorBtn = getSponsorChannelInlineButton();
         const inlineKeyboard = sponsorBtn ? {
@@ -15857,7 +15957,7 @@ async function handleBotUpdate(update: any) {
           reply_markup: inlineKeyboard
         });
 
-        // Split into chunks of 15 configs so each fits nicely inside a expandable quote
+        // Split into chunks of 15 configs so each fits nicely inside an expandable quote
         const CHUNK_SIZE = 15;
         const totalChunks = Math.ceil(selected.length / CHUNK_SIZE);
         for (let i = 0; i < selected.length; i += CHUNK_SIZE) {
@@ -15877,7 +15977,7 @@ async function handleBotUpdate(update: any) {
             inline_keyboard: [
               ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : []),
               [
-                { text: '🔄 دریافت مجدد پک ۵۰ تایی', callback_data: 'v2ray_qty_50' },
+                { text: `🔄 دریافت مجدد پک ${qty} تایی`, callback_data: `v2ray_qty_${qty}` },
                 { text: '🔙 منوی اصلی', callback_data: 'back_to_main' }
               ]
             ]
