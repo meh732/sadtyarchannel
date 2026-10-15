@@ -1709,50 +1709,49 @@ function getGeminiClient(): GoogleGenAI | null {
  * Executes a Gemini prompt with automatic multi-model fallback and graceful error handling.
  * Handles temporary spikes in demand (503 UNAVAILABLE) and rate limits (429) cleanly without crashes.
  */
-let cachedWorkingGeminiModel = 'gemini-2.5-flash';
-
-const GEMINI_MODEL_CANDIDATES = [
-  'gemini-2.5-flash',
-  'gemini-3.8-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-1.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-pro'
-];
-
-/**
- * Executes a Gemini prompt with automatic dynamic model discovery and fallback.
- * Automatically tries next active model on 404, deprecated models, 503, or 429 errors.
- */
 async function generateGeminiContentWithFallback(
   ai: GoogleGenAI,
   prompt: string,
-  preferredModel?: string,
-  fallbackModels?: string[]
+  preferredModel = 'gemini-2.5-flash',
+  fallbackModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite']
 ): Promise<string | null> {
-  const primary = preferredModel || cachedWorkingGeminiModel || 'gemini-2.5-flash';
-  const customFallbacks = fallbackModels || GEMINI_MODEL_CANDIDATES;
-  const candidates = Array.from(new Set([primary, ...customFallbacks, ...GEMINI_MODEL_CANDIDATES]));
-
-  for (let i = 0; i < candidates.length; i++) {
-    const model = candidates[i];
+  const models = [preferredModel, ...fallbackModels.filter(m => m !== preferredModel)];
+  
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
     try {
       const response = await ai.models.generateContent({
         model,
         contents: prompt,
       });
       if (response && response.text) {
-        cachedWorkingGeminiModel = model;
         return response.text;
       }
     } catch (err: any) {
       const errMsg = (err?.message || err?.error?.message || (typeof err === 'string' ? err : JSON.stringify(err))).trim();
-      if (i < candidates.length - 1) {
-        console.warn(`[Gemini AI] Model '${model}' unavailable (${errMsg.slice(0, 80)}). Auto-switching to '${candidates[i + 1]}'...`);
-        await new Promise(res => setTimeout(res, 300));
-        continue;
+      const isTemporaryDemandSpike = errMsg.includes('503') || 
+        errMsg.includes('UNAVAILABLE') || 
+        errMsg.includes('high demand') ||
+        errMsg.includes('experiencing high demand');
+      const isRateLimit = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota');
+
+      if (isTemporaryDemandSpike || isRateLimit) {
+        if (i < models.length - 1) {
+          console.warn(`[Gemini AI] Model '${model}' is temporarily busy or experiencing high demand. Switching to '${models[i + 1]}'`);
+          await new Promise(res => setTimeout(res, 600));
+          continue;
+        } else {
+          console.warn(`[Gemini AI] Gemini models currently experiencing high demand. Gracefully activating curated fallback content.`);
+          return null;
+        }
+      }
+
+      // Other errors
+      if (i < models.length - 1) {
+        console.warn(`[Gemini AI] Model '${model}' error: ${errMsg.slice(0, 100)}. Trying '${models[i + 1]}'`);
+        await new Promise(res => setTimeout(res, 600));
       } else {
-        console.warn(`[Gemini AI] All Gemini candidate models failed (${errMsg.slice(0, 80)}).`);
+        console.warn(`[Gemini AI] Prompt generation unavailable via AI (${errMsg.slice(0, 100)}). Using curated fallback.`);
       }
     }
   }
@@ -1932,16 +1931,14 @@ function isBase64(str: string): boolean {
 function applyBrandingToConfig(rawConfig: string, brandingText: string): string {
   if (!rawConfig) return rawConfig;
   const trimmed = rawConfig.trim();
-  const cleanBrand = (brandingText || 'V2Ray').trim();
   
   try {
     if (trimmed.startsWith('vmess://')) {
       const base64Part = trimmed.substring(8).trim();
       const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
       const parsed = JSON.parse(decoded);
-      parsed.ps = cleanBrand; // Set name of config (remarks)
-      // Compact JSON stringify without newlines or multiline spaces for universal V2Ray client compatibility
-      const encoded = Buffer.from(JSON.stringify(parsed)).toString('base64');
+      parsed.ps = brandingText; // Set name of config (remarks)
+      const encoded = Buffer.from(JSON.stringify(parsed, null, 2)).toString('base64');
       return `vmess://${encoded}`;
     }
 
@@ -1949,19 +1946,19 @@ function applyBrandingToConfig(rawConfig: string, brandingText: string): string 
       const payload = trimmed.replace('npv://', '').split('#')[0];
       const decoded = Buffer.from(payload, 'base64').toString('utf8');
       const json = JSON.parse(decoded);
-      json.remarks = cleanBrand;
-      if (json.configName) json.configName = cleanBrand;
+      json.remarks = brandingText;
+      if (json.configName) json.configName = brandingText;
       const encoded = Buffer.from(JSON.stringify(json)).toString('base64');
       return `npv://${encoded}`;
     }
 
     if (trimmed.startsWith('vless://') || trimmed.startsWith('trojan://') || trimmed.startsWith('ss://')) {
-      // Split by hash to update remarks cleanly
+      // Split by hash to update remarks
       const hashIndex = trimmed.lastIndexOf('#');
       if (hashIndex !== -1) {
-        return trimmed.substring(0, hashIndex + 1) + cleanBrand;
+        return trimmed.substring(0, hashIndex + 1) + encodeURIComponent(brandingText);
       } else {
-        return trimmed + '#' + cleanBrand;
+        return trimmed + '#' + encodeURIComponent(brandingText);
       }
     }
   } catch (e) {
@@ -2545,17 +2542,30 @@ function buildXrayConfig(rawConfig: string, localPort: number): { configJson: an
   if (db.settings.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
     const relayUri = db.settings.iranRelayProxy.trim();
     try {
-      const { pHost, pPort, user, pass } = parseProxyUri(relayUri);
-      if (pHost && pPort) {
-        const isTrueSocks = cachedIranProxyProtocol === 'socks5';
+      const isSocks = relayUri.startsWith('socks5://') || relayUri.startsWith('socks://');
+      const cleanRelay = relayUri.replace(/^(socks5?|http):\/\//i, '');
+      let auth = '';
+      let hostPort = cleanRelay;
+      if (cleanRelay.includes('@')) {
+        [auth, hostPort] = cleanRelay.split('@');
+      }
+      const [rHost, rPortStr] = hostPort.split(':');
+      const rPort = parseInt(rPortStr, 10);
+      
+      if (rHost && rPort) {
+        let user = '', pass = '';
+        if (auth.includes(':')) {
+          [user, pass] = auth.split(':');
+        }
+        
         const relayOutbound: any = {
           tag: 'iran_relay',
-          protocol: isTrueSocks ? 'socks' : 'http',
+          protocol: isSocks ? 'socks' : 'http',
           settings: {
             servers: [
               {
-                address: pHost,
-                port: pPort,
+                address: rHost,
+                port: rPort,
                 users: (user || pass) ? [{ user: user || '', pass: pass || '' }] : undefined
               }
             ]
@@ -2648,18 +2658,18 @@ function cleanupCheckingStates() {
 cleanupCheckingStates();
 
 /**
- * Performs real-world client handshake verification of a configuration using Xray core and curl SOCKS5
+ * Performs real-world client handshake verification of a configuration using Xray and curl SOCKS5
  */
 function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   return new Promise((resolve) => {
-    const localPort = Math.floor(Math.random() * 20000) + 20000;
+    const localPort = Math.floor(Math.random() * 10000) + 15000;
     const result = buildXrayConfig(rawConfig, localPort);
     if (!result) {
       return resolve({ working: false, latency: 999 });
     }
 
     const { configJson } = result;
-    const configPath = path.join(process.cwd(), `bin/xray_config_${Date.now()}_${localPort}.json`);
+    const configPath = path.join(process.cwd(), `bin/xray_config_${Date.now()}_${Math.floor(Math.random() * 10000)}.json`);
     
     try {
       fs.writeFileSync(configPath, JSON.stringify(configJson, null, 2));
@@ -2694,7 +2704,7 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
 
     const globalTimeout = setTimeout(() => {
       finish(false, 999);
-    }, 5500);
+    }, 12000);
 
     try {
       child = spawn(xrayPath, ['-config', configPath], { stdio: 'ignore' });
@@ -2706,9 +2716,9 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
     const curlTimer = setTimeout(() => {
       if (isFinished) return;
 
-      const curlCmd1 = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://connectivitycheck.gstatic.com/generate_204 --max-time 4`;
+      const curlCmd1 = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://connectivitycheck.gstatic.com/generate_204 --max-time 6`;
       
-      exec(curlCmd1, { timeout: 4500 }, (error, stdout) => {
+      exec(curlCmd1, { timeout: 6500 }, (error, stdout) => {
         if (isFinished) return;
 
         if (!error && stdout) {
@@ -2716,28 +2726,28 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
           const httpCode = parseInt(parts[0], 10);
           const timeStartTransfer = parseFloat(parts[1]) || 0;
           if ([200, 204, 301, 302].includes(httpCode)) {
-            const latencyMs = Math.round(timeStartTransfer * 1000) || 120;
+            const latencyMs = Math.round(timeStartTransfer * 1000) || 50;
             return finish(true, latencyMs);
           }
         }
 
-        // Fallback target: Cloudflare 204
-        const curlCmd2 = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" http://cp.cloudflare.com/generate_204 --max-time 3`;
-        exec(curlCmd2, { timeout: 3500 }, (error2, stdout2) => {
+        // Fallback target: HTTPS Google
+        const curlCmd2 = `curl -x socks5h://127.0.0.1:${localPort} -s -o /dev/null -w "%{http_code}:%{time_starttransfer}" https://www.google.com/generate_204 --max-time 6`;
+        exec(curlCmd2, { timeout: 6500 }, (error2, stdout2) => {
           if (isFinished) return;
           if (!error2 && stdout2) {
             const parts = stdout2.trim().split(':');
             const httpCode = parseInt(parts[0], 10);
             const timeStartTransfer = parseFloat(parts[1]) || 0;
             if ([200, 204, 301, 302].includes(httpCode)) {
-              const latencyMs = Math.round(timeStartTransfer * 1000) || 150;
+              const latencyMs = Math.round(timeStartTransfer * 1000) || 50;
               return finish(true, latencyMs);
             }
           }
           finish(false, 999);
         });
       });
-    }, 250);
+    }, 400);
   });
 }
 
@@ -2824,8 +2834,8 @@ function checkTlsHandshake(host: string, port: number, sni: string, timeout = 35
 }
 
 /**
- * Performs deep, real-world protocol verification of a configuration using Xray core and HTTP 204 connectivity test
- * Chained through the Iran Relay Proxy if configured in settings
+ * Performs fast, accurate TCP/TLS port ping verification of a configuration
+ * Matches the standard TCP Ping behavior of V2Ray clients (v2rayN, v2rayNG, Nekoray)
  */
 async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   try {
@@ -2834,23 +2844,42 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // 1. Try deep Xray protocol verification
-    const xrayRes = await checkConfigWithXray(rawConfig);
-    if (xrayRes.working) {
-      return xrayRes;
-    }
-
-    // 2. Fallback to direct / proxy port reachability check if Xray proxy timed out
-    const isRelayActive = Boolean(db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim());
-    if (isRelayActive) {
-      const portCheck = await checkPortViaProxy(db.settings.iranRelayProxy.trim(), details.host, details.port, 3000);
+    // STRICT ROUTING VIA IRAN RELAY PROXY:
+    // When an Iran proxy is configured, ALL verification runs strictly through the Iran proxy
+    if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
+      const proxyUri = db.settings.iranRelayProxy.trim();
+      const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500);
       if (portCheck.working) {
         return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
       }
-    } else {
-      const portCheck = await checkPort(details.host, details.port, 3000);
-      if (portCheck.working) {
-        return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
+      if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
+        const sniCheck = await checkPortViaProxy(proxyUri, details.sni.trim(), details.port, 3500);
+        if (sniCheck.working) {
+          return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
+        }
+      }
+      return { working: false, latency: 999 };
+    }
+
+    // 1. Fast direct TCP socket check to destination host/IP (foreign server fallback)
+    const portCheck = await checkPort(details.host, details.port, 3800);
+    if (portCheck.working) {
+      return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
+    }
+
+    // 2. If destination host was an unreachable IP or CDN front, but SNI contains a valid domain, test SNI
+    if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
+      const sniCheck = await checkPort(details.sni.trim(), details.port, 3500);
+      if (sniCheck.working) {
+        return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
+      }
+    }
+
+    // 3. Fallback: If TLS is enabled, verify via TLS handshake
+    if (details.tls) {
+      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 3500);
+      if (tlsCheck.working) {
+        return { working: true, latency: Math.max(10, Math.round(tlsCheck.latency)) };
       }
     }
 
@@ -15986,36 +16015,50 @@ async function handleBotUpdate(update: any) {
     if (callbackData && callbackData.startsWith('v2ray_qty_')) {
       const qty = parseInt(callbackData.split('_')[2]) || 3;
       
-      await answerCallback('در حال آماده‌سازی کانفیگ‌های سبز دیتابیس...');
+      await answerCallback('در حال دریافت و آماده‌سازی کانفیگ‌ها...');
       
       const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss'];
+      let working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+        
+      if (working.length < qty) {
+        // Trigger bulk scrape if total configs in DB is low
+        if (db.configs.length < qty * 3) {
+          try { await triggerBulkScrape(); } catch (_) {}
+        }
+        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+        if (untested.length > 0) {
+          const testIds = untested.slice(0, Math.max(80, qty * 3)).map(c => c.id);
+          await testConfigsBatch(testIds);
+        }
+        working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+      }
 
-      // STRICT LIVE POOL: Get ONLY verified working green configs from actual panel database
-      let workingConfigs = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
-      workingConfigs.sort((a, b) => {
-        const latA = (typeof a.latency === 'number' && a.latency > 0) ? a.latency : 9999;
-        const latB = (typeof b.latency === 'number' && b.latency > 0) ? b.latency : 9999;
-        if (latA !== latB) return latA - latB;
-        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
-      });
-
-      if (workingConfigs.length === 0) {
+      if (working.length === 0) {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: '❌ در حال حاضر هیچ کانفیگ سبز و تست‌شده‌ای در پنل شما موجود نیست. لطفاً ابتدا در پنل وب کانفیگ‌ها را پایش کنید.'
+          text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده و سبز در دیتابیس موجود نیست. سیستم هم‌اکنون در حال بررسی خودکار موارد جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
         });
         return;
       }
 
-      // Deliver up to requested quantity from actual green database configs
-      const selected = workingConfigs.slice(0, Math.min(qty, workingConfigs.length));
+      // STRICT LATENCY SORTING: Lowest ping latency first (fastest green configs priority)
+      working.sort((a, b) => {
+        const latA = (typeof a.latency === 'number' && a.latency > 0) ? a.latency : 9999;
+        const latB = (typeof b.latency === 'number' && b.latency > 0) ? b.latency : 9999;
+        if (latA !== latB) return latA - latB;
+        const dateA = a.lastChecked ? new Date(a.lastChecked).getTime() : 0;
+        const dateB = b.lastChecked ? new Date(b.lastChecked).getTime() : 0;
+        return dateB - dateA;
+      });
+
+      const selected = working.slice(0, Math.min(qty, working.length));
 
       // Generate all branded configs for text file attachment
       const allBrandedList = selected.map(conf => applyBrandingToConfig(conf.raw, db.settings.branding));
       const fullPackTxt = allBrandedList.join('\n');
 
-      // Send attached .txt file containing ALL requested configs for any pack size
-      if (selected.length > 0) {
+      // Send attached .txt file containing ALL requested configs for packs of 15+
+      if (qty >= 15 || selected.length >= 15) {
         const packFilename = `V2Ray_Pack_${selected.length}_Configs.txt`;
         const fileCaption = `📦 <b>فایل متنی شامل تمامی ${selected.length} کانفیگ اختصاصی V2Ray</b>\n\n🆔 ${escapeHtml(db.settings.branding)}`;
         await sendTelegramDocument({
@@ -17020,19 +17063,17 @@ async function startExpressServer() {
           }
         }
       });
-
-      const responseText = await generateGeminiContentWithFallback(
-        testClient,
-        'سلام! یک کلمه بنویس: متصل'
-      );
-
-      if (responseText) {
+      const response = await testClient.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: 'سلام! یک کلمه بنویس: متصل',
+      });
+      if (response && response.text) {
         return res.json({
           success: true,
-          message: `اتصال هوش مصنوعی گوگل با موفقیت تأیید شد! (مدل فعال بهینه: ${cachedWorkingGeminiModel}) - پاسخ تست: ${responseText.trim().slice(0, 50)}`
+          message: `اتصال هوش مصنوعی گوگل با موفقیت تأیید شد! پاسخ تست: ${response.text.trim().slice(0, 50)}`
         });
       }
-      return res.status(400).json({ success: false, message: 'پاسخی از سرور هوش مصنوعی دریافت نشد. کلید API یا دسترسی اینترنت سرور را بررسی فرمایید.' });
+      return res.status(400).json({ success: false, message: 'پاسخی از سرور هوش مصنوعی دریافت نشد.' });
     } catch (err: any) {
       console.error('[Gemini Test Error]:', err);
       return res.status(400).json({
@@ -17283,14 +17324,6 @@ async function startExpressServer() {
     }
 
     try {
-      allowEmptyConfigsWipe = true;
-      const countBefore = db.configs.length;
-      db.configs = [];
-      db.postedConfigSignatures = [];
-      saveDatabase(true);
-      if (countBefore > 0) {
-        addLog('info', `🧹 تخلیه خودکار آرشیو قبلی (${countBefore} کانفیگ) جهت استخراج تازه از منبع ${src.name}...`);
-      }
       const count = await scrapeSource(src);
       res.json({ success: true, extractedCount: count });
     } catch(err: any) {
