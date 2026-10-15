@@ -1709,49 +1709,50 @@ function getGeminiClient(): GoogleGenAI | null {
  * Executes a Gemini prompt with automatic multi-model fallback and graceful error handling.
  * Handles temporary spikes in demand (503 UNAVAILABLE) and rate limits (429) cleanly without crashes.
  */
+let cachedWorkingGeminiModel = 'gemini-2.5-flash';
+
+const GEMINI_MODEL_CANDIDATES = [
+  'gemini-2.5-flash',
+  'gemini-3.8-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-1.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-pro'
+];
+
+/**
+ * Executes a Gemini prompt with automatic dynamic model discovery and fallback.
+ * Automatically tries next active model on 404, deprecated models, 503, or 429 errors.
+ */
 async function generateGeminiContentWithFallback(
   ai: GoogleGenAI,
   prompt: string,
-  preferredModel = 'gemini-2.5-flash',
-  fallbackModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite']
+  preferredModel?: string,
+  fallbackModels?: string[]
 ): Promise<string | null> {
-  const models = [preferredModel, ...fallbackModels.filter(m => m !== preferredModel)];
-  
-  for (let i = 0; i < models.length; i++) {
-    const model = models[i];
+  const primary = preferredModel || cachedWorkingGeminiModel || 'gemini-2.5-flash';
+  const customFallbacks = fallbackModels || GEMINI_MODEL_CANDIDATES;
+  const candidates = Array.from(new Set([primary, ...customFallbacks, ...GEMINI_MODEL_CANDIDATES]));
+
+  for (let i = 0; i < candidates.length; i++) {
+    const model = candidates[i];
     try {
       const response = await ai.models.generateContent({
         model,
         contents: prompt,
       });
       if (response && response.text) {
+        cachedWorkingGeminiModel = model;
         return response.text;
       }
     } catch (err: any) {
       const errMsg = (err?.message || err?.error?.message || (typeof err === 'string' ? err : JSON.stringify(err))).trim();
-      const isTemporaryDemandSpike = errMsg.includes('503') || 
-        errMsg.includes('UNAVAILABLE') || 
-        errMsg.includes('high demand') ||
-        errMsg.includes('experiencing high demand');
-      const isRateLimit = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota');
-
-      if (isTemporaryDemandSpike || isRateLimit) {
-        if (i < models.length - 1) {
-          console.warn(`[Gemini AI] Model '${model}' is temporarily busy or experiencing high demand. Switching to '${models[i + 1]}'`);
-          await new Promise(res => setTimeout(res, 600));
-          continue;
-        } else {
-          console.warn(`[Gemini AI] Gemini models currently experiencing high demand. Gracefully activating curated fallback content.`);
-          return null;
-        }
-      }
-
-      // Other errors
-      if (i < models.length - 1) {
-        console.warn(`[Gemini AI] Model '${model}' error: ${errMsg.slice(0, 100)}. Trying '${models[i + 1]}'`);
-        await new Promise(res => setTimeout(res, 600));
+      if (i < candidates.length - 1) {
+        console.warn(`[Gemini AI] Model '${model}' unavailable (${errMsg.slice(0, 80)}). Auto-switching to '${candidates[i + 1]}'...`);
+        await new Promise(res => setTimeout(res, 300));
+        continue;
       } else {
-        console.warn(`[Gemini AI] Prompt generation unavailable via AI (${errMsg.slice(0, 100)}). Using curated fallback.`);
+        console.warn(`[Gemini AI] All Gemini candidate models failed (${errMsg.slice(0, 80)}).`);
       }
     }
   }
@@ -17029,17 +17030,19 @@ async function startExpressServer() {
           }
         }
       });
-      const response = await testClient.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: 'سلام! یک کلمه بنویس: متصل',
-      });
-      if (response && response.text) {
+
+      const responseText = await generateGeminiContentWithFallback(
+        testClient,
+        'سلام! یک کلمه بنویس: متصل'
+      );
+
+      if (responseText) {
         return res.json({
           success: true,
-          message: `اتصال هوش مصنوعی گوگل با موفقیت تأیید شد! پاسخ تست: ${response.text.trim().slice(0, 50)}`
+          message: `اتصال هوش مصنوعی گوگل با موفقیت تأیید شد! (مدل فعال بهینه: ${cachedWorkingGeminiModel}) - پاسخ تست: ${responseText.trim().slice(0, 50)}`
         });
       }
-      return res.status(400).json({ success: false, message: 'پاسخی از سرور هوش مصنوعی دریافت نشد.' });
+      return res.status(400).json({ success: false, message: 'پاسخی از سرور هوش مصنوعی دریافت نشد. کلید API یا دسترسی اینترنت سرور را بررسی فرمایید.' });
     } catch (err: any) {
       console.error('[Gemini Test Error]:', err);
       return res.status(400).json({
