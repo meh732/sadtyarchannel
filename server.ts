@@ -16057,26 +16057,14 @@ async function handleBotUpdate(update: any) {
       
       await answerCallback('در حال دریافت و آماده‌سازی کانفیگ‌ها...');
       
-      const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss'];
-      let working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
-        
-      if (working.length < qty) {
-        // Trigger bulk scrape if total configs in DB is low
-        if (db.configs.length < qty * 3) {
-          try { await triggerBulkScrape(); } catch (_) {}
-        }
-        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
-        if (untested.length > 0) {
-          const testIds = untested.slice(0, Math.max(80, qty * 3)).map(c => c.id);
-          await testConfigsBatch(testIds);
-        }
-        working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
-      }
+      const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss', 'npv'];
+      // Pure instant read from panel's already-extracted, verified green configs
+      const working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
 
       if (working.length === 0) {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده و سبز در دیتابیس موجود نیست. سیستم هم‌اکنون در حال بررسی خودکار موارد جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
+          text: '❌ متاسفانه در حال حاضر کانفیگ تست‌شده و سبز در پنل موجود نیست. پنل به صورت خودکار در حال استخراج و اعتبارسنجی کانفیگ‌های جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
         });
         return;
       }
@@ -16112,7 +16100,10 @@ async function handleBotUpdate(update: any) {
       // Handle large batch packs (e.g. 10, 15, 30, 50) cleanly with expandable quotes
       if (selected.length > 5) {
         let intro = `🚀 <b>پک اختصاصی ${selected.length} تایی کانفیگ‌های V2Ray (پیشنهاد ویژه ⭐)</b>\n\n`;
-        intro += `🔔 تعداد کانفیگ‌ها: <b>${selected.length} عدد</b>\n`;
+        if (selected.length < qty) {
+          intro += `💡 <b>توضیح:</b> درخواست شما ${qty} کانفیگ بود؛ اما پس از پایش زنده هسته Xray از مسیر پروکسی ایران، در حال حاضر دقیقاً <b>${selected.length} کانفیگ ۱۰۰٪ سبز و تست‌شده</b> موجود بود و تمامی آن‌ها برای شما ارسال گردیدند.\n\n`;
+        }
+        intro += `🔔 تعداد کانفیگ‌های فعال: <b>${selected.length} عدد</b>\n`;
         intro += `⚡️ پشتیبانی کامل: همراه اول، ایرانسل، مخابرات و رایتل\n`;
         intro += `🏷️ برندینگ انحصاری: <code>${escapeHtml(db.settings.branding)}</code>\n\n`;
         intro += `📁 <i>فایل متنی شامل تمامی ${selected.length} کانفیگ نیز به صورت فایل ضمیمه ارسال گردید.</i>\n\n`;
@@ -16130,8 +16121,8 @@ async function handleBotUpdate(update: any) {
           reply_markup: inlineKeyboard
         });
 
-        // Split into chunks of 15 configs so each fits nicely inside an expandable quote
-        const CHUNK_SIZE = 15;
+        // Split into chunks of 5 configs so each fits reliably inside Telegram 4096 character limit
+        const CHUNK_SIZE = 5;
         const totalChunks = Math.ceil(selected.length / CHUNK_SIZE);
         for (let i = 0; i < selected.length; i += CHUNK_SIZE) {
           const chunk = selected.slice(i, i + CHUNK_SIZE);

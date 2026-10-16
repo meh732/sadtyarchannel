@@ -169,8 +169,8 @@
       "name": "V2Ray Alpha Configs",
       "urlOrHandle": "@v2ray_alpha",
       "enabled": true,
-      "extractedCount": 2319,
-      "lastExtracted": "2026-10-16T11:44:18.574Z"
+      "extractedCount": 2589,
+      "lastExtracted": "2026-10-16T12:13:44.145Z"
     },
     {
       "id": "src-2",
@@ -178,8 +178,8 @@
       "name": "V2Ray Free Configs",
       "urlOrHandle": "@v2ray_free_conf",
       "enabled": true,
-      "extractedCount": 384,
-      "lastExtracted": "2026-10-16T11:44:16.834Z"
+      "extractedCount": 447,
+      "lastExtracted": "2026-10-16T12:13:42.454Z"
     },
     {
       "id": "src-3",
@@ -187,8 +187,8 @@
       "name": "VPN Ocean (Configs & Proxies)",
       "urlOrHandle": "@vpn_ocean",
       "enabled": true,
-      "extractedCount": 210,
-      "lastExtracted": "2026-10-16T11:44:17.566Z"
+      "extractedCount": 240,
+      "lastExtracted": "2026-10-16T12:13:43.213Z"
     },
     {
       "id": "src-4",
@@ -196,8 +196,8 @@
       "name": "Private VPNs Channel",
       "urlOrHandle": "@PrivateVPNs",
       "enabled": true,
-      "extractedCount": 295,
-      "lastExtracted": "2026-10-16T11:44:17.189Z"
+      "extractedCount": 331,
+      "lastExtracted": "2026-10-16T12:13:42.750Z"
     },
     {
       "id": "src-5",
@@ -205,8 +205,8 @@
       "name": "Proxy MTProto Live",
       "urlOrHandle": "@ProxyMTProto",
       "enabled": true,
-      "extractedCount": 268,
-      "lastExtracted": "2026-10-16T11:44:17.159Z"
+      "extractedCount": 383,
+      "lastExtracted": "2026-10-16T12:13:42.363Z"
     },
     {
       "id": "src-6",
@@ -214,8 +214,8 @@
       "name": "BarryFar All Configs Sub",
       "urlOrHandle": "https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_Sub.txt",
       "enabled": true,
-      "extractedCount": 144584,
-      "lastExtracted": "2026-10-16T11:44:14.175Z"
+      "extractedCount": 164852,
+      "lastExtracted": "2026-10-16T12:13:39.933Z"
     },
     {
       "id": "src-7",
@@ -223,8 +223,8 @@
       "name": "MahdiBland V2Ray Aggregator",
       "urlOrHandle": "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
       "enabled": true,
-      "extractedCount": 84879,
-      "lastExtracted": "2026-10-16T11:44:22.231Z"
+      "extractedCount": 96951,
+      "lastExtracted": "2026-10-16T12:13:37.111Z"
     },
     {
       "id": "src-8",
@@ -232,8 +232,8 @@
       "name": "Epodonios All Configs Sub",
       "urlOrHandle": "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt",
       "enabled": true,
-      "extractedCount": 105322,
-      "lastExtracted": "2026-10-16T11:44:11.741Z"
+      "extractedCount": 119831,
+      "lastExtracted": "2026-10-16T12:13:38.920Z"
     },
     {
       "id": "src-9",
@@ -241,8 +241,8 @@
       "name": "Mineral Nodes Hub",
       "urlOrHandle": "https://raw.githubusercontent.com/LalatinaHub/Mineral/master/result/nodes",
       "enabled": true,
-      "extractedCount": 35148,
-      "lastExtracted": "2026-10-16T11:44:21.599Z"
+      "extractedCount": 40449,
+      "lastExtracted": "2026-10-16T12:13:45.781Z"
     }
   ],
   "forceJoinChannels": [
@@ -262,8 +262,8 @@
       "urlOrHandle": "@akharinkhabar",
       "enabled": true,
       "category": "news",
-      "extractedCount": 121,
-      "lastExtracted": "2026-10-16T11:43:34.979Z"
+      "extractedCount": 126,
+      "lastExtracted": "2026-10-16T12:13:36.541Z"
     },
     {
       "id": "fun-src-2",
@@ -272,7 +272,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 0,
-      "lastExtracted": "2026-10-16T11:43:35.151Z"
+      "lastExtracted": "2026-10-16T12:13:36.473Z"
     },
     {
       "id": "fun-src-3",
@@ -281,7 +281,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 20,
-      "lastExtracted": "2026-10-16T11:43:34.999Z"
+      "lastExtracted": "2026-10-16T12:13:36.523Z"
     },
     {
       "id": "fun-src-4",
@@ -290,7 +290,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 79,
-      "lastExtracted": "2026-10-16T11:43:34.894Z"
+      "lastExtracted": "2026-10-16T12:13:36.560Z"
     },
     {
       "id": "fun-src-5",
@@ -299,7 +299,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 15,
-      "lastExtracted": "2026-10-16T11:43:34.814Z"
+      "lastExtracted": "2026-10-16T12:13:36.508Z"
     },
     {
       "id": "fun-src-6",
@@ -308,7 +308,7 @@
       "enabled": true,
       "category": "news",
       "extractedCount": 117,
-      "lastExtracted": "2026-10-16T11:43:34.956Z"
+      "lastExtracted": "2026-10-16T12:13:36.582Z"
     },
     {
       "id": "fun-src-7",
@@ -316,8 +316,8 @@
       "urlOrHandle": "@Farsna",
       "enabled": true,
       "category": "news",
-      "extractedCount": 106,
-      "lastExtracted": "2026-10-16T11:43:34.853Z"
+      "extractedCount": 110,
+      "lastExtracted": "2026-10-16T12:13:36.448Z"
     },
     {
       "id": "fun-src-8",
@@ -326,7 +326,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 20,
-      "lastExtracted": "2026-10-16T11:43:35.139Z"
+      "lastExtracted": "2026-10-16T12:13:36.430Z"
     },
     {
       "id": "fun-src-9",
@@ -335,7 +335,7 @@
       "enabled": true,
       "category": "fun",
       "extractedCount": 114,
-      "lastExtracted": "2026-10-16T11:43:34.869Z"
+      "lastExtracted": "2026-10-16T12:13:36.490Z"
     },
     {
       "id": "fun-src-10",
@@ -343,8 +343,8 @@
       "urlOrHandle": "@Kafiha",
       "enabled": true,
       "category": "fun",
-      "extractedCount": 127,
-      "lastExtracted": "2026-10-16T11:43:34.840Z"
+      "extractedCount": 130,
+      "lastExtracted": "2026-10-16T12:13:36.404Z"
     },
     {
       "id": "fun-src-11",
@@ -353,7 +353,7 @@
       "enabled": true,
       "category": "news",
       "extractedCount": 2,
-      "lastExtracted": "2026-10-16T11:43:34.798Z"
+      "lastExtracted": "2026-10-16T12:13:36.639Z"
     }
   ],
   "lastPostedFunSourceMap": {
