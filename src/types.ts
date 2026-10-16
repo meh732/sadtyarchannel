@@ -14,7 +14,6 @@ export interface ConfigItem {
   lastChecked: string | null;
   isNpv?: boolean;
   createdAt?: string;
-  extractedAt?: string;
   postedToChannel?: boolean;
   postedToChannel1?: boolean;
   postedToChannel2?: boolean;

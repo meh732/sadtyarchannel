@@ -1030,7 +1030,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   autoTestInterval: 10,
   testBatchLimit: 100,
   autoExtractInterval: 30, // minutes
-  iranRelayProxy: process.env.IRAN_RELAY_PROXY || 'http://proxyuser:DfroUpvpeTCj@95.38.68.158:1080',
+  iranRelayProxy: process.env.IRAN_RELAY_PROXY || 'socks5://proxyuser:DfroUpvpeTCj@95.38.68.158:1080',
   autoPost: DEFAULT_AUTO_POST,
   postMonitoringEnabled: false,
   backupEnabled: false,
@@ -1204,10 +1204,7 @@ function loadDatabase() {
 
     const resolvedBotToken = envBotToken || loadedSettings?.settings?.botToken || loadedDataStore?.settings?.botToken || '';
     const resolvedAdminId = envAdminId || loadedSettings?.settings?.adminId || loadedDataStore?.settings?.adminId || '';
-    let resolvedIranRelayProxy = process.env.IRAN_RELAY_PROXY || loadedSettings?.settings?.iranRelayProxy || loadedDataStore?.settings?.iranRelayProxy || 'http://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
-    if (resolvedIranRelayProxy && resolvedIranRelayProxy.includes('95.38.68.158:1080') && resolvedIranRelayProxy.startsWith('socks5://')) {
-      resolvedIranRelayProxy = resolvedIranRelayProxy.replace('socks5://', 'http://');
-    }
+    const resolvedIranRelayProxy = process.env.IRAN_RELAY_PROXY || loadedSettings?.settings?.iranRelayProxy || loadedDataStore?.settings?.iranRelayProxy || 'socks5://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
 
     const finalSettings = { 
       ...DEFAULT_SETTINGS, 
@@ -2545,7 +2542,7 @@ function buildXrayConfig(rawConfig: string, localPort: number): { configJson: an
   if (db.settings.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
     const relayUri = db.settings.iranRelayProxy.trim();
     try {
-      const isSocks = (relayUri.startsWith('socks5://') || relayUri.startsWith('socks://')) && !relayUri.includes('95.38.68.158');
+      const isSocks = relayUri.startsWith('socks5://') || relayUri.startsWith('socks://');
       const cleanRelay = relayUri.replace(/^(socks5?|http):\/\//i, '');
       let auth = '';
       let hostPort = cleanRelay;
@@ -2576,10 +2573,6 @@ function buildXrayConfig(rawConfig: string, localPort: number): { configJson: an
         };
 
         (outbound as any).proxySettings = { tag: 'iran_relay' };
-        // XTLS Vision only supports direct sockets, remove flow when chained through proxy to prevent outbound error
-        if (outbound.settings?.vnext?.[0]?.users?.[0]?.flow) {
-          delete outbound.settings.vnext[0].users[0].flow;
-        }
         outbounds.push(relayOutbound);
       }
     } catch (e) {
@@ -2676,7 +2669,7 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
     }
 
     const { configJson } = result;
-    const configPath = path.join(os.tmpdir(), `xray_config_${Date.now()}_${Math.floor(Math.random() * 10000)}.json`);
+    const configPath = path.join(process.cwd(), `bin/xray_config_${Date.now()}_${Math.floor(Math.random() * 10000)}.json`);
     
     try {
       fs.writeFileSync(configPath, JSON.stringify(configJson, null, 2));
@@ -2841,20 +2834,56 @@ function checkTlsHandshake(host: string, port: number, sni: string, timeout = 35
 }
 
 /**
- * Performs strict real-world client verification of a configuration using Xray core
- * chained strictly through the Iran relay proxy to guarantee 100% real connectivity in v2rayNG/v2rayN.
- * ZERO false-positives: Never falls back to simple TCP port pings.
+ * Performs fast, accurate TCP/TLS port ping verification of a configuration
+ * Matches the standard TCP Ping behavior of V2Ray clients (v2rayN, v2rayNG, Nekoray)
  */
 async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   try {
-    if (!rawConfig || !rawConfig.trim()) {
+    const details = parseFullConfigDetails(rawConfig);
+    if (!details.host || !details.port) {
       return { working: false, latency: 999 };
     }
 
-    // STRICT real client verification using Xray core
-    // Only configs that successfully proxy HTTP traffic and return 204/200 are approved
-    const xrayResult = await checkConfigWithXray(rawConfig.trim());
-    return xrayResult;
+    // STRICT ROUTING VIA IRAN RELAY PROXY:
+    // When an Iran proxy is configured, ALL verification runs strictly through the Iran proxy
+    if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
+      const proxyUri = db.settings.iranRelayProxy.trim();
+      const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500);
+      if (portCheck.working) {
+        return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
+      }
+      if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
+        const sniCheck = await checkPortViaProxy(proxyUri, details.sni.trim(), details.port, 3500);
+        if (sniCheck.working) {
+          return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
+        }
+      }
+      return { working: false, latency: 999 };
+    }
+
+    // 1. Fast direct TCP socket check to destination host/IP (foreign server fallback)
+    const portCheck = await checkPort(details.host, details.port, 3800);
+    if (portCheck.working) {
+      return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
+    }
+
+    // 2. If destination host was an unreachable IP or CDN front, but SNI contains a valid domain, test SNI
+    if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
+      const sniCheck = await checkPort(details.sni.trim(), details.port, 3500);
+      if (sniCheck.working) {
+        return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
+      }
+    }
+
+    // 3. Fallback: If TLS is enabled, verify via TLS handshake
+    if (details.tls) {
+      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 3500);
+      if (tlsCheck.working) {
+        return { working: true, latency: Math.max(10, Math.round(tlsCheck.latency)) };
+      }
+    }
+
+    return { working: false, latency: 999 };
   } catch (err) {
     return { working: false, latency: 999 };
   }
@@ -2900,13 +2929,7 @@ function parseProxyUri(proxyUri: string): { protocol: string; pHost: string; pPo
   return { protocol, pHost, pPort, auth: (user && pass) ? `${user}:${pass}` : auth, user, pass };
 }
 
-async function checkPortHttpProxy(
-  proxyUri: string, 
-  targetHost: string, 
-  targetPort: number, 
-  timeout = 3500,
-  tlsSni?: string
-): Promise<{ working: boolean; latency: number }> {
+async function checkPortHttpProxy(proxyUri: string, targetHost: string, targetPort: number, timeout = 3500): Promise<{ working: boolean; latency: number }> {
   const { pHost, pPort, auth } = parseProxyUri(proxyUri);
   if (!pHost || !pPort) return { working: false, latency: 999 };
 
@@ -2942,42 +2965,7 @@ async function checkPortHttpProxy(
         socket.once('data', (data) => {
           const resp = data.toString('utf8');
           if (resp.includes(' 200 ') || resp.startsWith('HTTP/1.1 200') || resp.startsWith('HTTP/1.0 200')) {
-            // Tunnel established through Iran proxy!
-            if (tlsSni && tlsSni.trim()) {
-              // Real TLS handshake through the tunnel to verify SNI is not filtered by Iranian DPI
-              try {
-                const tlsSocket = tls.connect({
-                  socket: socket,
-                  servername: tlsSni.trim(),
-                  rejectUnauthorized: false
-                }, () => {
-                  const lat = Date.now() - start;
-                  try { tlsSocket.destroy(); } catch (_) {}
-                  finish(true, lat);
-                });
-                tlsSocket.on('error', () => finish(false));
-                tlsSocket.on('timeout', () => finish(false));
-                tlsSocket.on('close', () => finish(false));
-              } catch (_) {
-                finish(false);
-              }
-            } else {
-              // For non-TLS ports: ensure remote end is responsive
-              let closedEarly = false;
-              socket.once('close', () => {
-                closedEarly = true;
-                finish(false);
-              });
-              socket.write('HEAD / HTTP/1.1\r\nHost: ' + targetHost + '\r\n\r\n');
-              socket.once('data', () => {
-                finish(true, Date.now() - start);
-              });
-              setTimeout(() => {
-                if (!closedEarly && !resolved) {
-                  finish(true, Date.now() - start);
-                }
-              }, 400);
-            }
+            finish(true, Date.now() - start);
           } else {
             finish(false);
           }
@@ -3078,25 +3066,25 @@ async function checkPortViaProxy(
   proxyUri: string,
   targetHost: string,
   targetPort: number,
-  timeout = 3500,
-  tlsSni?: string
+  timeout = 3500
 ): Promise<{ working: boolean; latency: number }> {
   if (!proxyUri || !proxyUri.trim()) return { working: false, latency: 999 };
   const cleanUri = proxyUri.trim();
 
-  const isExplicitSocks = (cleanUri.startsWith('socks5://') || cleanUri.startsWith('socks://')) && !cleanUri.includes('95.38.68.158');
-
-  // 1. Try HTTP CONNECT proxy mode first
-  if (!isExplicitSocks) {
-    const httpRes = await checkPortHttpProxy(cleanUri, targetHost, targetPort, timeout, tlsSni);
-    if (httpRes.working) {
-      cachedIranProxyProtocol = 'http';
-      return httpRes;
-    }
+  // 1. Try HTTP CONNECT proxy mode first (works for HTTP proxy, Squid, CCProxy on 1080)
+  const httpRes = await checkPortHttpProxy(cleanUri, targetHost, targetPort, timeout);
+  if (httpRes.working) {
+    cachedIranProxyProtocol = 'http';
+    return httpRes;
   }
 
-  // 2. Fallback to SOCKS5 proxy mode
-  const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, Math.min(timeout, 2500));
+  // 2. If already detected as HTTP proxy, don't waste time on SOCKS5 timeout
+  if (cachedIranProxyProtocol === 'http') {
+    return { working: false, latency: 999 };
+  }
+
+  // 3. Fallback to SOCKS5 proxy mode
+  const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, Math.min(timeout, 2000));
   if (socksRes.working) {
     cachedIranProxyProtocol = 'socks5';
     return socksRes;
@@ -4528,21 +4516,8 @@ async function testConfigsBatch(ids: string[]) {
 
 /**
  * Triggers bulk extraction across all active sources
- * Empties all previous configs before starting the new extraction batch
  */
-async function triggerBulkScrape(clearPrevious: boolean = true): Promise<number> {
-  if (clearPrevious) {
-    const prevCount = db.configs.length;
-    const prevProxies = (db.proxies || []).length;
-    db.configs = [];
-    if (!db.proxies) db.proxies = [];
-    db.proxies = [];
-    allowEmptyConfigsWipe = true;
-    saveDatabase(true);
-    allowEmptyConfigsWipe = false;
-    addLog('info', `🧹 تخلیه کامل دیتابیس: پاکسازی ${prevCount} کانفیگ و ${prevProxies} پروکسی پیشین قبل از آغاز سری جدید استخراج.`);
-  }
-
+async function triggerBulkScrape(): Promise<number> {
   const enabledSources = db.sources.filter(s => s.enabled);
   const results = await Promise.allSettled(enabledSources.map(src => scrapeSource(src)));
   let totalExtracted = 0;
@@ -13808,16 +13783,15 @@ async function handleBotUpdate(update: any) {
       // 2. Admin Menus & Direct Command Handlers
       if (messageText === '/scrape' || messageText === '🔄 استخراج سریع کانفیگ‌ها ⚡' || callbackData === 'admin_scrape_now') {
         if (callbackQueryId) await answerCallback('استخراج و اسکن منابع... 🔄');
-        const prevCount = db.configs.length;
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `⏳ **در حال تخلیه کامل دیتابیس (${prevCount} کانفیگ قبلی) و شروع استخراج جدید از تمامی منابع...**\nاین فرآیند ممکن است چند ثانیه زمان ببرد.`,
+          text: '⏳ **در حال استخراج خودکار و اسکن تمامی کانال‌ها و سابسکریپشن‌ها...**\nاین فرآیند ممکن است چند ثانیه زمان ببرد.',
           parse_mode: 'Markdown'
         });
-        const count = await triggerBulkScrape(true);
+        const count = await triggerBulkScrape();
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `✅ **استخراج منابع با موفقیت انجام شد!**\n\n🟢 کانفیگ‌های قدیمی تخلیه شدند و تعداد **${count} کانفیگ و پروکسی جدید** استخراج گردید.\n\nتست خودکار پینگ از مسیر پروکسی ایران در پس‌زمینه آغاز شد.`,
+          text: `✅ **استخراج منابع با موفقیت انجام شد!**\n\n🟢 کانفیگ‌ها و پروکسی‌های جدید استخراج و ذخیره شدند: **${count} عدد**\n\nتست خودکار پینگ پورت‌ها در پس‌زمینه آغاز گردید.`,
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
@@ -16043,14 +16017,26 @@ async function handleBotUpdate(update: any) {
       
       await answerCallback('در حال دریافت و آماده‌سازی کانفیگ‌ها...');
       
-      const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss', 'npv'];
-      // Pure instant read from panel's already-extracted, verified green configs
-      const working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+      const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss'];
+      let working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+        
+      if (working.length < qty) {
+        // Trigger bulk scrape if total configs in DB is low
+        if (db.configs.length < qty * 3) {
+          try { await triggerBulkScrape(); } catch (_) {}
+        }
+        const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+        if (untested.length > 0) {
+          const testIds = untested.slice(0, Math.max(80, qty * 3)).map(c => c.id);
+          await testConfigsBatch(testIds);
+        }
+        working = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+      }
 
       if (working.length === 0) {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: '❌ متاسفانه در حال حاضر کانفیگ تست‌شده و سبز در پنل موجود نیست. پنل به صورت خودکار در حال استخراج و اعتبارسنجی کانفیگ‌های جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
+          text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده و سبز در دیتابیس موجود نیست. سیستم هم‌اکنون در حال بررسی خودکار موارد جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
         });
         return;
       }
@@ -16086,10 +16072,7 @@ async function handleBotUpdate(update: any) {
       // Handle large batch packs (e.g. 10, 15, 30, 50) cleanly with expandable quotes
       if (selected.length > 5) {
         let intro = `🚀 <b>پک اختصاصی ${selected.length} تایی کانفیگ‌های V2Ray (پیشنهاد ویژه ⭐)</b>\n\n`;
-        if (selected.length < qty) {
-          intro += `💡 <b>توضیح:</b> درخواست شما ${qty} کانفیگ بود؛ اما پس از پایش زنده هسته Xray از مسیر پروکسی ایران، در حال حاضر دقیقاً <b>${selected.length} کانفیگ ۱۰۰٪ سبز و تست‌شده</b> موجود بود و تمامی آن‌ها برای شما ارسال گردیدند.\n\n`;
-        }
-        intro += `🔔 تعداد کانفیگ‌های فعال: <b>${selected.length} عدد</b>\n`;
+        intro += `🔔 تعداد کانفیگ‌ها: <b>${selected.length} عدد</b>\n`;
         intro += `⚡️ پشتیبانی کامل: همراه اول، ایرانسل، مخابرات و رایتل\n`;
         intro += `🏷️ برندینگ انحصاری: <code>${escapeHtml(db.settings.branding)}</code>\n\n`;
         intro += `📁 <i>فایل متنی شامل تمامی ${selected.length} کانفیگ نیز به صورت فایل ضمیمه ارسال گردید.</i>\n\n`;
@@ -16107,8 +16090,8 @@ async function handleBotUpdate(update: any) {
           reply_markup: inlineKeyboard
         });
 
-        // Split into chunks of 5 configs so each fits reliably inside Telegram 4096 character limit
-        const CHUNK_SIZE = 5;
+        // Split into chunks of 15 configs so each fits nicely inside an expandable quote
+        const CHUNK_SIZE = 15;
         const totalChunks = Math.ceil(selected.length / CHUNK_SIZE);
         for (let i = 0; i < selected.length; i += CHUNK_SIZE) {
           const chunk = selected.slice(i, i + CHUNK_SIZE);
@@ -17109,16 +17092,16 @@ async function startExpressServer() {
       }
       const cleanUri = proxyUri.trim();
 
-      // Test connectivity against multiple destinations accessible in Iran via SSL/TLS port 443
+      // Test connectivity against multiple destinations accessible in Iran
       const testTargets = [
-        { host: 'api.ipify.org', port: 443, sni: 'api.ipify.org' },
-        { host: 'www.cloudflare.com', port: 443, sni: 'www.cloudflare.com' },
-        { host: 'google.com', port: 443, sni: 'google.com' }
+        { host: 'varzesh3.com', port: 80 },
+        { host: 'google.com', port: 80 },
+        { host: 'isna.ir', port: 80 }
       ];
 
       let finalResult = { working: false, latency: 999 };
       for (const t of testTargets) {
-        const tr = await checkPortViaProxy(cleanUri, t.host, t.port, 4000, t.sni);
+        const tr = await checkPortViaProxy(cleanUri, t.host, t.port, 3000);
         if (tr.working) {
           finalResult = tr;
           break;
@@ -17341,17 +17324,6 @@ async function startExpressServer() {
     }
 
     try {
-      const clearPrev = req.query.clear !== 'false';
-      if (clearPrev) {
-        const prevCount = db.configs.length;
-        db.configs = [];
-        if (!db.proxies) db.proxies = [];
-        db.proxies = [];
-        allowEmptyConfigsWipe = true;
-        saveDatabase(true);
-        allowEmptyConfigsWipe = false;
-        addLog('info', `🧹 تخلیه کامل دیتابیس: پاکسازی ${prevCount} کانفیگ پیشین قبل از شروع استخراج از منبع ${src.name}...`);
-      }
       const count = await scrapeSource(src);
       res.json({ success: true, extractedCount: count });
     } catch(err: any) {
@@ -17362,8 +17334,8 @@ async function startExpressServer() {
   // API: Bulk Scrape All Sources
   app.post('/api/sources/extract-all', async (req, res) => {
     try {
-      addLog('info', 'اجرای استخراج همگانی کانفیگ‌ها (با تخلیه کامل کانفیگ‌های پیشین)...');
-      const count = await triggerBulkScrape(true);
+      addLog('info', 'اجرای دستی استخراج همگانی کانفیگ‌ها...');
+      const count = await triggerBulkScrape();
       res.json({ success: true, extractedCount: count });
     } catch(err: any) {
       res.status(500).json({ success: false, message: err.message });
