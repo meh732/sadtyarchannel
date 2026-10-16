@@ -4551,7 +4551,9 @@ async function triggerBulkScrape(clearPrevious: boolean = true): Promise<number>
     db.configs = [];
     if (!db.proxies) db.proxies = [];
     db.proxies = [];
+    allowEmptyConfigsWipe = true;
     saveDatabase(true);
+    allowEmptyConfigsWipe = false;
     addLog('info', `🧹 تخلیه کامل دیتابیس: پاکسازی ${prevCount} کانفیگ و ${prevProxies} پروکسی پیشین قبل از آغاز سری جدید استخراج.`);
   }
 
@@ -17368,7 +17370,9 @@ async function startExpressServer() {
         db.configs = [];
         if (!db.proxies) db.proxies = [];
         db.proxies = [];
+        allowEmptyConfigsWipe = true;
         saveDatabase(true);
+        allowEmptyConfigsWipe = false;
         addLog('info', `🧹 تخلیه کامل دیتابیس: پاکسازی ${prevCount} کانفیگ پیشین قبل از شروع استخراج از منبع ${src.name}...`);
       }
       const count = await scrapeSource(src);
