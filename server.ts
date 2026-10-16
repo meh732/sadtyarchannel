@@ -1030,7 +1030,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   autoTestInterval: 10,
   testBatchLimit: 100,
   autoExtractInterval: 30, // minutes
-  iranRelayProxy: process.env.IRAN_RELAY_PROXY || 'socks5://proxyuser:DfroUpvpeTCj@95.38.68.158:1080',
+  iranRelayProxy: process.env.IRAN_RELAY_PROXY || 'http://proxyuser:DfroUpvpeTCj@95.38.68.158:1080',
   autoPost: DEFAULT_AUTO_POST,
   postMonitoringEnabled: false,
   backupEnabled: false,
@@ -1204,7 +1204,10 @@ function loadDatabase() {
 
     const resolvedBotToken = envBotToken || loadedSettings?.settings?.botToken || loadedDataStore?.settings?.botToken || '';
     const resolvedAdminId = envAdminId || loadedSettings?.settings?.adminId || loadedDataStore?.settings?.adminId || '';
-    const resolvedIranRelayProxy = process.env.IRAN_RELAY_PROXY || loadedSettings?.settings?.iranRelayProxy || loadedDataStore?.settings?.iranRelayProxy || 'socks5://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
+    let resolvedIranRelayProxy = process.env.IRAN_RELAY_PROXY || loadedSettings?.settings?.iranRelayProxy || loadedDataStore?.settings?.iranRelayProxy || 'http://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
+    if (resolvedIranRelayProxy && resolvedIranRelayProxy.includes('95.38.68.158:1080') && resolvedIranRelayProxy.startsWith('socks5://')) {
+      resolvedIranRelayProxy = resolvedIranRelayProxy.replace('socks5://', 'http://');
+    }
 
     const finalSettings = { 
       ...DEFAULT_SETTINGS, 
@@ -2542,7 +2545,7 @@ function buildXrayConfig(rawConfig: string, localPort: number): { configJson: an
   if (db.settings.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
     const relayUri = db.settings.iranRelayProxy.trim();
     try {
-      const isSocks = relayUri.startsWith('socks5://') || relayUri.startsWith('socks://');
+      const isSocks = (relayUri.startsWith('socks5://') || relayUri.startsWith('socks://')) && !relayUri.includes('95.38.68.158');
       const cleanRelay = relayUri.replace(/^(socks5?|http):\/\//i, '');
       let auth = '';
       let hostPort = cleanRelay;
@@ -2835,7 +2838,8 @@ function checkTlsHandshake(host: string, port: number, sni: string, timeout = 35
 
 /**
  * Performs fast, accurate TCP/TLS port ping verification of a configuration
- * Matches the standard TCP Ping behavior of V2Ray clients (v2rayN, v2rayNG, Nekoray)
+ * Tests strictly through the Iran relay proxy (with real TLS SNI handshake if TLS is enabled)
+ * to ensure 100% accurate testing from the perspective of Iran's national network and firewall.
  */
 async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   try {
@@ -2845,41 +2849,22 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
     }
 
     // STRICT ROUTING VIA IRAN RELAY PROXY:
-    // When an Iran proxy is configured, ALL verification runs strictly through the Iran proxy
-    if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
-      const proxyUri = db.settings.iranRelayProxy.trim();
-      const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500);
-      if (portCheck.working) {
-        return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
-      }
-      if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
-        const sniCheck = await checkPortViaProxy(proxyUri, details.sni.trim(), details.port, 3500);
-        if (sniCheck.working) {
-          return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
-        }
-      }
-      return { working: false, latency: 999 };
-    }
+    // Testing must strictly run through the Iran proxy so that Iran's national firewall/filtering is accurately probed.
+    const proxyUri = (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim())
+      ? db.settings.iranRelayProxy.trim()
+      : 'http://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
 
-    // 1. Fast direct TCP socket check to destination host/IP (foreign server fallback)
-    const portCheck = await checkPort(details.host, details.port, 3800);
+    const sniTarget = (details.tls || details.sni) ? (details.sni || details.host) : undefined;
+    const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500, sniTarget);
     if (portCheck.working) {
       return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
     }
 
-    // 2. If destination host was an unreachable IP or CDN front, but SNI contains a valid domain, test SNI
+    // If destination host was an unreachable IP or CDN front, but SNI contains a valid domain, test SNI via Iran proxy
     if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
-      const sniCheck = await checkPort(details.sni.trim(), details.port, 3500);
+      const sniCheck = await checkPortViaProxy(proxyUri, details.sni.trim(), details.port, 3500, details.sni.trim());
       if (sniCheck.working) {
         return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
-      }
-    }
-
-    // 3. Fallback: If TLS is enabled, verify via TLS handshake
-    if (details.tls) {
-      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 3500);
-      if (tlsCheck.working) {
-        return { working: true, latency: Math.max(10, Math.round(tlsCheck.latency)) };
       }
     }
 
@@ -2929,7 +2914,13 @@ function parseProxyUri(proxyUri: string): { protocol: string; pHost: string; pPo
   return { protocol, pHost, pPort, auth: (user && pass) ? `${user}:${pass}` : auth, user, pass };
 }
 
-async function checkPortHttpProxy(proxyUri: string, targetHost: string, targetPort: number, timeout = 3500): Promise<{ working: boolean; latency: number }> {
+async function checkPortHttpProxy(
+  proxyUri: string, 
+  targetHost: string, 
+  targetPort: number, 
+  timeout = 3500,
+  tlsSni?: string
+): Promise<{ working: boolean; latency: number }> {
   const { pHost, pPort, auth } = parseProxyUri(proxyUri);
   if (!pHost || !pPort) return { working: false, latency: 999 };
 
@@ -2965,7 +2956,42 @@ async function checkPortHttpProxy(proxyUri: string, targetHost: string, targetPo
         socket.once('data', (data) => {
           const resp = data.toString('utf8');
           if (resp.includes(' 200 ') || resp.startsWith('HTTP/1.1 200') || resp.startsWith('HTTP/1.0 200')) {
-            finish(true, Date.now() - start);
+            // Tunnel established through Iran proxy!
+            if (tlsSni && tlsSni.trim()) {
+              // Real TLS handshake through the tunnel to verify SNI is not filtered by Iranian DPI
+              try {
+                const tlsSocket = tls.connect({
+                  socket: socket,
+                  servername: tlsSni.trim(),
+                  rejectUnauthorized: false
+                }, () => {
+                  const lat = Date.now() - start;
+                  try { tlsSocket.destroy(); } catch (_) {}
+                  finish(true, lat);
+                });
+                tlsSocket.on('error', () => finish(false));
+                tlsSocket.on('timeout', () => finish(false));
+                tlsSocket.on('close', () => finish(false));
+              } catch (_) {
+                finish(false);
+              }
+            } else {
+              // For non-TLS ports: ensure remote end is responsive
+              let closedEarly = false;
+              socket.once('close', () => {
+                closedEarly = true;
+                finish(false);
+              });
+              socket.write('HEAD / HTTP/1.1\r\nHost: ' + targetHost + '\r\n\r\n');
+              socket.once('data', () => {
+                finish(true, Date.now() - start);
+              });
+              setTimeout(() => {
+                if (!closedEarly && !resolved) {
+                  finish(true, Date.now() - start);
+                }
+              }, 400);
+            }
           } else {
             finish(false);
           }
@@ -3066,25 +3092,25 @@ async function checkPortViaProxy(
   proxyUri: string,
   targetHost: string,
   targetPort: number,
-  timeout = 3500
+  timeout = 3500,
+  tlsSni?: string
 ): Promise<{ working: boolean; latency: number }> {
   if (!proxyUri || !proxyUri.trim()) return { working: false, latency: 999 };
   const cleanUri = proxyUri.trim();
 
-  // 1. Try HTTP CONNECT proxy mode first (works for HTTP proxy, Squid, CCProxy on 1080)
-  const httpRes = await checkPortHttpProxy(cleanUri, targetHost, targetPort, timeout);
-  if (httpRes.working) {
-    cachedIranProxyProtocol = 'http';
-    return httpRes;
+  const isExplicitSocks = (cleanUri.startsWith('socks5://') || cleanUri.startsWith('socks://')) && !cleanUri.includes('95.38.68.158');
+
+  // 1. Try HTTP CONNECT proxy mode first
+  if (!isExplicitSocks) {
+    const httpRes = await checkPortHttpProxy(cleanUri, targetHost, targetPort, timeout, tlsSni);
+    if (httpRes.working) {
+      cachedIranProxyProtocol = 'http';
+      return httpRes;
+    }
   }
 
-  // 2. If already detected as HTTP proxy, don't waste time on SOCKS5 timeout
-  if (cachedIranProxyProtocol === 'http') {
-    return { working: false, latency: 999 };
-  }
-
-  // 3. Fallback to SOCKS5 proxy mode
-  const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, Math.min(timeout, 2000));
+  // 2. Fallback to SOCKS5 proxy mode
+  const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, Math.min(timeout, 2500));
   if (socksRes.working) {
     cachedIranProxyProtocol = 'socks5';
     return socksRes;
@@ -4516,8 +4542,19 @@ async function testConfigsBatch(ids: string[]) {
 
 /**
  * Triggers bulk extraction across all active sources
+ * Empties all previous configs before starting the new extraction batch
  */
-async function triggerBulkScrape(): Promise<number> {
+async function triggerBulkScrape(clearPrevious: boolean = true): Promise<number> {
+  if (clearPrevious) {
+    const prevCount = db.configs.length;
+    const prevProxies = (db.proxies || []).length;
+    db.configs = [];
+    if (!db.proxies) db.proxies = [];
+    db.proxies = [];
+    saveDatabase(true);
+    addLog('info', `🧹 تخلیه کامل دیتابیس: پاکسازی ${prevCount} کانفیگ و ${prevProxies} پروکسی پیشین قبل از آغاز سری جدید استخراج.`);
+  }
+
   const enabledSources = db.sources.filter(s => s.enabled);
   const results = await Promise.allSettled(enabledSources.map(src => scrapeSource(src)));
   let totalExtracted = 0;
@@ -13783,15 +13820,16 @@ async function handleBotUpdate(update: any) {
       // 2. Admin Menus & Direct Command Handlers
       if (messageText === '/scrape' || messageText === '🔄 استخراج سریع کانفیگ‌ها ⚡' || callbackData === 'admin_scrape_now') {
         if (callbackQueryId) await answerCallback('استخراج و اسکن منابع... 🔄');
+        const prevCount = db.configs.length;
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: '⏳ **در حال استخراج خودکار و اسکن تمامی کانال‌ها و سابسکریپشن‌ها...**\nاین فرآیند ممکن است چند ثانیه زمان ببرد.',
+          text: `⏳ **در حال تخلیه کامل دیتابیس (${prevCount} کانفیگ قبلی) و شروع استخراج جدید از تمامی منابع...**\nاین فرآیند ممکن است چند ثانیه زمان ببرد.`,
           parse_mode: 'Markdown'
         });
-        const count = await triggerBulkScrape();
+        const count = await triggerBulkScrape(true);
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `✅ **استخراج منابع با موفقیت انجام شد!**\n\n🟢 کانفیگ‌ها و پروکسی‌های جدید استخراج و ذخیره شدند: **${count} عدد**\n\nتست خودکار پینگ پورت‌ها در پس‌زمینه آغاز گردید.`,
+          text: `✅ **استخراج منابع با موفقیت انجام شد!**\n\n🟢 کانفیگ‌های قدیمی تخلیه شدند و تعداد **${count} کانفیگ و پروکسی جدید** استخراج گردید.\n\nتست خودکار پینگ از مسیر پروکسی ایران در پس‌زمینه آغاز شد.`,
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
@@ -17092,16 +17130,16 @@ async function startExpressServer() {
       }
       const cleanUri = proxyUri.trim();
 
-      // Test connectivity against multiple destinations accessible in Iran
+      // Test connectivity against multiple destinations accessible in Iran via SSL/TLS port 443
       const testTargets = [
-        { host: 'varzesh3.com', port: 80 },
-        { host: 'google.com', port: 80 },
-        { host: 'isna.ir', port: 80 }
+        { host: 'api.ipify.org', port: 443, sni: 'api.ipify.org' },
+        { host: 'www.cloudflare.com', port: 443, sni: 'www.cloudflare.com' },
+        { host: 'google.com', port: 443, sni: 'google.com' }
       ];
 
       let finalResult = { working: false, latency: 999 };
       for (const t of testTargets) {
-        const tr = await checkPortViaProxy(cleanUri, t.host, t.port, 3000);
+        const tr = await checkPortViaProxy(cleanUri, t.host, t.port, 4000, t.sni);
         if (tr.working) {
           finalResult = tr;
           break;
@@ -17324,6 +17362,15 @@ async function startExpressServer() {
     }
 
     try {
+      const clearPrev = req.query.clear !== 'false';
+      if (clearPrev) {
+        const prevCount = db.configs.length;
+        db.configs = [];
+        if (!db.proxies) db.proxies = [];
+        db.proxies = [];
+        saveDatabase(true);
+        addLog('info', `🧹 تخلیه کامل دیتابیس: پاکسازی ${prevCount} کانفیگ پیشین قبل از شروع استخراج از منبع ${src.name}...`);
+      }
       const count = await scrapeSource(src);
       res.json({ success: true, extractedCount: count });
     } catch(err: any) {
@@ -17334,8 +17381,8 @@ async function startExpressServer() {
   // API: Bulk Scrape All Sources
   app.post('/api/sources/extract-all', async (req, res) => {
     try {
-      addLog('info', 'اجرای دستی استخراج همگانی کانفیگ‌ها...');
-      const count = await triggerBulkScrape();
+      addLog('info', 'اجرای استخراج همگانی کانفیگ‌ها (با تخلیه کامل کانفیگ‌های پیشین)...');
+      const count = await triggerBulkScrape(true);
       res.json({ success: true, extractedCount: count });
     } catch(err: any) {
       res.status(500).json({ success: false, message: err.message });

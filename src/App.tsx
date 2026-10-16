@@ -1029,7 +1029,7 @@ export default function App() {
       const res = await fetch(`/api/sources/${id}/extract`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        showToast(`پویش با موفقیت پایان یافت. تعداد ${data.extractedCount} کانفیگ جدید استخراج شد.`, 'success');
+        showToast(`پویش منبع پایان یافت. کانفیگ‌های قبلی تخلیه شدند و تعداد ${data.extractedCount} کانفیگ تازه از طریق پروکسی ایران بررسی و ذخیره شد.`, 'success');
       }
     } catch (err) {
       showToast('خطا در استخراج منبع', 'error');
@@ -1046,7 +1046,7 @@ export default function App() {
       const res = await fetch('/api/sources/extract-all', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        showToast(`پویش سراسری انجام شد. کل کانفیگ‌های جدید استخراج شده: ${data.extractedCount}`, 'success');
+        showToast(`پویش سراسری انجام شد. کل کانفیگ‌های قبلی تخلیه شدند و تعداد ${data.extractedCount} کانفیگ تازه از طریق پروکسی ایران پایش و ذخیره شد.`, 'success');
       }
     } catch (err) {
       showToast('خطا در اجرای پویش سراسری', 'error');
@@ -3715,8 +3715,15 @@ export default function App() {
                     <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                       <div className="px-6 py-5 border-b border-slate-200 flex sm:items-center justify-between gap-4">
                         <div>
-                          <h3 className="font-bold text-slate-900 text-sm">لیست منابع استخراج</h3>
-                          <p className="text-xs text-slate-500 mt-1">بر روی هر یک برای استخراج مجزا کلیک کنید.</p>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-slate-900 text-sm">لیست منابع استخراج</h3>
+                            <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                              تست مستقیم از مسیر پروکسی ایران
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1">
+                            قبل از هر سری استخراج، دیتابیس کانفیگ‌های قبلی به طور خودکار تخلیه شده و تنها موارد تازه از مسیر پروکسی ایران سنجش می‌شوند.
+                          </p>
                         </div>
                         <button
                           onClick={handleScrapeAll}
