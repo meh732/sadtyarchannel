@@ -1,0 +1,63 @@
+{
+  "log": {
+    "loglevel": "none"
+  },
+  "inbounds": [
+    {
+      "port": 15200,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "s1-pan.redmbred.ir",
+            "port": 20699,
+            "users": [
+              {
+                "id": "a2906e58-0488-4347-9bbe-95eb6be41784",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "none"
+      },
+      "proxySettings": {
+        "tag": "iran_relay"
+      }
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    },
+    {
+      "tag": "iran_relay",
+      "protocol": "http",
+      "settings": {
+        "servers": [
+          {
+            "address": "95.38.68.158",
+            "port": 1080,
+            "users": [
+              {
+                "user": "proxyuser",
+                "pass": "DfroUpvpeTCj"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

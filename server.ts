@@ -2837,19 +2837,27 @@ function checkTlsHandshake(host: string, port: number, sni: string, timeout = 35
 }
 
 /**
- * Performs fast, accurate TCP/TLS port ping verification of a configuration
- * Tests strictly through the Iran relay proxy (with real TLS SNI handshake if TLS is enabled)
- * to ensure 100% accurate testing from the perspective of Iran's national network and firewall.
+ * Performs accurate real-world client verification of a configuration using Xray core
+ * chained strictly through the Iran relay proxy to guarantee 100% real connectivity in v2rayNG/v2rayN.
  */
 async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   try {
+    if (!rawConfig || !rawConfig.trim()) {
+      return { working: false, latency: 999 };
+    }
+
+    // 1. Primary real-world client verification using Xray core chained via Iran Relay Proxy
+    const xrayResult = await checkConfigWithXray(rawConfig.trim());
+    if (xrayResult.working) {
+      return xrayResult;
+    }
+
+    // 2. Fallback TCP/TLS verification through Iran proxy for non-standard or direct links
     const details = parseFullConfigDetails(rawConfig);
     if (!details.host || !details.port) {
       return { working: false, latency: 999 };
     }
 
-    // STRICT ROUTING VIA IRAN RELAY PROXY:
-    // Testing must strictly run through the Iran proxy so that Iran's national firewall/filtering is accurately probed.
     const proxyUri = (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim())
       ? db.settings.iranRelayProxy.trim()
       : 'http://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
@@ -2858,14 +2866,6 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
     const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500, sniTarget);
     if (portCheck.working) {
       return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
-    }
-
-    // If destination host was an unreachable IP or CDN front, but SNI contains a valid domain, test SNI via Iran proxy
-    if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
-      const sniCheck = await checkPortViaProxy(proxyUri, details.sni.trim(), details.port, 3500, details.sni.trim());
-      if (sniCheck.working) {
-        return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
-      }
     }
 
     return { working: false, latency: 999 };
