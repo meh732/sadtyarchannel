@@ -3986,7 +3986,7 @@ function purgeOldConfigsAndProxies() {
 /**
  * Extracts configuration protocols from HTML or plain text
  */
-function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] {
+function extractConfigsFromText(text: string, sourceName: string, seenRawConfigs?: Set<string>): ConfigItem[] {
   if (!text) return [];
   
   const cleanText = safeDecodeText(text);
@@ -4029,8 +4029,9 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
     const trimmed = cleanText.trim();
     if (trimmed.length > 20 && (sourceIsNpv || trimmed.startsWith('NPVT') || trimmed.startsWith('npv://') || trimmed.startsWith('npvt://'))) {
       const info = parseConfigHostPort(trimmed);
-      const exists = db.configs.some(c => c.raw === trimmed);
+      const exists = seenRawConfigs ? seenRawConfigs.has(trimmed) : db.configs.some(c => c.raw === trimmed);
       if (!exists) {
+        if (seenRawConfigs) seenRawConfigs.add(trimmed);
         return [{
           id: generateId(),
           raw: trimmed,
@@ -4059,9 +4060,10 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
       rawConfig = rawConfig.slice(0, -1);
     }
 
-    // Skip duplicates in currently existing db configs
-    const exists = db.configs.some(c => c.raw === rawConfig);
+    // Skip duplicates
+    const exists = seenRawConfigs ? seenRawConfigs.has(rawConfig) : db.configs.some(c => c.raw === rawConfig);
     if (exists) continue;
+    if (seenRawConfigs) seenRawConfigs.add(rawConfig);
 
     const isNpvFormat = sourceIsNpv || 
                         rawConfig.startsWith('NPVT') ||
@@ -4110,7 +4112,7 @@ function extractConfigsFromText(text: string, sourceName: string): ConfigItem[] 
 /**
  * Extracts MTProto & Socks5 proxies from HTML or plain text
  */
-function extractProxiesFromText(text: string, sourceName: string): ProxyItem[] {
+function extractProxiesFromText(text: string, sourceName: string, seenRawProxies?: Set<string>): ProxyItem[] {
   if (!text) return [];
 
   const cleanText = safeDecodeText(text);
@@ -4157,8 +4159,9 @@ function extractProxiesFromText(text: string, sourceName: string): ProxyItem[] {
 
     // Skip duplicates
     if (!db.proxies) db.proxies = [];
-    const exists = db.proxies.some(p => p.raw === rawProxy);
+    const exists = seenRawProxies ? seenRawProxies.has(rawProxy) : db.proxies.some(p => p.raw === rawProxy);
     if (exists) continue;
+    if (seenRawProxies) seenRawProxies.add(rawProxy);
 
     let server = '';
     let port = 0;
@@ -4224,164 +4227,185 @@ function extractProxiesFromText(text: string, sourceName: string): ProxyItem[] {
 }
 
 /**
- * Scrapes a single source (Telegram Web, Sub, or GitHub Raw)
+ * Fetches and extracts configs and proxies from a single source without directly modifying db.configs
+ */
+async function fetchAndExtractSourceData(
+  source: SourceItem,
+  seenRawConfigs?: Set<string>,
+  seenRawProxies?: Set<string>
+): Promise<{ configs: ConfigItem[]; proxies: ProxyItem[] }> {
+  if (!source.enabled) return { configs: [], proxies: [] };
+
+  let url = source.urlOrHandle.trim();
+  addLog('info', `در حال دریافت و استخراج کدهای کانفیگ و پروکسی از منبع: ${source.name}`);
+
+  if (source.type === 'telegram') {
+    // Remove @ prefix if provided
+    const handle = url.startsWith('@') ? url.substring(1) : url;
+    url = `https://t.me/s/${handle}`;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7'
+      },
+      signal: AbortSignal.timeout(15000)
+    });
+  } catch (fetchErr: any) {
+    if (fetchErr.name === 'AbortError' || fetchErr.name === 'TimeoutError') {
+      throw new Error('زمان انتظار به پایان رسید (Timeout)');
+    }
+    throw new Error(`خطای ارتباط شبکه: ${fetchErr.message || 'fetch failed'}`);
+  }
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error(`منبع یافت نشد (خطای 404) - لطفاً آدرس یا آیدی کانال را بررسی کنید`);
+    }
+    throw new Error(`خطای سرور منبع (HTTP ${response.status})`);
+  }
+
+  let rawText = await response.text();
+  // Strictly filter Telegram HTML to messages/posts from the last 3 days
+  const text = source.type === 'telegram' ? filterTelegramHtmlLast3Days(rawText) : rawText;
+
+  let extracted: ConfigItem[] = [];
+  let extractedProxies: ProxyItem[] = [];
+
+  // Check if subscription body is base64 encoded (very common for V2Ray subscriptions)
+  if (source.type === 'sub' && isBase64(text)) {
+    try {
+      const decoded = Buffer.from(text, 'base64').toString('utf8');
+      extracted = extractConfigsFromText(decoded, source.name, seenRawConfigs);
+      extractedProxies = extractProxiesFromText(decoded, source.name, seenRawProxies);
+    } catch {
+      extracted = extractConfigsFromText(text, source.name, seenRawConfigs);
+      extractedProxies = extractProxiesFromText(text, source.name, seenRawProxies);
+    }
+  } else {
+    extracted = extractConfigsFromText(text, source.name, seenRawConfigs);
+    extractedProxies = extractProxiesFromText(text, source.name, seenRawProxies);
+
+    // Deep scan Telegram channels for attached NPVT / document post files safely
+    if (source.type === 'telegram' && db.settings.adminId && db.settings.botToken) {
+      const handle = source.urlOrHandle.replace(/^@/, '').trim();
+      const msgLinkRegex = new RegExp(`href="(https?:\\/\\/t\\.me\\/(?:s\\/)?${handle}\\/(\\d+))"`, 'gi');
+      const matches = Array.from(text.matchAll(msgLinkRegex));
+      const postData: {url: string, msgId: string}[] = [];
+      for (const m of matches) {
+        if (m[1] && m[2]) {
+          postData.push({ url: m[1].replace('t.me/', 't.me/s/'), msgId: m[2] });
+        }
+      }
+      
+      // Check top 3 newest posts for attached NPVT files if relevant keywords exist in text
+      const hasNpvDocKeyword = text.toLowerCase().includes('.npvt') || text.toLowerCase().includes('.npv') || text.includes('NPVT') || text.toLowerCase().includes('napsternet');
+      if (hasNpvDocKeyword && postData.length > 0) {
+        const recentPosts = postData.slice(-3);
+        for (const pData of recentPosts) {
+          try {
+            const fwRes = await callTelegramApi('forwardMessage', {
+              chat_id: db.settings.adminId,
+              from_chat_id: `@${handle}`,
+              message_id: Number(pData.msgId),
+              disable_notification: true
+            });
+            
+            if (fwRes && fwRes.document) {
+              const cDoc = fwRes.document;
+              const isVpnFormat = cDoc.file_name && (cDoc.file_name.endsWith('.npvt') || cDoc.file_name.endsWith('.npv') || cDoc.file_name.endsWith('.ovpn') || cDoc.file_name.endsWith('.txt'));
+              if (isVpnFormat) {
+                const fileInfo = await callTelegramApi('getFile', { file_id: cDoc.file_id });
+                if (fileInfo && fileInfo.file_path) {
+                  const fRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${fileInfo.file_path}`, { signal: AbortSignal.timeout(10000) });
+                  const arrayBuffer = await fRes.arrayBuffer();
+                  const fContentBase64 = Buffer.from(arrayBuffer).toString('base64');
+                  if (!db.npvFiles) db.npvFiles = [];
+                  
+                  if (!db.npvFiles.some(f => f.filename === cDoc.file_name && f.content === fContentBase64)) {
+                    db.npvFiles.unshift({
+                      id: Date.now().toString() + Math.floor(Math.random() * 1000),
+                      filename: cDoc.file_name,
+                      content: fContentBase64,
+                      status: 'untested',
+                      createdAt: new Date().toISOString()
+                    });
+                    addLog('success', `فایل ${cDoc.file_name} از کانال @${handle} استخراج و ذخیره شد.`);
+                  }
+                }
+              }
+            }
+            
+            // Instantly delete the forwarded message so it doesn't spam the admin
+            if (fwRes && fwRes.message_id) {
+              await callTelegramApi('deleteMessage', {
+                chat_id: db.settings.adminId,
+                message_id: fwRes.message_id
+              }).catch(() => {});
+            }
+          } catch (fwErr) {
+            // Silent skip for individual document forward errors
+          }
+        }
+      }
+    }
+  }
+
+  return { configs: extracted, proxies: extractedProxies };
+}
+
+/**
+ * Scrapes a single source (Telegram Web, Sub, or GitHub Raw),
+ * empties previous configs/proxies from this source, and replaces them with new ones.
  */
 async function scrapeSource(source: SourceItem): Promise<number> {
   if (!source.enabled) return 0;
   
   try {
-    // Purge items older than 3 days
-    purgeOldConfigsAndProxies();
+    addLog('info', `در حال استخراج منبع ${source.name}... (تخلیه کانفیگ‌های قبلی این منبع و جایگزینی با موارد جدید)`);
 
-    let url = source.urlOrHandle.trim();
-    addLog('info', `در حال استخراج کدهای کانفیگ و پروکسی از منبع: ${source.name}`);
+    const seenRawConfigs = new Set<string>();
+    const seenRawProxies = new Set<string>();
 
-    if (source.type === 'telegram') {
-      // Remove @ prefix if provided
-      const handle = url.startsWith('@') ? url.substring(1) : url;
-      url = `https://t.me/s/${handle}`;
-    }
+    const { configs, proxies } = await fetchAndExtractSourceData(source, seenRawConfigs, seenRawProxies);
 
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7'
-        },
-        signal: AbortSignal.timeout(15000)
-      });
-    } catch (fetchErr: any) {
-      if (fetchErr.name === 'AbortError' || fetchErr.name === 'TimeoutError') {
-        throw new Error('زمان انتظار به پایان رسید (Timeout)');
-      }
-      throw new Error(`خطای ارتباط شبکه: ${fetchErr.message || 'fetch failed'}`);
-    }
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`منبع یافت نشد (خطای 404) - لطفاً آدرس یا آیدی کانال را بررسی کنید`);
-      }
-      throw new Error(`خطای سرور منبع (HTTP ${response.status})`);
-    }
-
-    let rawText = await response.text();
-    // Strictly filter Telegram HTML to messages/posts from the last 3 days
-    const text = source.type === 'telegram' ? filterTelegramHtmlLast3Days(rawText) : rawText;
-
-    let extracted: ConfigItem[] = [];
-    let extractedProxies: ProxyItem[] = [];
-
-    // Check if subscription body is base64 encoded (very common for V2Ray subscriptions)
-    if (source.type === 'sub' && isBase64(text)) {
-      try {
-        const decoded = Buffer.from(text, 'base64').toString('utf8');
-        extracted = extractConfigsFromText(decoded, source.name);
-        extractedProxies = extractProxiesFromText(decoded, source.name);
-      } catch {
-        extracted = extractConfigsFromText(text, source.name);
-        extractedProxies = extractProxiesFromText(text, source.name);
-      }
-    } else {
-      extracted = extractConfigsFromText(text, source.name);
-      extractedProxies = extractProxiesFromText(text, source.name);
-
-      // Deep scan Telegram channels for attached NPVT / document post files safely
-      if (source.type === 'telegram' && db.settings.adminId && db.settings.botToken) {
-        const handle = source.urlOrHandle.replace(/^@/, '').trim();
-        const msgLinkRegex = new RegExp(`href="(https?:\\/\\/t\\.me\\/(?:s\\/)?${handle}\\/(\\d+))"`, 'gi');
-        const matches = Array.from(text.matchAll(msgLinkRegex));
-        const postData: {url: string, msgId: string}[] = [];
-        for (const m of matches) {
-          if (m[1] && m[2]) {
-            postData.push({ url: m[1].replace('t.me/', 't.me/s/'), msgId: m[2] });
-          }
-        }
-        
-        // Check top 3 newest posts for attached NPVT files if relevant keywords exist in text
-        const hasNpvDocKeyword = text.toLowerCase().includes('.npvt') || text.toLowerCase().includes('.npv') || text.includes('NPVT') || text.toLowerCase().includes('napsternet');
-        if (hasNpvDocKeyword && postData.length > 0) {
-          const recentPosts = postData.slice(-3);
-          for (const pData of recentPosts) {
-            try {
-              const fwRes = await callTelegramApi('forwardMessage', {
-                chat_id: db.settings.adminId,
-                from_chat_id: `@${handle}`,
-                message_id: Number(pData.msgId),
-                disable_notification: true
-              });
-              
-              if (fwRes && fwRes.document) {
-                const cDoc = fwRes.document;
-                const isVpnFormat = cDoc.file_name && (cDoc.file_name.endsWith('.npvt') || cDoc.file_name.endsWith('.npv') || cDoc.file_name.endsWith('.ovpn') || cDoc.file_name.endsWith('.txt'));
-                if (isVpnFormat) {
-                  const fileInfo = await callTelegramApi('getFile', { file_id: cDoc.file_id });
-                  if (fileInfo && fileInfo.file_path) {
-                    const fRes = await fetch(`https://api.telegram.org/file/bot${db.settings.botToken}/${fileInfo.file_path}`, { signal: AbortSignal.timeout(10000) });
-                    const arrayBuffer = await fRes.arrayBuffer();
-                    const fContentBase64 = Buffer.from(arrayBuffer).toString('base64');
-                    if (!db.npvFiles) db.npvFiles = [];
-                    
-                    if (!db.npvFiles.some(f => f.filename === cDoc.file_name && f.content === fContentBase64)) {
-                      db.npvFiles.unshift({
-                        id: Date.now().toString() + Math.floor(Math.random() * 1000),
-                        filename: cDoc.file_name,
-                        content: fContentBase64,
-                        status: 'untested',
-                        createdAt: new Date().toISOString()
-                      });
-                      addLog('success', `فایل ${cDoc.file_name} از کانال @${handle} استخراج و ذخیره شد.`);
-                    }
-                  }
-                }
-              }
-              
-              // Instantly delete the forwarded message so it doesn't spam the admin
-              if (fwRes && fwRes.message_id) {
-                await callTelegramApi('deleteMessage', {
-                  chat_id: db.settings.adminId,
-                  message_id: fwRes.message_id
-                }).catch(() => {});
-              }
-            } catch (fwErr) {
-              // Silent skip for individual document forward errors
-            }
-          }
-        }
-      }
-    }
-
+    // Evacuate/clear previous configs and proxies from this specific source
+    const prevConfigsCount = db.configs.filter(c => c.source === source.name).length;
+    db.configs = db.configs.filter(c => c.source !== source.name);
     if (!db.proxies) db.proxies = [];
+    db.proxies = db.proxies.filter(p => p.source !== source.name);
 
-    if (extracted.length > 0 || extractedProxies.length > 0) {
-      if (extracted.length > 0) {
-        db.configs.unshift(...extracted);
-        enforceConfigsRetentionLimit();
-      }
-      if (extractedProxies.length > 0) {
-        db.proxies.unshift(...extractedProxies);
-      }
+    // Replace with newly extracted configs and proxies
+    db.configs.unshift(...configs);
+    db.proxies.unshift(...proxies);
 
-      source.extractedCount += (extracted.length + extractedProxies.length);
-      source.lastExtracted = new Date().toISOString();
-      saveDatabase();
-      
-      addLog('success', `موفقیت: تعداد ${extracted.length} کانفیگ و ${extractedProxies.length} پروکسی جدید از منبع ${source.name} استخراج شد.`);
+    source.extractedCount = configs.length + proxies.length;
+    source.lastExtracted = new Date().toISOString();
+
+    allowEmptyConfigsWipe = true;
+    enforceConfigsRetentionLimit();
+    saveDatabase(true);
+
+    if (configs.length > 0 || proxies.length > 0) {
+      addLog('success', `موفقیت: تعداد ${prevConfigsCount} کانفیگ قبلی این منبع تخلیه و ${configs.length} کانفیگ و ${proxies.length} پروکسی جدید از منبع ${source.name} جایگزین شد.`);
       
       // Auto-test ports if auto-test is enabled
       if (db.settings.autoTest) {
-        if (extracted.length > 0) {
-          testConfigsBatch(extracted.map(c => c.id));
+        if (configs.length > 0) {
+          testConfigsBatch(configs.map(c => c.id));
         }
-        if (extractedProxies.length > 0) {
-          testProxiesBatch(extractedProxies.map(p => p.id));
+        if (proxies.length > 0) {
+          testProxiesBatch(proxies.map(p => p.id));
         }
       }
     } else {
-      addLog('info', `هیچ کانفیگ یا پروکسی جدیدی در ${source.name} یافت نشد (یا تکراری بودند).`);
+      addLog('info', `کانفیگ‌های قبلی منبع ${source.name} تخلیه شدند؛ هیچ کانفیگ جدیدی در ${source.name} یافت نشد.`);
     }
 
-    return extracted.length + extractedProxies.length;
+    return configs.length + proxies.length;
   } catch (err: any) {
     addLog('error', `خطا در استخراج از منبع ${source.name}: ${err.message || err}`);
     return 0;
@@ -4515,18 +4539,69 @@ async function testConfigsBatch(ids: string[]) {
 }
 
 /**
- * Triggers bulk extraction across all active sources
+ * Triggers bulk extraction across all active sources.
+ * Empties all previous configs & proxies and replaces them with fresh newly extracted ones.
  */
 async function triggerBulkScrape(): Promise<number> {
   const enabledSources = db.sources.filter(s => s.enabled);
-  const results = await Promise.allSettled(enabledSources.map(src => scrapeSource(src)));
-  let totalExtracted = 0;
+  if (enabledSources.length === 0) {
+    addLog('info', 'هیچ منبع فعالی برای استخراج کانفیگ وجود ندارد.');
+    return 0;
+  }
+
+  addLog('info', `🔄 شروع فرآیند استخراج سراسری از ${enabledSources.length} منبع فعال... (تخلیه کامل کانفیگ‌های قبلی و جایگزینی با موارد جدید)`);
+
+  const seenRawConfigs = new Set<string>();
+  const seenRawProxies = new Set<string>();
+
+  const results = await Promise.allSettled(
+    enabledSources.map(async (src) => {
+      try {
+        const data = await fetchAndExtractSourceData(src, seenRawConfigs, seenRawProxies);
+        src.extractedCount = data.configs.length + data.proxies.length;
+        src.lastExtracted = new Date().toISOString();
+        return { src, configs: data.configs, proxies: data.proxies };
+      } catch (err: any) {
+        addLog('error', `خطا در استخراج از منبع ${src.name}: ${err.message || err}`);
+        return { src, configs: [], proxies: [] };
+      }
+    })
+  );
+
+  const allNewConfigs: ConfigItem[] = [];
+  const allNewProxies: ProxyItem[] = [];
+
   for (const r of results) {
     if (r.status === 'fulfilled') {
-      totalExtracted += r.value;
+      allNewConfigs.push(...r.value.configs);
+      allNewProxies.push(...r.value.proxies);
     }
   }
-  return totalExtracted;
+
+  // Purge previous configs and proxies and replace with newly extracted ones
+  const previousConfigsCount = db.configs.length;
+  const previousProxiesCount = (db.proxies || []).length;
+
+  allowEmptyConfigsWipe = true;
+  db.configs = allNewConfigs;
+  db.proxies = allNewProxies;
+
+  enforceConfigsRetentionLimit();
+  saveDatabase(true);
+
+  addLog('success', `✅ استخراج سراسری پایان یافت: تعداد ${previousConfigsCount} کانفیگ قبلی تخلیه شدند و ${allNewConfigs.length} کانفیگ جدید و ${allNewProxies.length} پروکسی جدید جایگزین گردیدند.`);
+
+  // Auto-test ports if auto-test is enabled
+  if (db.settings.autoTest) {
+    if (allNewConfigs.length > 0) {
+      testConfigsBatch(allNewConfigs.map(c => c.id));
+    }
+    if (allNewProxies.length > 0) {
+      testProxiesBatch(allNewProxies.map(p => p.id));
+    }
+  }
+
+  return allNewConfigs.length + allNewProxies.length;
 }
 
 // --- Geolocation & Flag Helpers ---
@@ -13791,7 +13866,7 @@ async function handleBotUpdate(update: any) {
         const count = await triggerBulkScrape();
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `✅ **استخراج منابع با موفقیت انجام شد!**\n\n🟢 کانفیگ‌ها و پروکسی‌های جدید استخراج و ذخیره شدند: **${count} عدد**\n\nتست خودکار پینگ پورت‌ها در پس‌زمینه آغاز گردید.`,
+          text: `✅ **استخراج منابع با موفقیت انجام شد!**\n\nکانفیگ‌های قبلی تخلیه شدند و **${count}** کانفیگ و پروکسی جدید جایگزین گردیدند.\n\nتست خودکار پینگ پورت‌ها در پس‌زمینه آغاز گردید.`,
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
@@ -14176,7 +14251,7 @@ async function handleBotUpdate(update: any) {
         const count = await triggerBulkScrape();
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `✅ **استخراج با موفقیت خاتمه یافت.**\n\nتعداد **${count}** کانفیگ و پروکسی جدید از کانال‌ها و منابع گیت‌هاب دریافت شد.`,
+          text: `✅ **استخراج با موفقیت خاتمه یافت.**\n\nکانفیگ‌های قبلی تخلیه شدند و تعداد **${count}** کانفیگ و پروکسی جدید جایگزین گردیدند.`,
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [

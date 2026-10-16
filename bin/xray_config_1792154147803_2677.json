@@ -1,0 +1,55 @@
+{
+  "log": {
+    "loglevel": "none"
+  },
+  "inbounds": [
+    {
+      "port": 16904,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "shadowsocks",
+      "settings": {
+        "servers": [
+          {
+            "address": "20.107.201.69",
+            "port": 443,
+            "method": "chacha20-ietf-poly1305",
+            "password": "4VNX9LDu6fpElXLi"
+          }
+        ]
+      },
+      "proxySettings": {
+        "tag": "iran_relay"
+      }
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    },
+    {
+      "tag": "iran_relay",
+      "protocol": "http",
+      "settings": {
+        "servers": [
+          {
+            "address": "95.38.68.158",
+            "port": 1080,
+            "users": [
+              {
+                "user": "proxyuser",
+                "pass": "DfroUpvpeTCj"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

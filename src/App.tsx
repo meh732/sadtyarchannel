@@ -1029,7 +1029,7 @@ export default function App() {
       const res = await fetch(`/api/sources/${id}/extract`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        showToast(`پویش با موفقیت پایان یافت. تعداد ${data.extractedCount} کانفیگ جدید استخراج شد.`, 'success');
+        showToast(`پویش با موفقیت پایان یافت. کانفیگ‌های قبلی این منبع تخلیه و تعداد ${data.extractedCount} مورد تازه جایگزین شدند.`, 'success');
       }
     } catch (err) {
       showToast('خطا در استخراج منبع', 'error');
@@ -1046,7 +1046,7 @@ export default function App() {
       const res = await fetch('/api/sources/extract-all', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        showToast(`پویش سراسری انجام شد. کل کانفیگ‌های جدید استخراج شده: ${data.extractedCount}`, 'success');
+        showToast(`پویش سراسری انجام شد: تمامی کانفیگ‌های قبلی تخلیه و تعداد ${data.extractedCount} کانفیگ و پروکسی جدید جایگزین شدند.`, 'success');
       }
     } catch (err) {
       showToast('خطا در اجرای پویش سراسری', 'error');
@@ -3405,6 +3405,10 @@ export default function App() {
                         <span>افزودن منابع پیشنهادی پیش‌فرض</span>
                       </button>
                     </div>
+                    <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500 bg-slate-50/80 px-3 py-1.5 rounded-lg border border-slate-100">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <span>سیاست جایگزینی خودکار: در هر بار استخراج (اتوماتیک یا دستی)، کلیه کانفیگ‌های قبلی تخلیه شده و کدهای تازه استخراج‌شده جایگزین می‌شوند.</span>
+                    </div>
                   </div>
 
                   {/* Connected Visual Animated Testing Progress Bar Card */}
@@ -3716,7 +3720,7 @@ export default function App() {
                       <div className="px-6 py-5 border-b border-slate-200 flex sm:items-center justify-between gap-4">
                         <div>
                           <h3 className="font-bold text-slate-900 text-sm">لیست منابع استخراج</h3>
-                          <p className="text-xs text-slate-500 mt-1">بر روی هر یک برای استخراج مجزا کلیک کنید.</p>
+                          <p className="text-xs text-slate-500 mt-1">بر روی هر یک برای استخراج مجزا کلیک کنید (با استخراج، کانفیگ‌های قبلی تخلیه و کدهای جدید جایگزین می‌شوند).</p>
                         </div>
                         <button
                           onClick={handleScrapeAll}
