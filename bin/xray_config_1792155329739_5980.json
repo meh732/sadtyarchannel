@@ -4,7 +4,7 @@
   },
   "inbounds": [
     {
-      "port": 16238,
+      "port": 21431,
       "listen": "127.0.0.1",
       "protocol": "socks",
       "settings": {
@@ -14,16 +14,35 @@
   ],
   "outbounds": [
     {
-      "protocol": "shadowsocks",
+      "protocol": "vmess",
       "settings": {
-        "servers": [
+        "vnext": [
           {
-            "address": "62.133.63.169",
-            "port": 37096,
-            "method": "chacha20-ietf-poly1305",
-            "password": "KP6FQVmJhlXPgvPhrw2gnI"
+            "address": "az.hk01.paopaocloud.cyou",
+            "port": 10035,
+            "users": [
+              {
+                "id": "d8c5b486-84bb-3887-a1d9-07455ea608f2",
+                "alterId": 0,
+                "security": "auto"
+              }
+            ]
           }
         ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "paopao.v2.tw04.paopaocloud.cyou",
+          "allowInsecure": true
+        },
+        "wsSettings": {
+          "path": "/",
+          "headers": {
+            "Host": "paopao.v2.tw04.paopaocloud.cyou"
+          }
+        }
       },
       "proxySettings": {
         "tag": "iran_relay"

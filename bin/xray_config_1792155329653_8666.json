@@ -4,7 +4,7 @@
   },
   "inbounds": [
     {
-      "port": 16904,
+      "port": 16831,
       "listen": "127.0.0.1",
       "protocol": "socks",
       "settings": {
@@ -14,16 +14,23 @@
   ],
   "outbounds": [
     {
-      "protocol": "shadowsocks",
+      "protocol": "trojan",
       "settings": {
         "servers": [
           {
-            "address": "20.107.201.69",
-            "port": 443,
-            "method": "chacha20-ietf-poly1305",
-            "password": "4VNX9LDu6fpElXLi"
+            "address": "103.195.236.24",
+            "port": 28443,
+            "password": "750a29bf-0a40-437f-b120-38de74ae7eaf"
           }
         ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "glc.hruqoaw.cn",
+          "allowInsecure": true
+        }
       },
       "proxySettings": {
         "tag": "iran_relay"

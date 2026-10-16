@@ -2576,6 +2576,10 @@ function buildXrayConfig(rawConfig: string, localPort: number): { configJson: an
         };
 
         (outbound as any).proxySettings = { tag: 'iran_relay' };
+        // XTLS Vision only supports direct sockets, remove flow when chained through proxy to prevent outbound error
+        if (outbound.settings?.vnext?.[0]?.users?.[0]?.flow) {
+          delete outbound.settings.vnext[0].users[0].flow;
+        }
         outbounds.push(relayOutbound);
       }
     } catch (e) {
@@ -2672,7 +2676,7 @@ function checkConfigWithXray(rawConfig: string): Promise<{ working: boolean; lat
     }
 
     const { configJson } = result;
-    const configPath = path.join(process.cwd(), `bin/xray_config_${Date.now()}_${Math.floor(Math.random() * 10000)}.json`);
+    const configPath = path.join(os.tmpdir(), `xray_config_${Date.now()}_${Math.floor(Math.random() * 10000)}.json`);
     
     try {
       fs.writeFileSync(configPath, JSON.stringify(configJson, null, 2));
@@ -2837,8 +2841,9 @@ function checkTlsHandshake(host: string, port: number, sni: string, timeout = 35
 }
 
 /**
- * Performs accurate real-world client verification of a configuration using Xray core
+ * Performs strict real-world client verification of a configuration using Xray core
  * chained strictly through the Iran relay proxy to guarantee 100% real connectivity in v2rayNG/v2rayN.
+ * ZERO false-positives: Never falls back to simple TCP port pings.
  */
 async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   try {
@@ -2846,29 +2851,10 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // 1. Primary real-world client verification using Xray core chained via Iran Relay Proxy
+    // STRICT real client verification using Xray core
+    // Only configs that successfully proxy HTTP traffic and return 204/200 are approved
     const xrayResult = await checkConfigWithXray(rawConfig.trim());
-    if (xrayResult.working) {
-      return xrayResult;
-    }
-
-    // 2. Fallback TCP/TLS verification through Iran proxy for non-standard or direct links
-    const details = parseFullConfigDetails(rawConfig);
-    if (!details.host || !details.port) {
-      return { working: false, latency: 999 };
-    }
-
-    const proxyUri = (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim())
-      ? db.settings.iranRelayProxy.trim()
-      : 'http://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
-
-    const sniTarget = (details.tls || details.sni) ? (details.sni || details.host) : undefined;
-    const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500, sniTarget);
-    if (portCheck.working) {
-      return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
-    }
-
-    return { working: false, latency: 999 };
+    return xrayResult;
   } catch (err) {
     return { working: false, latency: 999 };
   }

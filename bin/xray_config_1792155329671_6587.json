@@ -4,7 +4,7 @@
   },
   "inbounds": [
     {
-      "port": 22771,
+      "port": 21912,
       "listen": "127.0.0.1",
       "protocol": "socks",
       "settings": {
@@ -18,10 +18,10 @@
       "settings": {
         "servers": [
           {
-            "address": "46.224.2.35",
-            "port": 47199,
-            "method": "chacha20-ietf-poly1305",
-            "password": "Jx2HKJK7kiti86e8AnQIbX"
+            "address": "167.88.61.14",
+            "port": 8080,
+            "method": "aes-256-gcm",
+            "password": "KixLvKzwjekG00rm"
           }
         ]
       },
