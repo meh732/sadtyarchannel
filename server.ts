@@ -4245,27 +4245,53 @@ async function fetchAndExtractSourceData(
     url = `https://t.me/s/${handle}`;
   }
 
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7'
-      },
-      signal: AbortSignal.timeout(15000)
-    });
-  } catch (fetchErr: any) {
-    if (fetchErr.name === 'AbortError' || fetchErr.name === 'TimeoutError') {
-      throw new Error('زمان انتظار به پایان رسید (Timeout)');
+  const USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
+  ];
+
+  let response: Response | null = null;
+  let lastErr: any = null;
+
+  for (let attempt = 0; attempt < USER_AGENTS.length; attempt++) {
+    try {
+      const ua = USER_AGENTS[attempt];
+      response = await fetch(url, {
+        headers: {
+          'User-Agent': ua,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7',
+          'Accept-Language': 'en-US,en;q=0.9,fa;q=0.8',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        },
+        signal: AbortSignal.timeout(25000)
+      });
+
+      if (response.ok) {
+        break;
+      }
+      if (response.status === 404) {
+        throw new Error(`منبع یافت نشد (خطای 404) - لطفاً آدرس یا آیدی کانال را بررسی کنید`);
+      }
+      lastErr = new Error(`خطای سرور منبع (HTTP ${response.status})`);
+    } catch (fetchErr: any) {
+      lastErr = fetchErr;
+      if (fetchErr.message && fetchErr.message.includes('404')) {
+        throw fetchErr;
+      }
+      if (attempt < USER_AGENTS.length - 1) {
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      }
     }
-    throw new Error(`خطای ارتباط شبکه: ${fetchErr.message || 'fetch failed'}`);
   }
 
-  if (!response.ok) {
-    if (response.status === 404) {
-      throw new Error(`منبع یافت نشد (خطای 404) - لطفاً آدرس یا آیدی کانال را بررسی کنید`);
+  if (!response || !response.ok) {
+    if (lastErr && (lastErr.name === 'AbortError' || lastErr.name === 'TimeoutError' || (lastErr.message && lastErr.message.includes('timeout')))) {
+      throw new Error('زمان انتظار به پایان رسید (Timeout)');
     }
-    throw new Error(`خطای سرور منبع (HTTP ${response.status})`);
+    throw lastErr || new Error('خطای ارتباط شبکه یا دریافت منبع');
   }
 
   let rawText = await response.text();
