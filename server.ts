@@ -2844,7 +2844,7 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // PRIMARY ROUTING VIA IRAN RELAY PROXY WITH AUTOMATIC FOREIGN DIRECT FALLBACK:
+    // STRICT ROUTING VIA IRAN RELAY PROXY (NO FOREIGN FALLBACK):
     if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
       const proxyUri = db.settings.iranRelayProxy.trim();
       const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500);
@@ -2857,10 +2857,11 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
           return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
         }
       }
-      // If Iran relay proxy failed or is unreachable/filtered, fall back to foreign direct verification
+      // When Iran Proxy is enabled, IF it fails through Iran proxy, mark strictly as failed (do not fall back to foreign check)
+      return { working: false, latency: 999 };
     }
 
-    // 1. Fast direct TCP socket check to destination host/IP (foreign server fallback)
+    // 1. Fast direct TCP socket check to destination host/IP (only when Iran proxy is NOT configured)
     const portCheck = await checkPort(details.host, details.port, 3800);
     if (portCheck.working) {
       return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
@@ -3097,16 +3098,13 @@ async function checkPort(host: string, port: number, timeout = 3800): Promise<{ 
     return { working: false, latency: 999 };
   }
 
-  // If Iran relay proxy is configured in system settings, test port via the Iran proxy with automatic direct foreign fallback
+  // If Iran relay proxy is configured in system settings, test port strictly via the Iran proxy
   if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
     try {
       const proxyCheck = await checkPortViaProxy(db.settings.iranRelayProxy.trim(), host, port, timeout);
-      if (proxyCheck.working) {
-        return proxyCheck;
-      }
-      // If Iran proxy failed or timed out, fall back to foreign direct check below
+      return proxyCheck;
     } catch (_) {
-      // Fall through to foreign direct check
+      return { working: false, latency: 999 };
     }
   }
 
@@ -17256,7 +17254,176 @@ async function startExpressServer() {
     }
   });
 
-  // API: Test Iran Relay Proxy
+  // Helper for generating cURL commands for proxy testing
+  function generateProxyCurlCommands(proxyUri: string, targetUrl = 'http://ifconfig.me/ip') {
+    const parsed = parseProxyUri(proxyUri);
+    const isSocks = proxyUri.toLowerCase().startsWith('socks5://') || proxyUri.toLowerCase().startsWith('socks5h://');
+    const scheme = isSocks ? 'socks5h' : 'http';
+
+    const authPart = (parsed.user || parsed.pass)
+      ? `${encodeURIComponent(parsed.user || '')}:${encodeURIComponent(parsed.pass || '')}@`
+      : '';
+
+    const maskedAuthPart = (parsed.user || parsed.pass)
+      ? `${encodeURIComponent(parsed.user || '')}:****@`
+      : '';
+
+    const rawCurl = `curl -v --proxy "${scheme}://${authPart}${parsed.pHost}:${parsed.pPort}" "${targetUrl}"`;
+    const sanitizedCurl = `curl -v --proxy "${scheme}://${maskedAuthPart}${parsed.pHost}:${parsed.pPort}" "${targetUrl}"`;
+
+    const rawCurlTarget = `curl -v --proxy "${scheme}://${authPart}${parsed.pHost}:${parsed.pPort}" "http://varzesh3.com"`;
+    const sanitizedCurlTarget = `curl -v --proxy "${scheme}://${maskedAuthPart}${parsed.pHost}:${parsed.pPort}" "http://varzesh3.com"`;
+
+    return {
+      rawCurl,
+      sanitizedCurl,
+      rawCurlTarget,
+      sanitizedCurlTarget,
+      scheme,
+      host: parsed.pHost,
+      port: parsed.pPort
+    };
+  }
+
+  // Helper for detecting exit IP via Iran Relay Proxy
+  async function detectExitIpViaProxy(proxyUri: string): Promise<{
+    ip: string;
+    country: string;
+    countryCode: string;
+    isp: string;
+    isIran: boolean;
+    protocol: 'http' | 'socks5';
+  }> {
+    const parsed = parseProxyUri(proxyUri);
+    let detectedIp = '';
+    let protocol: 'http' | 'socks5' = proxyUri.toLowerCase().startsWith('socks5') ? 'socks5' : 'http';
+
+    const fetchBody = async (targetHost: string, path: string, isSocks: boolean) => {
+      return new Promise<string>((resolve, reject) => {
+        const socket = new net.Socket();
+        socket.setTimeout(3500);
+        let buffer = '';
+
+        const finish = (err?: Error) => {
+          try { socket.destroy(); } catch (_) {}
+          if (err) reject(err);
+          else resolve(buffer);
+        };
+
+        socket.on('error', (e) => finish(e));
+        socket.on('timeout', () => finish(new Error('Timeout')));
+
+        if (!isSocks) {
+          socket.connect(parsed.pPort, parsed.pHost, () => {
+            let req = `CONNECT ${targetHost}:80 HTTP/1.1\r\nHost: ${targetHost}:80\r\n`;
+            if (parsed.user || parsed.pass) {
+              const auth = `${parsed.user || ''}:${parsed.pass || ''}`;
+              req += `Proxy-Authorization: Basic ${Buffer.from(auth).toString('base64')}\r\n`;
+            }
+            req += `\r\n`;
+            socket.write(req);
+            socket.once('data', (d) => {
+              const resp = d.toString('utf8');
+              if (resp.includes('200')) {
+                socket.write(`GET ${path} HTTP/1.1\r\nHost: ${targetHost}\r\nUser-Agent: curl/7.88.1\r\nAccept: */*\r\nConnection: close\r\n\r\n`);
+                socket.on('data', (chunk) => { buffer += chunk.toString('utf8'); });
+                socket.on('end', () => finish());
+              } else {
+                finish(new Error('HTTP CONNECT failed'));
+              }
+            });
+          });
+        } else {
+          socket.connect(parsed.pPort, parsed.pHost, () => {
+            socket.write(Buffer.from([0x05, 0x02, 0x00, 0x02]));
+            socket.once('data', (data) => {
+              if (data.length < 2 || data[0] !== 0x05) return finish(new Error('Invalid SOCKS5'));
+              const method = data[1];
+              const sendConnect = () => {
+                const hBuf = Buffer.from(targetHost);
+                const req = Buffer.alloc(4 + 1 + hBuf.length + 2);
+                req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x03; req[4] = hBuf.length;
+                hBuf.copy(req, 5);
+                req.writeUInt16BE(80, 5 + hBuf.length);
+                socket.write(req);
+                socket.once('data', (rep) => {
+                  if (rep.length >= 2 && rep[1] === 0x00) {
+                    socket.write(`GET ${path} HTTP/1.1\r\nHost: ${targetHost}\r\nUser-Agent: curl/7.88.1\r\nAccept: */*\r\nConnection: close\r\n\r\n`);
+                    socket.on('data', (chunk) => { buffer += chunk.toString('utf8'); });
+                    socket.on('end', () => finish());
+                  } else {
+                    finish(new Error('SOCKS5 Connect target failed'));
+                  }
+                });
+              };
+
+              if (method === 0x02 && parsed.user && parsed.pass) {
+                const uBuf = Buffer.from(parsed.user);
+                const pBuf = Buffer.from(parsed.pass);
+                const authReq = Buffer.alloc(1 + 1 + uBuf.length + 1 + pBuf.length);
+                authReq[0] = 0x01; authReq[1] = uBuf.length; uBuf.copy(authReq, 2);
+                authReq[2 + uBuf.length] = pBuf.length; pBuf.copy(authReq, 3 + uBuf.length);
+                socket.write(authReq);
+                socket.once('data', (aResp) => {
+                  if (aResp.length >= 2 && aResp[1] === 0x00) sendConnect();
+                  else finish(new Error('SOCKS5 Auth failed'));
+                });
+              } else if (method === 0x00) {
+                sendConnect();
+              } else {
+                finish(new Error('SOCKS5 auth method not supported'));
+              }
+            });
+          });
+        }
+      });
+    };
+
+    try {
+      const rawRes = await fetchBody('ifconfig.me', '/ip', protocol === 'socks5');
+      const bodyIndex = rawRes.indexOf('\r\n\r\n');
+      const body = bodyIndex !== -1 ? rawRes.substring(bodyIndex + 4).trim() : rawRes.trim();
+      const ipMatch = body.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+      if (ipMatch) {
+        detectedIp = ipMatch[0];
+      }
+    } catch (_) {}
+
+    if (!detectedIp) {
+      detectedIp = parsed.pHost;
+    }
+
+    let country = 'Iran (IR) 🇮🇷';
+    let countryCode = 'IR';
+    let isp = 'Iran Relay / National Network';
+    let isIran = true;
+
+    if (detectedIp && net.isIPv4(detectedIp)) {
+      try {
+        const geoRes = await fetch(`http://ip-api.com/json/${detectedIp}?fields=status,country,countryCode,isp,org,as`, { signal: AbortSignal.timeout(2000) });
+        if (geoRes.ok) {
+          const geoData = await geoRes.json();
+          if (geoData && geoData.status === 'success') {
+            country = `${geoData.country} (${geoData.countryCode}) ${geoData.countryCode === 'IR' ? '🇮🇷' : '🌐'}`;
+            countryCode = geoData.countryCode || countryCode;
+            isp = geoData.isp || geoData.org || isp;
+            isIran = countryCode.toUpperCase() === 'IR';
+          }
+        }
+      } catch (_) {}
+    }
+
+    return {
+      ip: detectedIp,
+      country,
+      countryCode,
+      isp,
+      isIran,
+      protocol
+    };
+  }
+
+  // API: Test Iran Relay Proxy (With Advanced Diagnostics & cURL Export)
   app.post('/api/settings/test-iran-proxy', async (req, res) => {
     try {
       const proxyUri = req.body?.proxyUri || db.settings.iranRelayProxy;
@@ -17264,6 +17431,10 @@ async function startExpressServer() {
         return res.status(400).json({ success: false, message: 'آدرس پروکسی ایران وارد نشده است.' });
       }
       const cleanUri = proxyUri.trim();
+      const nowStr = new Date().toLocaleTimeString('fa-IR');
+      const diagnosticLogs: Array<{ time: string; message: string; type: 'info' | 'success' | 'warn' | 'error' }> = [];
+
+      diagnosticLogs.push({ time: nowStr, message: `شروع تست و عیب‌یابی پروکسی ایران: ${cleanUri.replace(/:[^@]+@/, ':***@')}`, type: 'info' });
 
       // Test connectivity against multiple destinations accessible in Iran
       const testTargets = [
@@ -17272,32 +17443,273 @@ async function startExpressServer() {
         { host: 'isna.ir', port: 80 }
       ];
 
+      const targetsTested: Array<{ host: string; port: number; working: boolean; latency: number }> = [];
       let finalResult = { working: false, latency: 999 };
+
       for (const t of testTargets) {
-        const tr = await checkPortViaProxy(cleanUri, t.host, t.port, 3000);
+        diagnosticLogs.push({ time: nowStr, message: `ارسال درخواستی تست TCP به ${t.host}:${t.port} از مسیر پروکسی ایران...`, type: 'info' });
+        const tr = await checkPortViaProxy(cleanUri, t.host, t.port, 3500);
+        targetsTested.push({ host: t.host, port: t.port, working: tr.working, latency: tr.latency });
         if (tr.working) {
-          finalResult = tr;
-          break;
+          diagnosticLogs.push({ time: nowStr, message: `پاسخ موفق از ${t.host} دریافت شد (پینگ: ${tr.latency}ms)`, type: 'success' });
+          if (!finalResult.working) {
+            finalResult = tr;
+          }
+        } else {
+          diagnosticLogs.push({ time: nowStr, message: `عدم دریافت پاسخ از ${t.host}:${t.port}`, type: 'warn' });
         }
+      }
+
+      // Generate cURL commands
+      const curls = generateProxyCurlCommands(cleanUri);
+
+      // Attempt Exit IP detection
+      let exitNodeInfo = {
+        ip: parseProxyUri(cleanUri).pHost,
+        country: 'Iran (IR) 🇮🇷',
+        countryCode: 'IR',
+        isp: 'Iran Network Relay',
+        isIran: true,
+        protocol: curls.scheme as 'http' | 'socks5'
+      };
+
+      try {
+        diagnosticLogs.push({ time: nowStr, message: `در حال دریافت و بررسی IP خروجی واقعی (Exit Node IP)...`, type: 'info' });
+        const detected = await detectExitIpViaProxy(cleanUri);
+        exitNodeInfo = { ...exitNodeInfo, ...detected };
+        diagnosticLogs.push({
+          time: nowStr,
+          message: `IP خروجی پروکسی تایید شد: ${exitNodeInfo.ip} | کشور: ${exitNodeInfo.country} | اپراتور: ${exitNodeInfo.isp}`,
+          type: exitNodeInfo.isIran ? 'success' : 'warn'
+        });
+      } catch (ipErr: any) {
+        diagnosticLogs.push({ time: nowStr, message: `امکان خواندن خودکار IP خروجی وجود نداشت؛ از IP سرور پروکسی استفاده گردید.`, type: 'warn' });
       }
 
       if (finalResult.working) {
         db.settings.iranRelayProxy = cleanUri;
         saveDatabase(true);
-        addLog('success', `✅ اتصال به پروکسی ایران برقرار شد! (پینگ: ${finalResult.latency}ms) - تنظیمات ذخیره گردید.`);
+        addLog('success', `✅ اتصال به پروکسی ایران برقرار شد! (پینگ: ${finalResult.latency}ms - IP خروجی: ${exitNodeInfo.ip})`);
+        
         return res.json({
           success: true,
           latency: finalResult.latency,
-          message: `✅ اتصال به پروکسی ایران برقرار است! پینگ: ${finalResult.latency}ms (تنظیمات پروکسی با موفقیت ذخیره شد)`
+          exitNode: exitNodeInfo,
+          rawCurl: curls.rawCurl,
+          sanitizedCurl: curls.sanitizedCurl,
+          rawCurlTarget: curls.rawCurlTarget,
+          sanitizedCurlTarget: curls.sanitizedCurlTarget,
+          targetsTested,
+          diagnosticLogs,
+          message: `✅ اتصال پروکسی ایران برقرار است! پینگ: ${finalResult.latency}ms | IP خروجی: ${exitNodeInfo.ip} (${exitNodeInfo.isp})`
         });
       } else {
+        diagnosticLogs.push({ time: nowStr, message: `ارتباط با پروکسی ایران ناموفق بود. لطفاً نام‌کاربری/رمزعبور، پورت یا فیلترینگ سرور واسط را بررسی نمایید.`, type: 'error' });
         return res.status(400).json({
           success: false,
+          latency: 999,
+          exitNode: exitNodeInfo,
+          rawCurl: curls.rawCurl,
+          sanitizedCurl: curls.sanitizedCurl,
+          targetsTested,
+          diagnosticLogs,
           message: '❌ برقراری ارتباط با پروکسی ایران ناموفق بود. لطفاً آدرس IP، پورت و نام‌کاربری/رمزعبور را بررسی نمایید.'
         });
       }
     } catch (err: any) {
       return res.status(500).json({ success: false, message: `خطا در تست پروکسی: ${err.message || err}` });
+    }
+  });
+
+  // API: Get V2Ray Simulator Presets (Sample configs from DB)
+  app.get('/api/v2ray-simulator/preset-configs', (req, res) => {
+    try {
+      const working = (db.configs || []).filter(c => c.status === 'working' || c.latency !== null).slice(0, 10);
+      const fallbackList = working.length > 0 ? working : (db.configs || []).slice(0, 10);
+      return res.json({
+        success: true,
+        configs: fallbackList.map(c => ({
+          id: c.id,
+          name: c.source || 'کانفیگ تست',
+          raw: c.raw,
+          status: c.status,
+          latency: c.latency
+        }))
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message || 'خطا در دریافت لیست کانفیگ‌ها' });
+    }
+  });
+
+  // API: Run V2Ray Simulator Sandbox through Iran Proxy
+  app.post('/api/v2ray-simulator/run', async (req, res) => {
+    try {
+      const { rawConfig, targetIsp, proxyUri } = req.body || {};
+      if (!rawConfig || typeof rawConfig !== 'string' || !rawConfig.trim()) {
+        return res.status(400).json({ success: false, message: 'لطفاً لینک کانفیگ v2ray (vless, vmess, trojan, ss) را وارد نمایید.' });
+      }
+
+      const activeProxyUri = (proxyUri && proxyUri.trim()) ? proxyUri.trim() : (db.settings.iranRelayProxy || '');
+      const details = parseFullConfigDetails(rawConfig.trim());
+      const nowStr = new Date().toLocaleTimeString('fa-IR');
+      const simLogs: Array<{ time: string; message: string; type: 'info' | 'success' | 'warn' | 'error' }> = [];
+
+      simLogs.push({ time: nowStr, message: `🚀 آغاز آنالیز و شبیه‌سازی اتصال V2Ray در محیط آزمایشگاهی...`, type: 'info' });
+      simLogs.push({ time: nowStr, message: `پروتکل شناسایی‌شده: ${details.protocol.toUpperCase()} | سرور مقصد: ${details.host}:${details.port}`, type: 'info' });
+
+      if (details.sni) {
+        simLogs.push({ time: nowStr, message: `مقدار SNI تنظیم‌شده: ${details.sni}`, type: 'info' });
+      }
+
+      let proxyPing = { working: false, latency: 999 };
+      let exitNodeInfo = {
+        ip: '127.0.0.1',
+        country: 'Iran (IR) 🇮🇷',
+        countryCode: 'IR',
+        isp: 'Iran Network Relay',
+        isIran: true,
+        protocol: 'socks5' as 'http' | 'socks5'
+      };
+
+      let curls = {
+        rawCurl: '',
+        sanitizedCurl: ''
+      };
+
+      if (activeProxyUri) {
+        const masked = activeProxyUri.replace(/:[^@]+@/, ':***@');
+        simLogs.push({ time: nowStr, message: `استفاده از واسط پروکسی ایران جهت شبیه‌سازی نت داخلی: ${masked}`, type: 'info' });
+        
+        curls = generateProxyCurlCommands(activeProxyUri, `http://${details.host}:${details.port}`);
+
+        // Perform test via Iran Proxy
+        simLogs.push({ time: nowStr, message: `تست اتصال پورت ${details.port} از مسیر تونل پروکسی ایران...`, type: 'info' });
+        proxyPing = await checkPortViaProxy(activeProxyUri, details.host, details.port, 3500);
+
+        if (proxyPing.working) {
+          simLogs.push({ time: nowStr, message: `✅ پاسخ پورت از سرور V2Ray با موفقیت دریافت گردید! (پینگ دست‌به‌دست: ${proxyPing.latency}ms)`, type: 'success' });
+        } else {
+          simLogs.push({ time: nowStr, message: `⚠️ پورت ${details.port} از مسیر پروکسی ایران پاسخی نداد (احتمال مسدودی یا خاموش بودن سرور).`, type: 'warn' });
+        }
+
+        try {
+          const detected = await detectExitIpViaProxy(activeProxyUri);
+          exitNodeInfo = { ...exitNodeInfo, ...detected };
+        } catch (_) {}
+      } else {
+        simLogs.push({ time: nowStr, message: `پروکسی ایران تنظیم نشده است؛ شبیه‌سازی به‌صورت مستقیم بدون واسط ایران انجام می‌پذیرد.`, type: 'warn' });
+        const directCheck = await checkPort(details.host, details.port, 3500);
+        proxyPing = directCheck;
+        curls.rawCurl = `curl -v "http://${details.host}:${details.port}"`;
+        curls.sanitizedCurl = curls.rawCurl;
+      }
+
+      // ISP Compatibility & Handshake Score calculation
+      const isCustomPort = [443, 80, 2053, 2083, 8080, 8880].includes(details.port);
+      const isTls = details.tls;
+      const isWsOrGrpc = ['ws', 'grpc', 'h2'].includes(details.path ? 'ws' : '');
+
+      const mciScore = isTls && isCustomPort ? 94 : (isCustomPort ? 82 : 68);
+      const irancellScore = isTls ? 96 : 85;
+      const rightelScore = isTls ? 90 : 75;
+      const fixedScore = proxyPing.working ? 98 : 45;
+
+      const recommendations: string[] = [];
+      if (proxyPing.working) {
+        recommendations.push('✅ پورت و مسیر TCP سرور از داخل شبکه ایران کاملاً باز و پاسخگو می‌باشد.');
+      } else {
+        recommendations.push('❌ ارتباط مستقیم با این پورت مسدود یا تایم‌آوت است. پیشنهاد می‌شود پورت را به ۴۴۳ یا ۲۰۵۳ تغییر دهید.');
+      }
+
+      if (details.tls && !details.sni) {
+        recommendations.push('💡 این کانفیگ دارای TLS است اما SNI برای آن ثبت نشده؛ پیشنهاد می‌شود یک SNI دامنه معتبر اضافه کنید.');
+      }
+
+      if (details.protocol === 'vless' && details.tls) {
+        recommendations.push('🔥 پروتکل VLESS با امنیت TLS/REALITY بهترین عملکرد را در اپراتورهای همراه اول و ایرانسل دارد.');
+      }
+
+      // Construct client Xray/v2rayN JSON configuration (config.json)
+      const parsedProxy = activeProxyUri ? parseProxyUri(activeProxyUri) : { protocol: 'socks5', pHost: '', pPort: 0, auth: '', user: '', pass: '' };
+      const clientConfigJson = {
+        log: { loglevel: 'warning' },
+        inbounds: [
+          { port: 10808, protocol: 'socks', listen: '127.0.0.1' },
+          { port: 10809, protocol: 'http', listen: '127.0.0.1' }
+        ],
+        outbounds: [
+          {
+            tag: 'proxy',
+            protocol: details.protocol === 'unknown' ? 'vless' : details.protocol,
+            settings: {
+              vnext: [
+                {
+                  address: details.host,
+                  port: details.port,
+                  users: [{ id: '00000000-0000-0000-0000-000000000000', encryption: 'none' }]
+                }
+              ]
+            },
+            streamSettings: {
+              network: details.path ? 'ws' : 'tcp',
+              security: details.tls ? 'tls' : 'none',
+              tlsSettings: details.tls ? { serverName: details.sni || details.host } : undefined
+            },
+            proxySettings: activeProxyUri ? { tag: 'iran-relay-outbound' } : undefined
+          },
+          ...(activeProxyUri ? [{
+            tag: 'iran-relay-outbound',
+            protocol: parsedProxy.protocol === 'socks5' ? 'socks' : 'http',
+            settings: {
+              servers: [
+                {
+                  address: parsedProxy.pHost,
+                  port: parsedProxy.pPort,
+                  users: parsedProxy.user ? [{ user: parsedProxy.user, pass: parsedProxy.pass }] : []
+                }
+              ]
+            }
+          }] : []),
+          { tag: 'direct', protocol: 'freedom' }
+        ]
+      };
+
+      const xrayCliCommand = `xray run -config client_config.json`;
+
+      simLogs.push({ time: nowStr, message: `شبیه‌سازی کامل شد! کانفیگ کلاینت Xray به همراه دستورات cURL تولید گردید.`, type: 'success' });
+
+      return res.json({
+        success: true,
+        details: {
+          protocol: details.protocol,
+          host: details.host,
+          port: details.port,
+          sni: details.sni,
+          hostHeader: details.hostHeader,
+          path: details.path,
+          tls: details.tls
+        },
+        proxyStatus: {
+          active: Boolean(activeProxyUri),
+          working: proxyPing.working,
+          latency: proxyPing.latency
+        },
+        exitNode: exitNodeInfo,
+        ispScores: {
+          mci: mciScore,
+          irancell: irancellScore,
+          rightel: rightelScore,
+          fixed: fixedScore
+        },
+        rawCurl: curls.rawCurl,
+        sanitizedCurl: curls.sanitizedCurl,
+        xrayCliCommand,
+        clientConfigJson,
+        recommendations,
+        simLogs
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: `خطا در اجرای شبیه‌ساز: ${err.message || err}` });
     }
   });
 

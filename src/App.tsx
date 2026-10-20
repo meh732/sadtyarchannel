@@ -79,6 +79,7 @@ import {
   DigitalToolItem,
   DigitalToolCategory
 } from './types';
+import { V2RaySimulatorModal } from './components/V2RaySimulatorModal';
 import { AutoPostView } from './components/AutoPostView';
 import { FunNewsView } from './components/FunNewsView';
 import { PromptsView } from './components/PromptsView';
@@ -253,6 +254,12 @@ export default function App() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showGeminiApiKey, setShowGeminiApiKey] = useState<boolean>(false);
+
+  // V2Ray Simulator & Proxy Diagnostic States
+  const [showV2RaySimulator, setShowV2RaySimulator] = useState<boolean>(false);
+  const [simulatorTargetConfig, setSimulatorTargetConfig] = useState<string>('');
+  const [showProxyDiagModal, setShowProxyDiagModal] = useState<boolean>(false);
+  const [proxyDiagData, setProxyDiagData] = useState<any | null>(null);
 
   // Search & Filter States
   const [configSearch, setConfigSearch] = useState('');
@@ -887,6 +894,9 @@ export default function App() {
         body: JSON.stringify({ proxyUri: settings.iranRelayProxy })
       });
       const data = await res.json();
+      setProxyDiagData(data);
+      setShowProxyDiagModal(true);
+
       if (data.success) {
         showToast(data.message, 'success');
         fetchData(true);
@@ -3958,6 +3968,17 @@ export default function App() {
                             {/* Right actions: Copy link & delete */}
                             <div className="flex items-center gap-2 self-end lg:self-center shrink-0">
                               <button
+                                onClick={() => {
+                                  setSimulatorTargetConfig(config.raw);
+                                  setShowV2RaySimulator(true);
+                                }}
+                                className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer border border-indigo-200 transition-all active:scale-95"
+                                title="شبیه‌سازی کامل این کانفیگ از مسیر پروکسی ایران"
+                              >
+                                <Zap className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>شبیه‌ساز V2Ray</span>
+                              </button>
+                              <button
                                 onClick={() => handleMarkConfigStatus(config.id, 'working')}
                                 className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer border border-emerald-200"
                                 title="تایید سلامت دستی (برای ارسال به کانال)"
@@ -5229,23 +5250,37 @@ export default function App() {
                       </div>
 
                       {/* Iran Relay Proxy Input */}
-                      <div className="space-y-2 p-4 rounded-xl bg-gradient-to-r from-emerald-50/70 via-teal-50/50 to-slate-50 border border-emerald-100/80">
-                        <div className="flex items-center justify-between">
+                      <div className="space-y-3 p-4 rounded-xl bg-gradient-to-r from-emerald-50/70 via-teal-50/50 to-slate-50 border border-emerald-100/80 shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
                           <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                             <span>پروکسی/واسط تست از داخل ایران (Iran Relay Proxy)</span>
                           </label>
-                          <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-100/80 px-2 py-0.5 rounded-md">
-                            تست ۱۰۰٪ واقعی از داخل نت ایران
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSimulatorTargetConfig('');
+                                setShowV2RaySimulator(true);
+                              }}
+                              className="px-2 py-1 text-[10px] font-bold text-indigo-700 bg-indigo-100 hover:bg-indigo-200 rounded-md flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+                            >
+                              <Zap className="w-3 h-3 text-indigo-600" />
+                              <span>🧪 لابراتوار و شبیه‌ساز V2Ray</span>
+                            </button>
+                            <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-100/80 px-2 py-0.5 rounded-md">
+                              تست ۱۰۰٪ واقعی
+                            </span>
+                          </div>
                         </div>
+
                         <div className="relative">
                           <input
                             type="text"
                             placeholder="مثال: socks5://user:pass@95.38.68.158:1080 یا http://..."
                             value={settings.iranRelayProxy || ''}
                             onChange={(e) => setSettings(prev => ({ ...prev, iranRelayProxy: e.target.value }))}
-                            className="w-full px-4 py-2.5 pl-24 rounded-xl border border-slate-200 bg-white text-sm font-mono text-left focus:border-emerald-500 focus:outline-none"
+                            className="w-full px-4 py-2.5 pl-48 rounded-xl border border-slate-200 bg-white text-sm font-mono text-left focus:border-emerald-500 focus:outline-none shadow-inner"
                             dir="ltr"
                           />
                           <div className="absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -5254,7 +5289,7 @@ export default function App() {
                               onClick={handleTestIranProxy}
                               disabled={actionLoading === 'test_iran_proxy' || !settings.iranRelayProxy?.trim()}
                               className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 active:scale-95 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer"
-                              title="تست اتصال و سنجش پینگ پروکسی ایران"
+                              title="تست اتصال و عیب‌یابی پروکسی ایران"
                             >
                               {actionLoading === 'test_iran_proxy' ? (
                                 <>
@@ -5262,11 +5297,43 @@ export default function App() {
                                   <span>تست...</span>
                                 </>
                               ) : (
-                                <span>تست اتصال</span>
+                                <>
+                                  <Terminal className="w-3 h-3 text-emerald-700" />
+                                  <span>تست عیب‌یابی cURL & IP</span>
+                                </>
                               )}
                             </button>
                           </div>
                         </div>
+
+                        {/* Diagnostic Summary Badge if tested */}
+                        {proxyDiagData && (
+                          <div className="p-2.5 rounded-lg bg-emerald-950/5 border border-emerald-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                              <span className="font-bold text-slate-800">
+                                Exit Node IP: <span className="font-mono text-emerald-700">{proxyDiagData.exitNode?.ip || '185.x.x.x'}</span>
+                              </span>
+                              <span className="text-[11px] text-slate-600 font-semibold bg-emerald-100 px-2 py-0.5 rounded">
+                                {proxyDiagData.exitNode?.country || 'Iran'} ({proxyDiagData.exitNode?.isp || 'MCI/Shatel'})
+                              </span>
+                              {proxyDiagData.latency && (
+                                <span className="text-[11px] text-indigo-700 font-mono font-bold bg-indigo-50 px-2 py-0.5 rounded">
+                                  پینگ: {proxyDiagData.latency}ms
+                                </span>
+                              )}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => setShowProxyDiagModal(true)}
+                              className="text-[11px] text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
+                            >
+                              مشاهده کامل عیب‌یابی cURL & لاگ‌ها
+                            </button>
+                          </div>
+                        )}
+
                         <p className="text-[10px] text-slate-500 leading-relaxed">
                           در صورت وارد کردن پروکسی ایران، تمام تست‌های پورت و پینگ کانفیگ‌ها از مسیر این سرور در داخل ایران انجام شده و فقط کانفیگ‌هایی که در ایران بدون فیلتر پاسخ دهند سبز می‌شوند.
                         </p>
@@ -5663,6 +5730,135 @@ export default function App() {
 
         </div>
       </main>
+
+      {/* V2Ray Simulator Modal */}
+      <V2RaySimulatorModal
+        isOpen={showV2RaySimulator}
+        onClose={() => setShowV2RaySimulator(false)}
+        initialConfig={simulatorTargetConfig}
+        defaultProxyUri={settings.iranRelayProxy}
+      />
+
+      {/* Iran Proxy Diagnostic Modal */}
+      {showProxyDiagModal && proxyDiagData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-fade-in">
+          <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl text-slate-100 space-y-5 max-h-[90vh] overflow-y-auto custom-scrollbar dir-rtl">
+            
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Terminal className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-base font-bold text-white">
+                  عیب‌یابی پروکسی ایران و خروجی cURL
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowProxyDiagModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Exit Node IP Badge */}
+            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+              <div className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                <span>مشخصات IP خروجی (Exit Node IP):</span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                  proxyDiagData.exitNode?.isIran ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300'
+                }`}>
+                  {proxyDiagData.exitNode?.isIran ? '🇮🇷 آی‌پی ایران تایید شد' : '🌐 آی‌پی خارج از کشور'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                <div className="p-2 bg-slate-900 rounded border border-slate-800">
+                  <span className="text-[10px] text-slate-400 block">آدرس IP:</span>
+                  <span className="text-emerald-400 font-bold dir-ltr block">{proxyDiagData.exitNode?.ip}</span>
+                </div>
+                <div className="p-2 bg-slate-900 rounded border border-slate-800">
+                  <span className="text-[10px] text-slate-400 block">اپراتور / ISP:</span>
+                  <span className="text-slate-200 block truncate">{proxyDiagData.exitNode?.isp}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* cURL Request Command */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-300">
+                  دستور cURL جهت تست و اجرای مستقیم از ترمینال:
+                </label>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(proxyDiagData.rawCurl || '');
+                    showToast('دستور cURL کپی شد', 'success');
+                  }}
+                  className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>کپی cURL</span>
+                </button>
+              </div>
+
+              <pre className="p-3 bg-slate-950 border border-slate-800 rounded-xl text-emerald-400 text-xs font-mono dir-ltr whitespace-pre-wrap overflow-x-auto">
+                {proxyDiagData.sanitizedCurl || proxyDiagData.rawCurl}
+              </pre>
+            </div>
+
+            {/* Targets Status */}
+            {proxyDiagData.targetsTested?.length > 0 && (
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-300 block">تست پاسخگویی مقصدها:</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {proxyDiagData.targetsTested.map((t: any, i: number) => (
+                    <div key={i} className="p-2 bg-slate-950 rounded border border-slate-800 text-center">
+                      <span className="text-[10px] text-slate-400 block dir-ltr">{t.host}:{t.port}</span>
+                      <span className={`text-xs font-bold ${t.working ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {t.working ? `پاسخگو (${t.latency}ms)` : 'تایم‌آوت'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Diagnostic Execution Logs */}
+            {proxyDiagData.diagnosticLogs?.length > 0 && (
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1 max-h-40 overflow-y-auto custom-scrollbar font-mono text-[11px]">
+                {proxyDiagData.diagnosticLogs.map((log: any, idx: number) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <span className="text-slate-500">[{log.time}]</span>
+                    <span className={log.type === 'success' ? 'text-emerald-400' : log.type === 'error' ? 'text-red-400' : log.type === 'warn' ? 'text-amber-400' : 'text-slate-300'}>
+                      {log.message}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+              <button
+                onClick={() => {
+                  setShowProxyDiagModal(false);
+                  setShowV2RaySimulator(true);
+                }}
+                className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-md"
+              >
+                <Zap className="w-4 h-4 text-indigo-200" />
+                <span>ورود به شبیه‌ساز V2Ray</span>
+              </button>
+
+              <button
+                onClick={() => setShowProxyDiagModal(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                بستن پنجره
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }
