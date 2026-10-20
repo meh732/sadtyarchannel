@@ -4580,27 +4580,19 @@ async function triggerBulkScrape(): Promise<number> {
   const seenRawConfigs = new Set<string>();
   const seenRawProxies = new Set<string>();
 
-  const results = await Promise.allSettled(
-    enabledSources.map(async (src) => {
-      try {
-        const data = await fetchAndExtractSourceData(src, seenRawConfigs, seenRawProxies);
-        src.extractedCount = data.configs.length + data.proxies.length;
-        src.lastExtracted = new Date().toISOString();
-        return { src, configs: data.configs, proxies: data.proxies };
-      } catch (err: any) {
-        addLog('error', `خطا در استخراج از منبع ${src.name}: ${err.message || err}`);
-        return { src, configs: [], proxies: [] };
-      }
-    })
-  );
-
   const allNewConfigs: ConfigItem[] = [];
   const allNewProxies: ProxyItem[] = [];
 
-  for (const r of results) {
-    if (r.status === 'fulfilled') {
-      allNewConfigs.push(...r.value.configs);
-      allNewProxies.push(...r.value.proxies);
+  for (const src of enabledSources) {
+    try {
+      const data = await fetchAndExtractSourceData(src, seenRawConfigs, seenRawProxies);
+      src.extractedCount = data.configs.length + data.proxies.length;
+      src.lastExtracted = new Date().toISOString();
+      allNewConfigs.push(...data.configs);
+      allNewProxies.push(...data.proxies);
+      await new Promise(r => setTimeout(r, 400)); // Gentle pacing between sources
+    } catch (err: any) {
+      addLog('error', `خطا در استخراج از منبع ${src.name}: ${err.message || err}`);
     }
   }
 
