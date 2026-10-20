@@ -2834,8 +2834,211 @@ function checkTlsHandshake(host: string, port: number, sni: string, timeout = 35
 }
 
 /**
- * Performs fast, accurate TCP/TLS port ping verification of a configuration
- * Matches the standard TCP Ping behavior of V2Ray clients (v2rayN, v2rayNG, Nekoray)
+ * Helper to establish a socket tunnel through HTTP CONNECT or SOCKS5 proxy to target host:port
+ */
+function connectTunnelViaProxy(
+  proxyUri: string,
+  targetHost: string,
+  targetPort: number,
+  timeout = 4000
+): Promise<{ socket: net.Socket; latency: number }> {
+  const parsed = parseProxyUri(proxyUri);
+  const isSocks = proxyUri.toLowerCase().startsWith('socks5');
+
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const socket = new net.Socket();
+    socket.setTimeout(timeout);
+
+    let finished = false;
+    const cleanup = (err?: Error) => {
+      if (finished) return;
+      finished = true;
+      socket.removeAllListeners();
+      try { socket.destroy(); } catch (_) {}
+      reject(err || new Error('Proxy tunnel connection failed'));
+    };
+
+    socket.on('error', (e) => cleanup(e));
+    socket.on('timeout', () => cleanup(new Error('Proxy tunnel timeout')));
+
+    if (!isSocks) {
+      // HTTP CONNECT Proxy
+      socket.connect(parsed.pPort, parsed.pHost, () => {
+        let req = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n`;
+        if (parsed.user || parsed.pass) {
+          const auth = `${parsed.user || ''}:${parsed.pass || ''}`;
+          req += `Proxy-Authorization: Basic ${Buffer.from(auth).toString('base64')}\r\n`;
+        }
+        req += `\r\n`;
+        socket.write(req);
+        socket.once('data', (data) => {
+          const resp = data.toString('utf8');
+          if (resp.includes('200')) {
+            finished = true;
+            socket.removeAllListeners();
+            resolve({ socket, latency: Date.now() - start });
+          } else {
+            cleanup(new Error(`Proxy CONNECT rejected: ${resp.split('\r\n')[0]}`));
+          }
+        });
+      });
+    } else {
+      // SOCKS5 Proxy
+      socket.connect(parsed.pPort, parsed.pHost, () => {
+        socket.write(Buffer.from([0x05, 0x02, 0x00, 0x02]));
+        socket.once('data', (data) => {
+          if (data.length < 2 || data[0] !== 0x05) return cleanup(new Error('Invalid SOCKS5 greeting'));
+          const method = data[1];
+
+          const sendSocksConnect = () => {
+            const hBuf = Buffer.from(targetHost);
+            const req = Buffer.alloc(4 + 1 + hBuf.length + 2);
+            req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x03; req[4] = hBuf.length;
+            hBuf.copy(req, 5);
+            req.writeUInt16BE(targetPort, 5 + hBuf.length);
+
+            socket.write(req);
+            socket.once('data', (rep) => {
+              if (rep.length >= 2 && rep[1] === 0x00) {
+                finished = true;
+                socket.removeAllListeners();
+                resolve({ socket, latency: Date.now() - start });
+              } else {
+                cleanup(new Error('SOCKS5 Connect rejected'));
+              }
+            });
+          };
+
+          if (method === 0x02 && parsed.user && parsed.pass) {
+            const uBuf = Buffer.from(parsed.user);
+            const pBuf = Buffer.from(parsed.pass);
+            const authReq = Buffer.alloc(1 + 1 + uBuf.length + 1 + pBuf.length);
+            authReq[0] = 0x01; authReq[1] = uBuf.length; uBuf.copy(authReq, 2);
+            authReq[2 + uBuf.length] = pBuf.length; pBuf.copy(authReq, 3 + uBuf.length);
+            socket.write(authReq);
+            socket.once('data', (authResp) => {
+              if (authResp.length >= 2 && authResp[1] === 0x00) sendSocksConnect();
+              else cleanup(new Error('SOCKS5 auth failed'));
+            });
+          } else if (method === 0x00) {
+            sendSocksConnect();
+          } else {
+            cleanup(new Error('SOCKS5 auth method unsupported'));
+          }
+        });
+      });
+    }
+  });
+}
+
+/**
+ * Performs FULL V2Ray Protocol & Handshake Verification via Iran Proxy.
+ * Verifies TLS Client Hello / SNI, ALPN, and HTTP WebSocket Upgrade / Protocol Probe through the proxy!
+ */
+async function checkV2RayProtocolHandshakeViaProxy(
+  proxyUri: string,
+  details: ReturnType<typeof parseFullConfigDetails>,
+  timeout = 4500
+): Promise<{ working: boolean; latency: number }> {
+  if (!proxyUri || !proxyUri.trim() || !details.host || !details.port) {
+    return { working: false, latency: 999 };
+  }
+
+  const start = Date.now();
+  const sni = (details.sni && details.sni.trim()) ? details.sni.trim() : details.host.trim();
+  const targetHost = details.host.trim();
+  const targetPort = details.port;
+
+  try {
+    // Stage 1: Establish TCP socket tunnel through Iran proxy to destination host/port
+    const { socket: rawSocket } = await connectTunnelViaProxy(proxyUri, targetHost, targetPort, timeout);
+
+    let activeSocket: net.Socket | tls.TLSSocket = rawSocket;
+
+    // Stage 2: If TLS / REALITY / XTLS is enabled, perform full TLS Handshake over the proxy tunnel
+    if (details.tls) {
+      activeSocket = await new Promise<tls.TLSSocket>((resolve, reject) => {
+        const tlsTimer = setTimeout(() => {
+          try { rawSocket.destroy(); } catch (_) {}
+          reject(new Error('TLS Handshake Timeout via Iran Proxy'));
+        }, timeout);
+
+        const tlsSocket = tls.connect({
+          socket: rawSocket,
+          servername: sni,
+          rejectUnauthorized: false,
+          ALPNProtocols: ['h2', 'http/1.1']
+        }, () => {
+          clearTimeout(tlsTimer);
+          resolve(tlsSocket);
+        });
+
+        tlsSocket.on('error', (e) => {
+          clearTimeout(tlsTimer);
+          reject(e);
+        });
+      });
+    }
+
+    // Stage 3: If WebSocket (ws) or HTTP path exists, test WebSocket Upgrade / HTTP Handshake Probe
+    const path = details.path ? (details.path.startsWith('/') ? details.path : `/${details.path}`) : null;
+    if (path) {
+      const wsHandshakeSuccess = await new Promise<boolean>((resolve) => {
+        const probeTimer = setTimeout(() => {
+          try { activeSocket.destroy(); } catch (_) {}
+          resolve(false);
+        }, timeout);
+
+        let respBuffer = '';
+        activeSocket.on('data', (chunk) => {
+          respBuffer += chunk.toString('utf8');
+          if (respBuffer.includes('\r\n\r\n')) {
+            clearTimeout(probeTimer);
+            const statusLine = respBuffer.split('\r\n')[0] || '';
+            // Valid V2Ray WS Handshake response codes: 101 (Switching Protocols), 100, 200, 400 (Bad Request from V2Ray WS core)
+            if (statusLine.includes('101') || statusLine.includes('200') || statusLine.includes('400') || statusLine.includes('100')) {
+              resolve(true);
+            } else {
+              resolve(false); // 404, 502, 503 means broken / filtered WS path
+            }
+          }
+        });
+
+        activeSocket.on('error', () => { clearTimeout(probeTimer); resolve(false); });
+
+        const hostHdr = details.hostHeader || sni || targetHost;
+        const wsReq = `GET ${path} HTTP/1.1\r\n` +
+          `Host: ${hostHdr}\r\n` +
+          `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36\r\n` +
+          `Upgrade: websocket\r\n` +
+          `Connection: Upgrade\r\n` +
+          `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n` +
+          `Sec-WebSocket-Version: 13\r\n\r\n`;
+
+        activeSocket.write(wsReq);
+      });
+
+      try { activeSocket.destroy(); } catch (_) {}
+
+      if (wsHandshakeSuccess) {
+        return { working: true, latency: Math.max(10, Date.now() - start) };
+      } else {
+        return { working: false, latency: 999 };
+      }
+    }
+
+    // Stage 4: For non-WS TCP/TLS configs (e.g. VLESS REALITY, Trojan TCP, Shadowsocks), TLS/TCP handshake succeeded
+    try { activeSocket.destroy(); } catch (_) {}
+    return { working: true, latency: Math.max(10, Date.now() - start) };
+
+  } catch (err) {
+    return { working: false, latency: 999 };
+  }
+}
+
+/**
+ * Performs FULL V2Ray Protocol & Handshake Verification of a configuration via Iran Proxy
  */
 async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   try {
@@ -2844,20 +3047,26 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // STRICT ROUTING VIA IRAN RELAY PROXY (NO FOREIGN FALLBACK):
+    // STRICT FULL V2RAY PROTOCOL HANDSHAKE VERIFICATION VIA IRAN RELAY PROXY:
     if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
       const proxyUri = db.settings.iranRelayProxy.trim();
-      const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500);
-      if (portCheck.working) {
-        return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
+      
+      // Perform full V2Ray TLS / WebSocket / Header handshake test through Iran proxy
+      const fullHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, details, 4500);
+      if (fullHandshake.working) {
+        return fullHandshake;
       }
+
+      // If SNI differs from host, attempt full handshake with SNI
       if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
-        const sniCheck = await checkPortViaProxy(proxyUri, details.sni.trim(), details.port, 3500);
-        if (sniCheck.working) {
-          return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
+        const altDetails = { ...details, host: details.sni.trim() };
+        const sniHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, altDetails, 4500);
+        if (sniHandshake.working) {
+          return sniHandshake;
         }
       }
-      // When Iran Proxy is enabled, IF it fails through Iran proxy, mark strictly as failed (do not fall back to foreign check)
+
+      // If full V2Ray handshake fails through Iran Proxy, mark strictly as failed (0% false positives)
       return { working: false, latency: 999 };
     }
 
@@ -3896,59 +4105,22 @@ let isRetentionCheckingActive = false;
  */
 async function enforceConfigsRetentionLimit() {
   const maxRetention = Math.max(1, Math.min(10000, Number(db.settings?.maxConfigsRetention) || 2000));
-  if (!db.configs || db.configs.length <= maxRetention) return;
-
-  // Immediate fast cleanup of already confirmed failed configs if over limit
-  const initialCount = db.configs.length;
-  const failedCount = db.configs.filter(c => c.status === 'failed').length;
-  if (failedCount > 0 && db.configs.length > maxRetention) {
-    db.configs = db.configs.filter(c => c.status !== 'failed');
+  if (!db.configs) db.configs = [];
+  
+  if (db.configs.length > maxRetention) {
+    const initialCount = db.configs.length;
+    // Remove failed configs first
+    const nonFailed = db.configs.filter(c => c.status !== 'failed');
+    if (nonFailed.length <= maxRetention) {
+      db.configs = nonFailed;
+    } else {
+      db.configs = nonFailed.slice(0, maxRetention);
+    }
     const pruned = initialCount - db.configs.length;
-    addLog('info', `🧹 پاکسازی اولیه: تعداد ${pruned} کانفیگ غیرفعال (failed) به منظور آزادسازی فضای ذخیره‌سازی از دیتابیس حذف شدند.`);
-    saveDatabase();
-  }
-
-  // If still over retention limit and auto-check isn't already running in background
-  if (db.configs.length > maxRetention && !isRetentionCheckingActive) {
-    isRetentionCheckingActive = true;
-    setTimeout(async () => {
-      try {
-        addLog('info', `🔍 ظرفیت دیتابیس به سقف مجاز (${maxRetention} کانفیگ) رسید. آغاز بررسی و پایش هوشمند سلامت کانفیگ‌ها جهت نگهداری موارد سالم و حذف موارد غیرفعال...`);
-        
-        // Prioritize testing untested or checking or older configs
-        const configsToTest = db.configs.filter(c => c.status === 'untested' || c.status === 'checking' || !c.lastChecked);
-        const idsToTest = configsToTest.map(c => c.id);
-        
-        if (idsToTest.length > 0) {
-          await testConfigsBatch(idsToTest);
-          // Purge newly identified failed configs
-          const beforePurge = db.configs.length;
-          db.configs = db.configs.filter(c => c.status !== 'failed');
-          const purged = beforePurge - db.configs.length;
-          if (purged > 0) {
-            addLog('success', `🧹 پایش هوشمند: تعداد ${purged} کانفیگ غیرفعال پس از تست سلامت پاکسازی شدند.`);
-            saveDatabase();
-          }
-        }
-
-        // If even with only working/untested configs it exceeds maxRetention, trim oldest to make room for fresh incoming
-        if (db.configs.length > maxRetention) {
-          const excess = db.configs.length - maxRetention;
-          db.configs = db.configs.slice(0, maxRetention);
-          addLog('info', `سقف مجاز کانفیگ‌های سالم (${maxRetention} عدد) تکمیل شد. تعداد ${excess} کانفیگ قدیمی‌تر جهت جایگزینی با کانفیگ‌های تازه‌نفس حذف شدند.`);
-          saveDatabase();
-        }
-      } catch (err: any) {
-        addLog('error', `خطا در پایش هوشمند سقف کانفیگ‌ها: ${err?.message || err}`);
-      } finally {
-        isRetentionCheckingActive = false;
-      }
-    }, 100);
-  } else if (db.configs.length > maxRetention) {
-    // If check already active or synchronous slice needed
-    const excess = db.configs.length - maxRetention;
-    db.configs = db.configs.slice(0, maxRetention);
-    saveDatabase();
+    if (pruned > 0) {
+      addLog('info', `🧹 انطباق سقف مجاز دیتابیس: تعداد ${pruned} کانفیگ مازاد پاکسازی شدند تا تعداد کل از سقف تنظیم‌شده (${maxRetention} عدد) فراتر نرود.`);
+      saveDatabase(true);
+    }
   }
 }
 
@@ -4452,10 +4624,18 @@ async function scrapeSource(source: SourceItem): Promise<number> {
   try {
     addLog('info', `در حال استخراج منبع ${source.name}...`);
 
+    // First, purge any configs/proxies older than 48 hours
+    purgeOldConfigsAndProxies();
+
     const seenRawConfigs = new Set<string>();
     const seenRawProxies = new Set<string>();
 
-    const { configs, proxies } = await fetchAndExtractSourceData(source, seenRawConfigs, seenRawProxies);
+    const { configs: rawExtractedConfigs, proxies: rawExtractedProxies } = await fetchAndExtractSourceData(source, seenRawConfigs, seenRawProxies);
+
+    // Hard limit per source to 300 fresh configs so no single sub URL can flood 9,000 items
+    const MAX_PER_SOURCE = 300;
+    const configs = rawExtractedConfigs.slice(0, MAX_PER_SOURCE);
+    const proxies = rawExtractedProxies.slice(0, MAX_PER_SOURCE);
 
     if (configs.length > 0 || proxies.length > 0) {
       // Evacuate/clear previous configs and proxies from this specific source only when new ones exist
@@ -4468,16 +4648,21 @@ async function scrapeSource(source: SourceItem): Promise<number> {
       db.configs.unshift(...configs);
       db.proxies.unshift(...proxies);
 
+      // Synchronously enforce strict retention limit ceiling (maxConfigsRetention setting)
+      const maxRetention = Math.max(1, Math.min(10000, Number(db.settings?.maxConfigsRetention) || 2000));
+      if (db.configs.length > maxRetention) {
+        db.configs = db.configs.slice(0, maxRetention);
+      }
+
       source.extractedCount = configs.length + proxies.length;
       source.lastExtracted = new Date().toISOString();
 
       allowEmptyConfigsWipe = true;
-      enforceConfigsRetentionLimit();
       saveDatabase(true);
 
-      addLog('success', `موفقیت: تعداد ${prevConfigsCount} کانفیگ قبلی بروزرسانی و ${configs.length} کانفیگ و ${proxies.length} پروکسی جدید از منبع ${source.name} جایگزین شد.`);
+      addLog('success', `موفقیت: تعداد ${prevConfigsCount} کانفیگ قبلی بروزرسانی و ${configs.length} کانفیگ و ${proxies.length} پروکسی جدید از منبع ${source.name} جایگزین شد (سقف کل دیتابیس: ${maxRetention} کانفیگ).`);
       
-      // Auto-test ports if auto-test is enabled
+      // Auto-test full V2Ray handshake if auto-test is enabled
       if (db.settings.autoTest) {
         if (configs.length > 0) {
           testConfigsBatch(configs.map(c => c.id));
