@@ -2051,7 +2051,7 @@ export default function App() {
       { name: 'کانال پروکسی و کانفیگ VPN Ocean', type: 'telegram' as const, urlOrHandle: '@vpn_ocean' },
       { name: 'کانال پروکسی‌های تلگرام MTProto', type: 'telegram' as const, urlOrHandle: '@ProxyMTProto' },
       { name: 'مخزن رسمی تجمیعی MahdiBland Sub', type: 'sub' as const, urlOrHandle: 'https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt' },
-      { name: 'مخزن جامع کانفیگ‌های BarryFar', type: 'sub' as const, urlOrHandle: 'https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_Sub.txt' }
+      { name: 'مخزن جامع کانفیگ‌های BarryFar', type: 'sub' as const, urlOrHandle: 'https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/All_Configs_Sub.txt' }
     ];
 
     try {

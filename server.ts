@@ -387,7 +387,7 @@ const DEFAULT_SOURCES: SourceItem[] = [
     id: 'src-6',
     type: 'sub',
     name: 'BarryFar All Configs Sub',
-    urlOrHandle: 'https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_Sub.txt',
+    urlOrHandle: 'https://raw.githubusercontent.com/erfanipm/v2ray-configs/main/All_Configs_Sub.txt',
     enabled: true,
     extractedCount: 0,
     lastExtracted: null
@@ -2844,8 +2844,7 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // STRICT ROUTING VIA IRAN RELAY PROXY:
-    // When an Iran proxy is configured, ALL verification runs strictly through the Iran proxy
+    // PRIMARY ROUTING VIA IRAN RELAY PROXY WITH AUTOMATIC FOREIGN DIRECT FALLBACK:
     if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
       const proxyUri = db.settings.iranRelayProxy.trim();
       const portCheck = await checkPortViaProxy(proxyUri, details.host, details.port, 3500);
@@ -2858,7 +2857,7 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
           return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
         }
       }
-      return { working: false, latency: 999 };
+      // If Iran relay proxy failed or is unreachable/filtered, fall back to foreign direct verification
     }
 
     // 1. Fast direct TCP socket check to destination host/IP (foreign server fallback)
@@ -3098,13 +3097,16 @@ async function checkPort(host: string, port: number, timeout = 3800): Promise<{ 
     return { working: false, latency: 999 };
   }
 
-  // If Iran relay proxy is configured in system settings, test port strictly via the Iran proxy
+  // If Iran relay proxy is configured in system settings, test port via the Iran proxy with automatic direct foreign fallback
   if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
     try {
       const proxyCheck = await checkPortViaProxy(db.settings.iranRelayProxy.trim(), host, port, timeout);
-      return proxyCheck;
+      if (proxyCheck.working) {
+        return proxyCheck;
+      }
+      // If Iran proxy failed or timed out, fall back to foreign direct check below
     } catch (_) {
-      return { working: false, latency: 999 };
+      // Fall through to foreign direct check
     }
   }
 
@@ -3424,12 +3426,12 @@ function extractRawJsonConfigs(text: string): string[] {
   return extractedUris;
 }
 
-const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000; // 3 days in milliseconds
+const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000; // 48 hours in milliseconds
 
 /**
- * Filters scraped Telegram Web HTML to strictly include message posts from the last 3 days
+ * Filters scraped Telegram Web HTML to strictly include message posts from the last 48 hours (2 days)
  */
-function filterTelegramHtmlLast3Days(html: string): string {
+function filterTelegramHtmlLast48Hours(html: string): string {
   if (!html) return html;
   
   const now = Date.now();
@@ -3443,8 +3445,8 @@ function filterTelegramHtmlLast3Days(html: string): string {
     const timeMatch = block.match(/<time[^>]+datetime=["']([^"']+)["']/i);
     if (timeMatch && timeMatch[1]) {
       const postTime = new Date(timeMatch[1]).getTime();
-      if (!isNaN(postTime) && (now - postTime > THREE_DAYS_MS)) {
-        // Skip messages/posts older than 3 days
+      if (!isNaN(postTime) && (now - postTime > TWO_DAYS_MS)) {
+        // Skip messages/posts older than 48 hours
         continue;
       }
     }
@@ -3953,34 +3955,67 @@ async function enforceConfigsRetentionLimit() {
 }
 
 /**
- * Purges stored configs and proxies that are older than 3 days
+ * Purges stored configs and proxies that are older than 48 hours (2 days)
  */
 function purgeOldConfigsAndProxies() {
   const now = Date.now();
-  const initialConfigs = db.configs.length;
+  const initialConfigs = db.configs ? db.configs.length : 0;
   const initialProxies = (db.proxies || []).length;
 
-  db.configs = db.configs.filter(c => {
-    if (!c.createdAt) return true;
-    const time = new Date(c.createdAt).getTime();
-    if (isNaN(time)) return true;
-    return (now - time) <= THREE_DAYS_MS;
-  });
+  if (Array.isArray(db.configs)) {
+    db.configs = db.configs.filter(c => {
+      const times: number[] = [];
+      if (c.createdAt) {
+        const t = new Date(c.createdAt).getTime();
+        if (!isNaN(t) && t > 0) times.push(t);
+      }
+      if (c.extractedAt) {
+        const t = new Date(c.extractedAt).getTime();
+        if (!isNaN(t) && t > 0) times.push(t);
+      }
+      if (c.lastChecked) {
+        const t = new Date(c.lastChecked).getTime();
+        if (!isNaN(t) && t > 0) times.push(t);
+      }
+      if (times.length === 0) return true; // Keep if no valid timestamps found
+      const newestTime = Math.max(...times);
+      return (now - newestTime) <= TWO_DAYS_MS;
+    });
+  }
 
-  if (db.proxies) {
+  if (Array.isArray(db.proxies)) {
     db.proxies = db.proxies.filter(p => {
-      if (!p.createdAt) return true;
-      const time = new Date(p.createdAt).getTime();
-      if (isNaN(time)) return true;
-      return (now - time) <= THREE_DAYS_MS;
+      const times: number[] = [];
+      if (p.createdAt) {
+        const t = new Date(p.createdAt).getTime();
+        if (!isNaN(t) && t > 0) times.push(t);
+      }
+      const ext = (p as any).extractedAt;
+      if (ext) {
+        const t = new Date(ext).getTime();
+        if (!isNaN(t) && t > 0) times.push(t);
+      }
+      if (p.lastChecked) {
+        const t = new Date(p.lastChecked).getTime();
+        if (!isNaN(t) && t > 0) times.push(t);
+      }
+      if (times.length === 0) return true;
+      const newestTime = Math.max(...times);
+      return (now - newestTime) <= TWO_DAYS_MS;
     });
   }
 
   enforceConfigsRetentionLimit();
 
-  if (initialConfigs !== db.configs.length || initialProxies !== (db.proxies || []).length) {
+  const purgedConfigs = initialConfigs - (db.configs ? db.configs.length : 0);
+  const purgedProxies = initialProxies - (db.proxies ? db.proxies.length : 0);
+
+  if (purgedConfigs > 0 || purgedProxies > 0) {
     saveDatabase();
+    addLog('info', `🧹 پاکسازی خودکار انقضای ۴۸ ساعته: تعداد ${purgedConfigs} کانفیگ و ${purgedProxies} پروکسی قدیمی‌تر از ۴۸ ساعت با موفقیت از دیتابیس حذف شدند.`);
   }
+
+  return { purgedConfigs, purgedProxies };
 }
 
 /**
@@ -4237,53 +4272,76 @@ async function fetchAndExtractSourceData(
   if (!source.enabled) return { configs: [], proxies: [] };
 
   let url = source.urlOrHandle.trim();
+
+  // Auto-fix outdated BarryFar repository URL (V2ray-config -> V2ray-Configs)
+  if (url.toLowerCase().includes('barry-far/v2ray-config/')) {
+    url = url.replace(/barry-far\/v2ray-config\//i, 'barry-far/V2ray-Configs/');
+    source.urlOrHandle = url;
+  }
+
   addLog('info', `در حال دریافت و استخراج کدهای کانفیگ و پروکسی از منبع: ${source.name}`);
 
+  const urlsToTry: string[] = [url];
+
   if (source.type === 'telegram') {
-    // Remove @ prefix if provided
-    const handle = url.startsWith('@') ? url.substring(1) : url;
-    url = `https://t.me/s/${handle}`;
+    const cleanHandle = url
+      .replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '')
+      .replace(/^@+/, '')
+      .split('/')[0]
+      .split('?')[0]
+      .trim();
+    urlsToTry[0] = `https://t.me/s/${cleanHandle}`;
+    // Fallback mirror for Telegram if t.me/s/ is blocked or slow
+    urlsToTry.push(`https://r.jina.ai/https://t.me/s/${cleanHandle}`);
+  } else if (source.type === 'sub' && (url.includes('barry-far') || url.includes('erfanipm'))) {
+    // Fallback sub URLs if primary raw GitHub fails or 404s
+    urlsToTry.push('https://raw.githubusercontent.com/erfanipm/v2ray-configs/main/All_Configs_Sub.txt');
+    urlsToTry.push('https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt');
+    urlsToTry.push('https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt');
   }
 
   const USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
-    'Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0',
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1'
   ];
 
   let response: Response | null = null;
   let lastErr: any = null;
 
-  for (let attempt = 0; attempt < USER_AGENTS.length; attempt++) {
-    try {
-      const ua = USER_AGENTS[attempt];
-      response = await fetch(url, {
-        headers: {
-          'User-Agent': ua,
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7',
-          'Accept-Language': 'en-US,en;q=0.9,fa;q=0.8',
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
-        },
-        signal: AbortSignal.timeout(25000)
-      });
+  for (const targetUrl of urlsToTry) {
+    let successForUrl = false;
+    for (let attempt = 0; attempt < USER_AGENTS.length; attempt++) {
+      try {
+        const ua = USER_AGENTS[attempt];
+        response = await fetch(targetUrl, {
+          headers: {
+            'User-Agent': ua,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9,fa;q=0.8',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          },
+          signal: AbortSignal.timeout(20000)
+        });
 
-      if (response.ok) {
-        break;
+        if (response.ok) {
+          successForUrl = true;
+          break;
+        }
+        if (response.status === 404) {
+          lastErr = new Error(`منبع یافت نشد (خطای 404) - لطفاً آدرس یا آیدی کانال را بررسی کنید`);
+          break; // Try next fallback URL
+        }
+        lastErr = new Error(`خطای سرور منبع (HTTP ${response.status})`);
+      } catch (fetchErr: any) {
+        lastErr = fetchErr;
+        if (attempt < USER_AGENTS.length - 1) {
+          await new Promise(r => setTimeout(r, 500));
+        }
       }
-      if (response.status === 404) {
-        throw new Error(`منبع یافت نشد (خطای 404) - لطفاً آدرس یا آیدی کانال را بررسی کنید`);
-      }
-      lastErr = new Error(`خطای سرور منبع (HTTP ${response.status})`);
-    } catch (fetchErr: any) {
-      lastErr = fetchErr;
-      if (fetchErr.message && fetchErr.message.includes('404')) {
-        throw fetchErr;
-      }
-      if (attempt < USER_AGENTS.length - 1) {
-        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
-      }
+    }
+    if (successForUrl && response && response.ok) {
+      break;
     }
   }
 
@@ -4291,12 +4349,15 @@ async function fetchAndExtractSourceData(
     if (lastErr && (lastErr.name === 'AbortError' || lastErr.name === 'TimeoutError' || (lastErr.message && lastErr.message.includes('timeout')))) {
       throw new Error('زمان انتظار به پایان رسید (Timeout)');
     }
+    if (lastErr && lastErr.message && lastErr.message.includes('404')) {
+      throw lastErr;
+    }
     throw lastErr || new Error('خطای ارتباط شبکه یا دریافت منبع');
   }
 
   let rawText = await response.text();
-  // Strictly filter Telegram HTML to messages/posts from the last 3 days
-  const text = source.type === 'telegram' ? filterTelegramHtmlLast3Days(rawText) : rawText;
+  // Strictly filter Telegram HTML to messages/posts from the last 48 hours (2 days)
+  const text = source.type === 'telegram' ? filterTelegramHtmlLast48Hours(rawText) : rawText;
 
   let extracted: ConfigItem[] = [];
   let extractedProxies: ProxyItem[] = [];
@@ -4391,32 +4452,32 @@ async function scrapeSource(source: SourceItem): Promise<number> {
   if (!source.enabled) return 0;
   
   try {
-    addLog('info', `در حال استخراج منبع ${source.name}... (تخلیه کانفیگ‌های قبلی این منبع و جایگزینی با موارد جدید)`);
+    addLog('info', `در حال استخراج منبع ${source.name}...`);
 
     const seenRawConfigs = new Set<string>();
     const seenRawProxies = new Set<string>();
 
     const { configs, proxies } = await fetchAndExtractSourceData(source, seenRawConfigs, seenRawProxies);
 
-    // Evacuate/clear previous configs and proxies from this specific source
-    const prevConfigsCount = db.configs.filter(c => c.source === source.name).length;
-    db.configs = db.configs.filter(c => c.source !== source.name);
-    if (!db.proxies) db.proxies = [];
-    db.proxies = db.proxies.filter(p => p.source !== source.name);
-
-    // Replace with newly extracted configs and proxies
-    db.configs.unshift(...configs);
-    db.proxies.unshift(...proxies);
-
-    source.extractedCount = configs.length + proxies.length;
-    source.lastExtracted = new Date().toISOString();
-
-    allowEmptyConfigsWipe = true;
-    enforceConfigsRetentionLimit();
-    saveDatabase(true);
-
     if (configs.length > 0 || proxies.length > 0) {
-      addLog('success', `موفقیت: تعداد ${prevConfigsCount} کانفیگ قبلی این منبع تخلیه و ${configs.length} کانفیگ و ${proxies.length} پروکسی جدید از منبع ${source.name} جایگزین شد.`);
+      // Evacuate/clear previous configs and proxies from this specific source only when new ones exist
+      const prevConfigsCount = db.configs.filter(c => c.source === source.name).length;
+      db.configs = db.configs.filter(c => c.source !== source.name);
+      if (!db.proxies) db.proxies = [];
+      db.proxies = db.proxies.filter(p => p.source !== source.name);
+
+      // Replace with newly extracted configs and proxies
+      db.configs.unshift(...configs);
+      db.proxies.unshift(...proxies);
+
+      source.extractedCount = configs.length + proxies.length;
+      source.lastExtracted = new Date().toISOString();
+
+      allowEmptyConfigsWipe = true;
+      enforceConfigsRetentionLimit();
+      saveDatabase(true);
+
+      addLog('success', `موفقیت: تعداد ${prevConfigsCount} کانفیگ قبلی بروزرسانی و ${configs.length} کانفیگ و ${proxies.length} پروکسی جدید از منبع ${source.name} جایگزین شد.`);
       
       // Auto-test ports if auto-test is enabled
       if (db.settings.autoTest) {
@@ -4428,12 +4489,12 @@ async function scrapeSource(source: SourceItem): Promise<number> {
         }
       }
     } else {
-      addLog('info', `کانفیگ‌های قبلی منبع ${source.name} تخلیه شدند؛ هیچ کانفیگ جدیدی در ${source.name} یافت نشد.`);
+      addLog('info', `هیچ کانفیگ جدیدی از منبع ${source.name} دریافت نشد؛ کانفیگ‌های قبلی سالم این منبع حفظ شدند.`);
     }
 
     return configs.length + proxies.length;
   } catch (err: any) {
-    addLog('error', `خطا در استخراج از منبع ${source.name}: ${err.message || err}`);
+    addLog('error', `خطا در استخراج از منبع ${source.name}: ${err.message || err}. کانفیگ‌های قبلی حفظ شدند.`);
     return 0;
   }
 }
@@ -4569,6 +4630,9 @@ async function testConfigsBatch(ids: string[]) {
  * Empties all previous configs & proxies and replaces them with fresh newly extracted ones.
  */
 async function triggerBulkScrape(): Promise<number> {
+  // Purge expired configs older than 48 hours
+  purgeOldConfigsAndProxies();
+
   const enabledSources = db.sources.filter(s => s.enabled);
   if (enabledSources.length === 0) {
     addLog('info', 'هیچ منبع فعالی برای استخراج کانفیگ وجود ندارد.');
@@ -4583,17 +4647,21 @@ async function triggerBulkScrape(): Promise<number> {
   const allNewConfigs: ConfigItem[] = [];
   const allNewProxies: ProxyItem[] = [];
 
-  for (const src of enabledSources) {
-    try {
-      const data = await fetchAndExtractSourceData(src, seenRawConfigs, seenRawProxies);
-      src.extractedCount = data.configs.length + data.proxies.length;
-      src.lastExtracted = new Date().toISOString();
-      allNewConfigs.push(...data.configs);
-      allNewProxies.push(...data.proxies);
-      await new Promise(r => setTimeout(r, 400)); // Gentle pacing between sources
-    } catch (err: any) {
-      addLog('error', `خطا در استخراج از منبع ${src.name}: ${err.message || err}`);
-    }
+  // Fetch sources concurrently in batches of 4
+  const CONCURRENCY = 4;
+  for (let i = 0; i < enabledSources.length; i += CONCURRENCY) {
+    const batch = enabledSources.slice(i, i + CONCURRENCY);
+    await Promise.all(batch.map(async (src) => {
+      try {
+        const data = await fetchAndExtractSourceData(src, seenRawConfigs, seenRawProxies);
+        src.extractedCount = data.configs.length + data.proxies.length;
+        src.lastExtracted = new Date().toISOString();
+        allNewConfigs.push(...data.configs);
+        allNewProxies.push(...data.proxies);
+      } catch (err: any) {
+        addLog('error', `خطا در استخراج از منبع ${src.name}: ${err.message || err}`);
+      }
+    }));
   }
 
   // Purge previous configs and proxies and replace with newly extracted ones
@@ -8077,6 +8145,9 @@ async function executeConfigsAutoPost(
   channelPostingLocks[channelTargetNum] = true;
 
   try {
+    // Purge any expired configs & proxies older than 48 hours before preparing post
+    purgeOldConfigsAndProxies();
+
     addLog('info', `در حال آماده‌سازی و ارسال پست کانفیگ‌ها و پروکسی‌ها به کانال ${channelTargetNum} (${targetChannel})...`);
 
     // Live channel inspection & Anti-duplicate check
@@ -8084,18 +8155,18 @@ async function executeConfigsAutoPost(
     const targetChannelKey = isCh2 ? 'postedToChannel2' : 'postedToChannel1';
 
     const isChConfigValid = (c: ConfigItem) => {
+      if (!c) return false;
       if (c[targetChannelKey]) return false;
       if (isConfigAlreadyOnChannelOrHistory(c, liveSnapshot, channelTargetNum)) return false;
       
-      // STRICT REQUIREMENT FOR CHANNEL 1: Only post configs extracted or tested within the last 24 hours
-      if (!isCh2) {
-        const now = Date.now();
-        const extractedTime = c.extractedAt ? new Date(c.extractedAt).getTime() : 0;
-        const checkedTime = c.lastChecked ? new Date(c.lastChecked).getTime() : 0;
-        const newestTime = Math.max(extractedTime, checkedTime);
-        if (newestTime > 0 && (now - newestTime) > 24 * 60 * 60 * 1000) {
-          return false;
-        }
+      // STRICT FRESHNESS REQUIREMENT: Only post configs extracted, created, or tested within the last 48 hours (2 days)
+      const now = Date.now();
+      const extractedTime = c.extractedAt ? new Date(c.extractedAt).getTime() : 0;
+      const createdTime = c.createdAt ? new Date(c.createdAt).getTime() : 0;
+      const checkedTime = c.lastChecked ? new Date(c.lastChecked).getTime() : 0;
+      const newestTime = Math.max(extractedTime, createdTime, checkedTime);
+      if (newestTime > 0 && (now - newestTime) > TWO_DAYS_MS) {
+        return false;
       }
       return true;
     };
@@ -8260,11 +8331,11 @@ async function executeConfigsAutoPost(
 
       // Quality control: If working green configs are fewer than required, auto-scrape fresh sources and live-test
       if (unpostedWorking.length < configLimit) {
-        addLog('info', `موجودی کانفیگ‌های تست‌شده و سبز (${unpostedWorking.length} عدد) کمتر از سقف مجاز (${configLimit} عدد) است. در حال استخراج خودکار و تست اتصال فوری...`);
+        addLog('info', `موجودی کانفیگ‌های تست‌شده و سبز کاملاً جدید (${unpostedWorking.length} عدد) کمتر از سقف مجاز (${configLimit} عدد) است. در حال استخراج خودکار و تست اتصال فوری...`);
         try {
           await triggerBulkScrape();
           const untestedIds = db.configs
-            .filter(c => c.status === 'untested' && isChConfigValid(c))
+            .filter(c => c.status === 'untested')
             .slice(0, Math.max(80, configLimit * 4))
             .map(c => c.id);
           if (untestedIds.length > 0) {
@@ -8276,17 +8347,25 @@ async function executeConfigsAutoPost(
         unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
       }
 
-      // If still fewer than configLimit, recycle working green configs sorted by least recently posted
+      // Fallback: If unpostedWorking is still fewer than configLimit, utilize all active green working configs
       if (unpostedWorking.length < configLimit) {
-        const recycledWorking = db.configs.filter(c => c.status === 'working' && (!isCh2 ? isChConfigValid(c) : true));
-        unpostedWorking = Array.from(new Set([...unpostedWorking, ...recycledWorking]));
+        const allWorking = db.configs.filter(c => c.status === 'working');
+        unpostedWorking = Array.from(new Set([...unpostedWorking, ...allWorking]));
       }
 
-      // STRICT SPEED & QUALITY SORTING: Lowest ping latency first (green working configs priority)
+      // STRICT SPEED & QUALITY SORTING:
+      // 1. Unposted configs first
+      // 2. Lowest ping latency next
+      // 3. Least recently posted / checked
       unpostedWorking.sort((a, b) => {
+        const unpostedA = !a[targetChannelKey] ? 0 : 1;
+        const unpostedB = !b[targetChannelKey] ? 0 : 1;
+        if (unpostedA !== unpostedB) return unpostedA - unpostedB;
+
         const latA = (typeof a.latency === 'number' && a.latency > 0) ? a.latency : 9999;
         const latB = (typeof b.latency === 'number' && b.latency > 0) ? b.latency : 9999;
         if (latA !== latB) return latA - latB;
+
         const dateA = a.lastChecked ? new Date(a.lastChecked).getTime() : 0;
         const dateB = b.lastChecked ? new Date(b.lastChecked).getTime() : 0;
         return dateB - dateA;
@@ -16747,12 +16826,13 @@ function setupIntervals() {
   // Set up auto post interval
   setupAutoPostInterval();
 
-  // Run initial checks, database ad purge, and hourly refresh shortly after startup
+  // Run initial checks, database ad purge, config purge, and hourly refresh shortly after startup
   setTimeout(() => {
     try {
       purgeAllAdsAndSanitizeFunNewsInDb();
+      purgeOldConfigsAndProxies();
     } catch (e) {
-      console.error('Error during startup fun news ad purge:', e);
+      console.error('Error during startup purges:', e);
     }
     monitorChannelPosts();
     checkAndTriggerBackup();
