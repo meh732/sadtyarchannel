@@ -1,0 +1,179 @@
+  4452	    if (callbackData === 'get_npv_configs') {
+  4453	      await answerCallback('در حال بررسی فایل‌های NPV...');
+  4454	      
+  4455	      const extractedNpv = db.configs.filter(c => 
+  4456	        c.isNpv || 
+  4457	        c.protocol === 'npv' || 
+  4458	        c.raw.startsWith('NPVT') || 
+  4459	        c.raw.startsWith('npv') || 
+  4460	        c.source.toLowerCase().includes('npv') || 
+  4461	        c.source.toLowerCase().includes('npvt') ||
+  4462	        ['vmess', 'vless', 'trojan', 'ss'].includes(c.protocol)
+  4463	      );
+  4464	
+  4465	      if (extractedNpv.length === 0) {
+  4466	        await callTelegramApi('sendMessage', {
+  4467	          chat_id: chatId,
+  4468	          text: `⚠️ <b>فایل کانفیگ NapsternetV (.NPVT) در حال حاضر موجود نیست!</b>\n\nدر حال حاضر فایل NPVT فعال و تست‌شده در سیستم ثبت نشده است.\n\nسیستم به صورت خودکار در حال به روزرسانی و دریافت فایل‌های جدید است. لطفاً دقایقی دیگر دوباره امتحان کنید.`,
+  4469	          parse_mode: 'HTML',
+  4470	          reply_markup: getReplyKeyboard(userId)
+  4471	        });
+  4472	        return;
+  4473	      }
+  4474	
+  4475	      const qtyKeyboard = {
+  4476	        inline_keyboard: [
+  4477	          [
+  4478	            { text: '1️⃣ یک عدد', callback_data: 'npv_qty_1', style: 'success' },
+  4479	            { text: '2️⃣ دو عدد', callback_data: 'npv_qty_2', style: 'success' }
+  4480	          ],
+  4481	          [
+  4482	            { text: '3️⃣ سه عدد', callback_data: 'npv_qty_3', style: 'primary' },
+  4483	            { text: '5️⃣ پنج عدد', callback_data: 'npv_qty_5', style: 'primary' }
+  4484	          ],
+  4485	          [
+  4486	            { text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main', style: 'danger' }
+  4487	          ]
+  4488	        ]
+  4489	      };
+  4490	      
+  4491	      await callTelegramApi('sendMessage', {
+  4492	        chat_id: chatId,
+  4493	        text: `🌀 <b>دریافت کانفیگ‌های NapsternetV (.NPVT)</b>\n\nتعداد <b>${extractedNpv.length}</b> فایل NPVT فعال در دیتابیس موجود است.\nلطفاً تعداد کانفیگ‌های درخواستی خود را انتخاب کنید:\n*(کانفیگ‌ها به اسم برند <b>${db.settings.branding}</b> تغییر نام داده شده و به صورت فایل .npvt ارسال می‌گردند)*`,
+  4494	        parse_mode: 'HTML',
+  4495	        reply_markup: qtyKeyboard
+  4496	      });
+  4497	      return;
+  4498	    }
+  4499	
+  4500	    if (callbackData && (callbackData.startsWith('v2ray_qty_') || callbackData.startsWith('npv_qty_'))) {
+  4501	      const isV2ray = callbackData.startsWith('v2ray_qty_');
+  4502	      const qty = parseInt(callbackData.split('_')[2]) || 3;
+  4503	      
+  4504	      await answerCallback('در حال آماده‌سازی و تغییر نام کانفیگ...');
+  4505	      
+  4506	      let list: ConfigItem[] = [];
+  4507	
+  4508	      if (isV2ray) {
+  4509	        const allowedProtocols = ['vmess', 'vless', 'trojan', 'ss'];
+  4510	        let available = db.configs.filter(c => c.status === 'working' && allowedProtocols.includes(c.protocol));
+  4511	        
+  4512	        if (available.length < qty) {
+  4513	          const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+  4514	          if (untested.length > 0) {
+  4515	            const testIds = untested.slice(0, qty * 2).map(c => c.id);
+  4516	            testConfigsBatch(testIds).catch(console.error);
+  4517	          }
+  4518	        }
+  4519	
+  4520	        if (available.length < qty) {
+  4521	          const untested = db.configs.filter(c => c.status === 'untested' && allowedProtocols.includes(c.protocol));
+  4522	          available = [...available, ...untested];
+  4523	        }
+  4524	        
+  4525	        if (available.length === 0) {
+  4526	          available = db.configs.filter(c => allowedProtocols.includes(c.protocol) && c.status !== 'failed');
+  4527	        }
+  4528	        
+  4529	        list = available.length > 0 ? available : db.configs.filter(c => allowedProtocols.includes(c.protocol)).slice(0, 50);
+  4530	
+  4531	        if (list.length === 0) {
+  4532	          await callTelegramApi('sendMessage', {
+  4533	            chat_id: chatId,
+  4534	            text: '❌ متاسفانه در حال حاضر کانفیگ V2Ray تست‌شده فعال در دیتابیس موجود نیست. سیستم هم‌اکنون در حال بررسی خودکار موارد جدید است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.'
+  4535	          });
+  4536	          return;
+  4537	        }
+  4538	      } else {
+  4539	        // NPVT Configs logic
+  4540	        const npvConfigs = db.configs.filter(c => 
+  4541	          c.isNpv || 
+  4542	          c.protocol === 'npv' || 
+  4543	          c.raw.startsWith('NPVT') || 
+  4544	          c.raw.startsWith('npv') || 
+  4545	          c.source.toLowerCase().includes('npv') || 
+  4546	          c.source.toLowerCase().includes('npvt') ||
+  4547	          ['vmess', 'vless', 'trojan', 'ss'].includes(c.protocol)
+  4548	        );
+  4549	
+  4550	        if (npvConfigs.length === 0) {
+  4551	          await callTelegramApi('sendMessage', {
+  4552	            chat_id: chatId,
+  4553	            text: `⚠️ <b>فایل کانفیگ NapsternetV (.NPVT) در حال حاضر موجود نیست!</b>\n\nدر حال حاضر فایل NPVT فعال در دیتابیس ثبت نشده است. سیستم به صورت خودکار در حال آماده‌سازی فایل‌های جدید است. لطفاً دقایقی دیگر دوباره امتحان کنید.`,
+  4554	            parse_mode: 'HTML',
+  4555	            reply_markup: getReplyKeyboard(userId)
+  4556	          });
+  4557	          return;
+  4558	        }
+  4559	
+  4560	        let available = npvConfigs.filter(c => c.status === 'working');
+  4561	
+  4562	        if (available.length < qty) {
+  4563	          const untested = npvConfigs.filter(c => c.status === 'untested');
+  4564	          if (untested.length > 0) {
+  4565	            const testIds = untested.slice(0, qty * 3).map(c => c.id);
+  4566	            testConfigsBatch(testIds).catch(console.error);
+  4567	          }
+  4568	        }
+  4569	
+  4570	        if (available.length < qty) {
+  4571	          const untested = npvConfigs.filter(c => c.status === 'untested');
+  4572	          available = [...available, ...untested];
+  4573	        }
+  4574	
+  4575	        if (available.length === 0) {
+  4576	          available = npvConfigs.filter(c => c.status !== 'failed');
+  4577	        }
+  4578	
+  4579	        list = available.length > 0 ? available : npvConfigs;
+  4580	      }
+  4581	
+  4582	      // Shuffle and pick requested quantity
+  4583	      const shuffled = [...list].sort(() => 0.5 - Math.random());
+  4584	      const selected = shuffled.slice(0, qty);
+  4585	      
+  4586	      let msg = '';
+  4587	      if (isV2ray) {
+  4588	        msg = `📥 <b>کانفیگ‌های اختصاصی V2Ray (ویتوری)</b>\n`;
+  4589	        msg += `🔔 تعداد درخواستی: <b>${qty} عدد</b>\n`;
+  4590	        msg += `⚡️ اتصال: همراه اول، ایرانسل، مخابرات و رایتل\n`;
+  4591	        msg += `🏷️ برندینگ انحصاری: <code>${db.settings.branding}</code>\n\n`;
+  4592	
+  4593	        selected.forEach((conf, idx) => {
+  4594	          const branded = applyBrandingToConfig(conf.raw, db.settings.branding);
+  4595	          const latencyText = conf.latency ? `(پینگ: ${conf.latency}ms)` : '';
+  4596	          
+  4597	          msg += `⚡ <b>کانفیگ ${idx + 1}</b> [${conf.protocol.toUpperCase()}] ${latencyText}:\n`;
+  4598	          msg += `<code>${branded}</code>\n\n`;
+  4599	        });
+  4600	
+  4601	        if (selected.length > 1) {
+  4602	          const allBrandedCombined = selected
+  4603	            .map(conf => applyBrandingToConfig(conf.raw, db.settings.branding))
+  4604	            .join('\n');
+  4605	          msg += `📋 <b>کپی یکجای تمامی ${selected.length} کانفیگ با یک لمس:</b>\n`;
+  4606	          msg += `<code>${allBrandedCombined}</code>\n\n`;
+  4607	        }
+  4608	
+  4609	        msg += `📍 جهت کپی روی هر کانفیگ یا کادر کپی یکجا ضربه بزنید. سپس در نرم‌افزارهای v2rayNG یا NapsternetV یا Streisand وارد (Import) کنید.\n\n🆔 ${db.settings.branding}`;
+  4610	
+  4611	        const sponsorBtn = getSponsorChannelInlineButton();
+  4612	        const feedbackRows: any[][] = [];
+  4613	        if (selected.length > 0) {
+  4614	          const upRow = selected.slice(0, 5).map((conf, idx) => ({
+  4615	            text: `👍 ${idx + 1} فعال`,
+  4616	            callback_data: `fb_up_${conf.id}`
+  4617	          }));
+  4618	          const downRow = selected.slice(0, 5).map((conf, idx) => ({
+  4619	            text: `👎 ${idx + 1} خراب`,
+  4620	            callback_data: `fb_down_${conf.id}`
+  4621	          }));
+  4622	          feedbackRows.push(upRow);
+  4623	          feedbackRows.push(downRow);
+  4624	        }
+  4625	
+  4626	        const inlineKeyboard = {
+  4627	          inline_keyboard: [
+  4628	            ...(sponsorBtn ? [[{ text: sponsorBtn.text, url: sponsorBtn.url }]] : []),
+  4629	            ...feedbackRows
+  4630	          ]

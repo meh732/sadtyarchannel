@@ -1,0 +1,610 @@
+export type ProtocolType = 'vmess' | 'vless' | 'trojan' | 'ss' | 'npv' | 'unknown';
+
+export interface ConfigItem {
+  id: string;
+  raw: string;
+  protocol: ProtocolType;
+  remark: string;
+  server: string;
+  port: number;
+  uuid?: string;
+  source: string; // E.g., "@v2ray_channel" or "Github"
+  status: 'working' | 'failed' | 'untested' | 'checking';
+  latency: number | null;
+  lastChecked: string | null;
+  isNpv?: boolean;
+  createdAt?: string;
+  extractedAt?: string;
+  postedToChannel?: boolean;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  lastPostedAt?: string | null;
+  lastPostedAtCh1?: string | null;
+  lastPostedAtCh2?: string | null;
+  postCount?: number;
+  reports?: {
+    up: number;
+    down: number;
+  };
+}
+
+export interface ProxyItem {
+  id: string;
+  raw: string;
+  type: 'mtproto' | 'socks5';
+  server: string;
+  port: number;
+  secret?: string;
+  source: string;
+  status: 'working' | 'failed' | 'untested' | 'checking';
+  latency: number | null;
+  lastChecked: string | null;
+  createdAt?: string;
+  postedToChannel?: boolean;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  lastPostedAt?: string | null;
+  lastPostedAtCh1?: string | null;
+  lastPostedAtCh2?: string | null;
+  postCount?: number;
+}
+
+export interface SourceItem {
+  id: string;
+  type: 'telegram' | 'github' | 'sub';
+  name: string;
+  urlOrHandle: string; // Telegram handle (e.g. @channel) or full URL
+  enabled: boolean;
+  extractedCount: number;
+  lastExtracted: string | null;
+}
+
+export interface ForceJoinChannel {
+  id: string;
+  username: string; // e.g., @mychannel
+  title: string;
+  inviteLink: string;
+  enabled: boolean;
+}
+
+export interface AutoPostSettings {
+  enabled: boolean; // Master auto-post switch
+  targetChannel: string; // e.g., @my_target_channel
+  adText: string; // bot or channel to advertise
+  silentMode: boolean; // send silently (disable_notification)
+  postFiles?: boolean; // send .npvt and .ovpn files
+  includeTechImportanceBadge?: boolean; // Show 🔥 / 💡 / 🔐 badges
+  skipPostSummary?: boolean; // Do not write intro summary at beginning of posts (send direct text)
+  autoPurgeOldTechDays?: number; // Auto purge news older than X days (default: 7)
+  lastPostedAt?: string | null;
+
+  // Global Anti-Flood delay between posts (in minutes)
+  antiFloodDelayMinutes?: number; // e.g. 3, 5, 10 minutes
+  lastAnyPostAt?: string | null;
+
+  // Smart Channel Growth, Traffic & Anti-Churn Controls
+  maxDailyPosts?: number; // Maximum allowed posts per day in Channel 1 (Default: 4)
+  minPostSpacingMinutes?: number; // Minimum gap between ANY post in Channel 1 (Default: 180 min)
+  smartGoldenHours?: boolean; // Prioritize posting during peak engagement hours in Iran (12:30-14:30, 18:00-20:30, 21:30-23:45)
+  sleepHoursProtection?: boolean; // Silence and pause auto-posts during sleeping hours (00:30 - 08:30 Tehran time)
+  singlePostMode?: boolean; // Strictly post ONE single message per cycle (no separate files or duplicate texts at the same minute)
+
+  // 1. Configs & Proxies Schedule
+  configsEnabled?: boolean; // Toggle for configs auto-posting
+  postIntervalHours: number; // e.g. 1, 2, 4, 8, 12, 24 (configs interval in hours)
+  configIntervalHours?: number; // alias/explicit
+  configIntervalMinutes?: number; // minute precision (e.g. 30, 45, 60, 120, etc.)
+  configCount: number; // number of configs (0, 1, 2, 3, 5, 10, 15, 20, 30, 50, etc.)
+  proxyCount: number; // number of proxies (0, 1, 2, 3, 5, 10, 15, 20)
+  customText: string; // custom Persian text to add to the config post
+  lastConfigsPostedAt?: string | null;
+  lastFunConfigsPostedAt?: string | null;
+  funWithConfigEnabled?: boolean; // Embed a fun meme/joke alongside configs in Channel 1 for viral retention & anti-churn
+  displayPingInPosts?: boolean; // When false, removes simulated ping ms from posts (since actual ping depends on user's ISP/net)
+
+  // 2. Tech News Schedule (Dedicated/Independent)
+  techNewsEnabled?: boolean; // Toggle for tech news auto-posting
+  techNewsIntervalHours?: number; // Interval in hours (1, 2, 4, 6, 8, 12, 24)
+  techNewsIntervalMinutes?: number; // minute precision (e.g. 30, 45, 60, 120, etc.)
+  techNewsCount?: number; // Number of tech news to post (1, 2, 3, 5, etc.)
+  lastTechNewsPostedAt?: string | null;
+
+  // 3. Tech Tricks & Secrets Schedule (Dedicated/Independent)
+  techTricksEnabled?: boolean; // Toggle for tricks/secrets auto-posting
+  techTricksIntervalHours?: number; // Interval in hours (1, 2, 4, 6, 8, 12, 24)
+  techTricksIntervalMinutes?: number; // minute precision (e.g. 30, 45, 60, 120, etc.)
+  techTricksCount?: number; // Number of mobile/tech tricks to post (1, 2, 3, etc.)
+  lastTechTricksPostedAt?: string | null;
+
+  // 4. AI Prompts Schedule (Dedicated/Independent)
+  aiPromptsEnabled?: boolean; // Toggle for AI Prompts auto-posting
+  aiPromptsIntervalHours?: number; // Interval in hours (1, 2, 4, 6, 8, 12, 24)
+  aiPromptsIntervalMinutes?: number; // minute precision (e.g. 30, 45, 60, 120, etc.)
+  aiPromptsCount?: number; // Number of AI prompts to post (1, 2, 3, etc.)
+  lastAiPromptsPostedAt?: string | null;
+
+  // 5. Fun & General News Schedule (Channel 1)
+  funNewsEnabled?: boolean; // Toggle for fun & general news auto-posting
+  funNewsIntervalHours?: number;
+  funNewsIntervalMinutes?: number;
+  funNewsCount?: number; // Number of fun/news items to post (1, 2, 3, etc.)
+  lastFunNewsPostedAt?: string | null;
+
+  // 6. Future-Proof Digital Tools & AI Toolbox (Channel 1 Independence from Filter/Proxy)
+  digitalToolsEnabled?: boolean; // Master toggle for evergreen digital tools, AI websites, lifehacks & cyber safety
+  digitalToolsIntervalHours?: number;
+  digitalToolsIntervalMinutes?: number;
+  digitalToolsCount?: number; // 1 or 2 tools per post
+  digitalToolsCategories?: ('ai_tools' | 'cool_websites' | 'mobile_hacks' | 'cyber_security' | 'must_apps')[];
+  lastDigitalToolsPostedAt?: string | null;
+
+  // Channel 1 Glass / Inline Button Configuration
+  inlineButtonEnabled?: boolean; // Toggle for inline glass button at bottom of post
+  inlineButtonText?: string; // Custom button label (e.g. "کانال رسمی ما 📢")
+  inlineButtonUrl?: string; // Custom button link/invite URL
+
+  // 7. Smart Interactive Polls Schedule
+  smartPollsEnabled?: boolean;
+  smartPollsIntervalHours?: number;
+  smartPollsIntervalMinutes?: number;
+  lastSmartPollPostedAt?: string | null;
+
+  // 8. AI Trend Prompt Extraction Schedule (Gemini)
+  aiTrendExtractionEnabled?: boolean; // Toggle for auto-extracting trending prompts using Gemini
+  aiTrendExtractionIntervalHours?: number; // 24 (daily) or 48 (every 2 days)
+  lastAiTrendExtractionAt?: string | null;
+
+  // 9. Viral & High-Share Rate Content (Channel 1 Booster)
+  viralShareEnabled?: boolean; // Toggle for high-virality, high-share content generation & posting
+  viralShareIntervalHours?: number;
+  viralShareIntervalMinutes?: number;
+  lastViralSharePostedAt?: string | null;
+  includeShareButton?: boolean; // Add one-click Telegram share button to posts
+
+  // Legacy/Backwards compatibility
+  techPostMode?: 'combined' | 'standalone' | 'both';
+
+  // Channel 2 Dedicated Auto-Post Configuration
+  channel2?: SecondaryChannelSettings;
+}
+
+export interface SecondaryChannelSettings {
+  enabled: boolean; // Master switch for Channel 2
+  targetChannel: string; // e.g., @my_target_channel_2
+  adText: string; // bot or channel to advertise on Channel 2
+  silentMode: boolean; // send silently
+  antiFloodDelayMinutes?: number; // Anti-flood delay between posts in minutes
+  lastAnyPostAt?: string | null;
+  lastPostedAt?: string | null;
+
+  // Smart Channel Growth, Traffic & Anti-Churn Controls
+  maxDailyPosts?: number; // Maximum allowed posts per day in Channel 2 (Default: 6)
+  minPostSpacingMinutes?: number; // Minimum gap between ANY post in Channel 2 (Default: 120 min)
+  smartGoldenHours?: boolean; // Prioritize posting during peak engagement hours in Iran (12:30-14:30, 18:00-20:30, 21:30-23:45)
+  sleepHoursProtection?: boolean; // Silence and pause auto-posts during sleeping hours (00:30 - 08:30 Tehran time)
+  singlePostMode?: boolean; // Strictly post ONE single message per cycle (no separate files or duplicate texts at the same minute)
+  skipPostSummary?: boolean; // Do not write intro summary at beginning of posts (default: true for Channel 2)
+
+  // Channel 2 Dedicated Glass / Inline Button Configuration
+  inlineButtonEnabled?: boolean; // Toggle for inline glass button on Channel 2
+  inlineButtonText?: string; // Custom button label for Channel 2 (e.g. "عضویت در کانال سرگرمی 🐸")
+  inlineButtonUrl?: string; // Custom button link for Channel 2 (e.g. https://t.me/ghourbagheBshort)
+
+  // Dedicated Source Channels for Channel 2
+  sourceChannels?: string[]; // Custom telegram channel handles/links defined specifically for Channel 2
+
+  // 1. Configs & Proxies Schedule for Channel 2
+  configsEnabled?: boolean;
+  postIntervalHours?: number;
+  configIntervalHours?: number;
+  configIntervalMinutes?: number;
+  configCount?: number;
+  proxyCount?: number;
+  postFiles?: boolean; // send NPV/OVPN files alongside configs
+  customText?: string;
+  lastConfigsPostedAt?: string | null;
+  funWithConfigEnabled?: boolean;
+  displayPingInPosts?: boolean;
+
+  // 2. Tech News Schedule for Channel 2
+  techNewsEnabled?: boolean;
+  techNewsIntervalHours?: number;
+  techNewsIntervalMinutes?: number;
+  techNewsCount?: number;
+  includeTechImportanceBadge?: boolean;
+  lastTechNewsPostedAt?: string | null;
+
+  // 3. Tech Tricks & Secrets Schedule for Channel 2
+  techTricksEnabled?: boolean;
+  techTricksIntervalHours?: number;
+  techTricksIntervalMinutes?: number;
+  techTricksCount?: number;
+  lastTechTricksPostedAt?: string | null;
+
+  // 4. AI Prompts Schedule for Channel 2
+  aiPromptsEnabled?: boolean;
+  aiPromptsIntervalHours?: number;
+  aiPromptsIntervalMinutes?: number;
+  aiPromptsCount?: number;
+  lastAiPromptsPostedAt?: string | null;
+
+  // 5. Fun & General News Schedule for Channel 2 (Primary use-case)
+  funNewsEnabled?: boolean;
+  funNewsIntervalHours?: number;
+  funNewsIntervalMinutes?: number;
+  funNewsCount?: number;
+  lastFunNewsPostedAt?: string | null;
+
+  // 6. Future-Proof Digital Tools & AI Toolbox for Channel 2
+  digitalToolsEnabled?: boolean;
+  digitalToolsIntervalHours?: number;
+  digitalToolsIntervalMinutes?: number;
+  digitalToolsCount?: number;
+  digitalToolsCategories?: ('ai_tools' | 'cool_websites' | 'mobile_hacks' | 'cyber_security' | 'must_apps')[];
+  lastDigitalToolsPostedAt?: string | null;
+
+  // 7. Smart Interactive Polls Schedule for Channel 2
+  smartPollsEnabled?: boolean;
+  smartPollsIntervalHours?: number;
+  smartPollsIntervalMinutes?: number;
+  lastSmartPollPostedAt?: string | null;
+
+  // 8. Viral & High-Share Rate Content for Channel 2
+  viralShareEnabled?: boolean;
+  viralShareIntervalHours?: number;
+  viralShareIntervalMinutes?: number;
+  lastViralSharePostedAt?: string | null;
+  includeShareButton?: boolean;
+}
+
+export interface ChannelHealthStatus {
+  channelTarget: 1 | 2;
+  channelHandle: string;
+  title?: string;
+  memberCount?: number;
+  canPost: boolean;
+  postsToday: number;
+  maxDailyPosts: number;
+  lastPostAt: string | null;
+  minutesSinceLastPost: number;
+  inCooldown: boolean;
+  cooldownRemainingMinutes: number;
+  isSleepHours: boolean;
+  isGoldenHour: boolean;
+  currentTehranTime: string;
+  reason?: string;
+  statusLevel: 'optimal' | 'warning' | 'paused' | 'blocked';
+}
+
+export interface DualChannelGrowthStatus {
+  channel1: ChannelHealthStatus;
+  channel2: ChannelHealthStatus;
+  globalAntiFloodActive: boolean;
+  serverTimeTehran: string;
+}
+
+export interface FunNewsItem {
+  id: string;
+  title: string;
+  text: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  mediaType?: 'photo' | 'video' | 'animation';
+  sourceChannel: string; // e.g. @khandeh_bazaar
+  sourceMessageId?: number;
+  category: 'fun' | 'news' | 'meme' | 'lifestyle';
+  tags: string[];
+  createdAt: string;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  postedAt?: string | null;
+}
+
+export interface FunNewsSource {
+  id: string;
+  name: string;
+  urlOrHandle: string; // Telegram channel handle (e.g. @channel) or URL
+  category?: 'fun' | 'news';
+  enabled: boolean;
+  extractedCount: number;
+  lastExtracted?: string | null;
+  createdAt?: string;
+}
+
+export interface SystemSettings {
+  adminId: string;
+  botToken: string;
+  botUsername: string;
+  branding: string; // e.g., "@MyChannel"
+  isBotRunning: boolean;
+  autoTest: boolean;
+  autoTestInterval?: number; // Ping test interval in minutes
+  testBatchLimit?: number; // Batch limit for config testing (default: 100)
+  autoExtractInterval: number; // in minutes
+  iranRelayProxy?: string; // Optional SOCKS5/HTTP relay proxy in Iran for 100% accurate Iran-net testing (e.g. socks5://185.x.x.x:1080)
+  geminiApiKey?: string; // Google Gemini API Key for AI Trend extraction & AI Prompts
+  autoPost: AutoPostSettings;
+  postMonitoringEnabled?: boolean;
+  backupEnabled?: boolean;
+  backupIntervalHours?: number;
+  lastBackupAt?: string | null;
+  botConnectionMode?: 'polling' | 'webhook';
+  publicUrl?: string;
+  adminUsername?: string;
+  adminPassword?: string;
+  maxConfigsRetention?: number; // Maximum retention limit for configs (default: 2000, range: 1-10000)
+}
+
+export interface ChannelPostConfig {
+  id: string;
+  raw: string;
+  protocol: ProtocolType;
+  remark: string;
+  server: string;
+  index: number;
+}
+
+export interface ChannelPostProxy {
+  id: string;
+  raw: string;
+  type: 'mtproto' | 'socks5';
+  server: string;
+  port: number;
+  secret?: string;
+  index: number;
+}
+
+export interface ChannelPost {
+  id: string;
+  messageId: number;
+  chatId: number | string;
+  postedAt: string;
+  originalText: string;
+  configs: ChannelPostConfig[];
+  proxies?: ChannelPostProxy[];
+  repliedMessageId?: number | null;
+}
+
+export interface BotUser {
+  chatId: number;
+  username: string | null;
+  firstName: string | null;
+  joinedAt: string;
+  lastActive: string;
+  configsFetched: number;
+  seenPrompts?: string[];
+}
+
+export interface BotLog {
+  id: string;
+  timestamp: string;
+  level: 'info' | 'warn' | 'error' | 'success';
+  message: string;
+}
+
+export type TechItemCategory = 'news' | 'trick' | 'secret';
+export type TechImportance = 'breaking' | 'high' | 'medium' | 'normal';
+
+export interface TechItem {
+  id: string;
+  title: string;
+  summary: string;
+  fullText?: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  mediaType?: 'photo' | 'video' | 'animation';
+  category: TechItemCategory; // 'news' (اخبار تکنولوژی), 'trick' (ترفندهای گوشی و تکنولوژی), 'secret' (رازهای تکنولوژی و امنیت)
+  tags: string[];
+  source: string;
+  sourceUrl?: string;
+  importance: TechImportance; // 'breaking' (فوری و داغ), 'high' (مهم), 'medium' (متوسط), 'normal' (عادی)
+  importanceScore: number; // 1-100 (امتیاز اهمیت جهت اولویت‌بندی ارسال خودکار)
+  createdAt: string;
+  postedToChannel?: boolean;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  lastPostedAtCh1?: string | null;
+  lastPostedAtCh2?: string | null;
+  postedAt?: string | null;
+  postCount?: number;
+}
+
+export type AiPromptCategory = 'image' | 'video' | 'chat' | 'other';
+
+export interface AiPrompt {
+  id: string;
+  title: string;
+  category: AiPromptCategory; // 'image' (تصویر), 'video' (ویدیو), 'chat' (متنی / هوش مصنوعی), 'other' (سایر)
+  styleCategory?: string; // e.g. 'pixar', 'cyberpunk'
+  description: string; // توضیحات فارسی پرامپت و نتیجه حاصله
+  promptText: string; // متن اصلی انگلیسی پرامپت جهت کپی کردن آسان
+  imageUrl?: string; // تصویر نمونه برای پیش‌نمایش بصری (از لئوناردو، میدجرنی، دالی و غیره)
+  videoUrl?: string; // ویدیوی نمونه برای پیش‌نمایش پرامپت‌های ویدیویی (Sora, Kling, Runway, Luma)
+  mediaType?: 'photo' | 'video' | 'animation';
+  tags: string[]; // هشتگ‌ها
+  importance?: 'hot' | 'normal'; // داغ و ترند یا معمولی
+  tipsForPersonalPhoto?: string; // راهنمای فارسی ترکیب با عکس
+  createdAt: string;
+  postedToChannel?: boolean;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  lastPostedAtCh1?: string | null;
+  lastPostedAtCh2?: string | null;
+  postedAt?: string | null;
+  postCount?: number;
+}
+
+export interface DashboardStats {
+  totalUsers: number;
+  totalConfigs: number;
+  workingConfigsCount: number;
+  failedConfigsCount: number;
+  checkingConfigsCount: number;
+  untestedConfigsCount: number;
+  totalProxies: number;
+  workingProxiesCount: number;
+  failedProxiesCount: number;
+  checkingProxiesCount: number;
+  untestedProxiesCount: number;
+  telegramChannelsCount: number;
+  subsCount: number;
+  extractedTodayCount: number;
+  // Tech Stats
+  totalTechItems?: number;
+  techNewsCount?: number;
+  techTricksCount?: number;
+  techSecretsCount?: number;
+  techHotCount?: number;
+  // AI Prompts Stats
+  totalAiPrompts?: number;
+  aiPromptsImageCount?: number;
+  aiPromptsVideoCount?: number;
+  aiPromptsChatCount?: number;
+  // Fun & General News Stats
+  totalFunNewsItems?: number;
+  funItemsCount?: number;
+  newsItemsCount?: number;
+  funSourcesCount?: number;
+  // Digital Tools Stats
+  totalDigitalTools?: number;
+}
+
+export type DigitalToolCategory = 'ai_tools' | 'cool_websites' | 'mobile_hacks' | 'cyber_security' | 'must_apps';
+
+export interface DigitalToolItem {
+  id: string;
+  title: string;
+  summary: string;
+  howToUse?: string;
+  linkUrl?: string;
+  buttonLabel?: string;
+  category: DigitalToolCategory;
+  tags: string[];
+  importance: 'essential' | 'trending' | 'normal';
+  createdAt: string;
+  postedToChannel?: boolean;
+  postedToChannel1?: boolean;
+  postedToChannel2?: boolean;
+  lastPostedAt?: string | null;
+  lastPostedAtCh1?: string | null;
+  lastPostedAtCh2?: string | null;
+  postedAt?: string | null;
+  postCount?: number;
+}
+
+export interface PostedPromptRecord {
+  id: string;
+  promptId: string;
+  titleNormalized: string;
+  promptNormalized: string;
+  channelTarget: 1 | 2;
+  postedAt: string;
+}
+
+
+
+// --- AI Channel Intelligence & Audience Growth Types ---
+export interface ChannelMemberEvent {
+  id: string;
+  channelHandle: string;
+  eventType: 'join' | 'leave';
+  userId?: number;
+  username?: string | null;
+  firstName?: string | null;
+  timestamp: string;
+  inviteLink?: string | null;
+  precedingPost?: {
+    category: string;
+    postedAt: string;
+    elapsedMinutes: number;
+    summary?: string;
+  } | null;
+}
+
+export interface PollOptionResult {
+  text: string;
+  voterCount: number;
+  percentage?: number;
+}
+
+export interface PollResultItem {
+  pollId: string;
+  messageId: number;
+  channelHandle: string;
+  question: string;
+  category?: string;
+  options: PollOptionResult[];
+  totalVoterCount: number;
+  isClosed: boolean;
+  postedAt: string;
+  lastUpdatedAt: string;
+  strategicInsight?: string;
+  settingTarget?: string;
+}
+
+export interface PollAnswerAuditLog {
+  id: string;
+  pollId: string;
+  question: string;
+  channelHandle: string;
+  category?: string;
+  totalVoters: number;
+  options: { text: string; voterCount: number; percentage: number }[];
+  winnerOption: string;
+  winnerPercentage: number;
+  actionableTuningInsight: string;
+  recordedAt: string;
+}
+
+export interface ChannelGrowthAnalytics {
+  summary: {
+    totalMembersCh1: number;
+    totalMembersCh2: number;
+    totalJoins: number;
+    totalLeaves: number;
+    netGrowth: number;
+    churnWithin30Min: number;
+  };
+  memberEvents: ChannelMemberEvent[];
+  pollResults: PollResultItem[];
+  pollAnswerLogs?: PollAnswerAuditLog[];
+  churnCorrelation: {
+    category: string;
+    count: number;
+    percentage: number;
+  }[];
+  recentStats: {
+    channelHandle: string;
+    memberCount: number;
+    delta?: number;
+    recordedAt: string;
+  }[];
+}
+
+export interface LiveChannelScanItem {
+  channelTarget: 1 | 2;
+  channelHandle: string;
+  accessible: boolean;
+  messagesFound: number;
+  extractedTitlesCount: number;
+  extractedLinksCount: number;
+  extractedServersCount: number;
+  extractedSecretsCount: number;
+  matchedExistingConfigs: number;
+  matchedExistingProxies: number;
+  matchedExistingTech: number;
+  matchedExistingTools: number;
+  sampleRecentPosts: string[];
+  error?: string;
+}
+
+export interface LiveAntiDuplicateReport {
+  success: boolean;
+  timestamp: string;
+  channelsScanned: LiveChannelScanItem[];
+  totalBlacklistedConfigs: number;
+  totalBlacklistedProxies: number;
+  totalBlacklistedTech: number;
+  totalBlacklistedTools: number;
+  message: string;
+}

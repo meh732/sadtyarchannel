@@ -1,0 +1,179 @@
+// --- Live Real-Time AI Prompt Extractor (Photo-styling & Face Combination) ---
+async function fetchLiveTrendingAiPromptFromInternet(categoryKey?: string): Promise<{
+  title: string;
+  category: 'image' | 'video' | 'chat' | 'other';
+  styleCategory?: string;
+  description: string;
+  promptText: string;
+  imageUrl?: string;
+  tags: string[];
+  tipsForPersonalPhoto?: string;
+}> {
+  const ai = getGeminiClient();
+  if (ai) {
+    try {
+      const categoryThemes: Record<string, { name: string; queries: string[]; guide: string }> = {
+        pixar: {
+          name: 'انیمیشن و کارتون ۳ بعدی دیزنی/پیکسار (تبدیل عکس شخصی)',
+          queries: [
+            'disney pixar 3d character portrait prompt midjourney prompthero',
+            '3d cartoon cute avatar personal photo prompt lexica art',
+            'pixar style cute child adult 3d render midjourney reddit'
+          ],
+          guide: 'تبدیل عکس پرتره چهره یا فرزند به کاراکتر انیمیشنی سه بعدی کمپانی پیکسار و دیزنی با نورپردازی لطیف و بامزه'
+        },
+        family: {
+          name: 'پرتره خانوادگی، کودک و والدین (ترکیب عکس‌های عزیزانتان)',
+          queries: [
+            'cozy family portrait photography warm golden hour prompt midjourney',
+            'cute baby toddler angelic portrait prompt playgroundai',
+            'elderly grandparents vintage emotional portrait prompt midjourney prompthero'
+          ],
+          guide: 'خلق عکس‌های شگفت‌انگیز و احساسی از اعضای خانواده، فرزندان و پدر و مادر با تم‌های گرم، رویایی و آتلیه‌ای'
+        },
+        couple: {
+          name: 'دونفره، عاشقانه، عروسی و فرمالیته (عکس با همسر)',
+          queries: [
+            'romantic couple wedding photo shoot sunset cinematic prompt midjourney',
+            'couple holding hands rainy paris streets moody photography prompt reddit',
+            'luxury aesthetic formal couple portrait prompt prompthero'
+          ],
+          guide: 'ترکیب عکس دونفره با همسر در لوکیشن‌های رمانتیک، کافه‌های پاریس، غروب دریا، یا آتلیه عروس'
+        },
+        cyberpunk: {
+          name: 'سایبرپانک، نئونی، فیوچریستیک و سینمایی',
+          queries: [
+            'cyberpunk neon portrait glowing lights rainy city prompt midjourney',
+            'futuristic sci-fi cinematic character portrait prompt lexica art',
+            'cybernetic glow street portrait prompt prompthero'
+          ],
+          guide: 'تبدیل چهره شما به قهرمان فیلم‌های علمی‌تخیلی و سایبرپانک با نورهای نئونی و لباس‌های آینده‌نگرانه'
+        },
+        royal: {
+          name: 'سلطنتی، اشرافی، درباری و کلاسیک رنسانس',
+          queries: [
+            'royal king queen renaissance oil painting portrait prompt midjourney',
+            'victorian royalty ornate crown gold embroidery portrait prompt reddit',
+            'persian ancient royal aesthetic portrait prompt prompthero'
+          ],
+          guide: 'ترکیب عکس چهره با شاهزادگان، درباریان، تاج‌های مجلل طلاکاری و نقاشی‌های کلاسیک رنسانس'
+        },
+        artistic: {
+          name: 'نقاشی روغنی، آبرنگ، طراحی دستی و انیمه جیبلی',
+          queries: [
+            'studio ghibli aesthetic anime portrait prompt midjourney',
+            'textured oil painting expressive portrait prompt lexica art',
+            'watercolor splash portrait character prompt prompthero'
+          ],
+          guide: 'تبدیل عکس شخصی به تابلوی نقاشی گران‌قیمت رنگ روغن، نقاشی آبرنگ یا سبک انیمه‌های نوستالژیک استودیو جیبلی'
+        },
+        fashion: {
+          name: 'مدلینگ، ووگ، عکاسی استودیویی و فشن اینستاگرامی',
+          queries: [
+            'vogue magazine cover editorial fashion portrait prompt midjourney',
+            'studio glamour portrait dramatic rim lighting prompt prompthero',
+            'aesthetic minimal luxury fashion portrait prompt reddit'
+          ],
+          guide: 'تبدیل ژست و عکس شما به کاور مجلات بین‌المللی مد و فشن (Vogue, GQ) با نورپردازی استودیویی فوق‌حرفه‌ای'
+        },
+        random: {
+          name: 'ترندهای داغ و ویرال شبکه‌های اجتماعی (TikTok / Instagram)',
+          queries: [
+            'viral trending portrait midjourney prompts reddit',
+            'most popular character portrait prompt prompthero lexica',
+            'trending aesthetic portrait prompts civitai'
+          ],
+          guide: 'جدیدترین و داغ‌ترین ترندهای وایرال شبکه‌های اجتماعی در ترکیب عکس‌های شخصی'
+        }
+      };
+
+      const selectedKey = (categoryKey && categoryThemes[categoryKey]) ? categoryKey : 'random';
+      const catConfig = categoryThemes[selectedKey];
+      const randomQuery = catConfig.queries[Math.floor(Math.random() * catConfig.queries.length)];
+
+      const systemPrompt = `You are an elite AI Prompt Engineer and internet researcher specializing in REAL-WORLD VIRAL PROMPTS for PERSONAL PHOTO TRANSFORMATIONS (turning selfies, family photos, couples, children, parents into stunning styles).
+
+TASK: Search the web via googleSearch for REAL, POPULAR, AND VIRAL prompts used on Midjourney, Stable Diffusion, DALL-E, or PromptHero for category: "${catConfig.name}".
+Search Query: "${randomQuery}".
+
+RULES & STRUCTURE:
+1. Extract an authentic, highly-praised English prompt from real community shares (Reddit, PromptHero, Lexica, etc.).
+2. The prompt should be formatted so users can combine it with their own uploaded photo (e.g. using Midjourney's [photo_link] + prompt + parameters like --cw 20 --cref [photo_link] or FaceSwap tools).
+3. Title: A catchy and beautiful Persian title (3-6 words).
+4. Description: A complete Persian explanation explaining the aesthetic style, what makes it special, and naming the source platform (e.g. PromptHero, Reddit r/midjourney).
+5. TipsForPersonalPhoto: Practical step-by-step Persian advice on what kind of personal photo (lighting, angle, selfie/full-body) works best for this style and how to plug it into Midjourney or FaceSwap tools.
+6. Tags: 3 to 4 Persian tags without '#'.
+7. UnsplashSearchTerm: Specific English keywords to fetch a matching preview photo.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.7-flash",
+        contents: systemPrompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING, description: "Descriptive Persian title for the prompt" },
+              promptText: { type: Type.STRING, description: "The actual exact English prompt text found from the source" },
+              description: { type: Type.STRING, description: "Detailed Persian explanation of the aesthetic and source platform" },
+              tipsForPersonalPhoto: { type: Type.STRING, description: "Persian practical tips on choosing the right personal photo and combining it" },
+              tags: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: "3 to 4 Persian tags without '#' symbol"
+              },
+              unsplashSearchTerm: { type: Type.STRING, description: "Specific english keywords for Unsplash background" }
+            },
+            required: ["title", "promptText", "description", "tipsForPersonalPhoto", "tags", "unsplashSearchTerm"]
+          }
+        }
+      });
+
+      if (response && response.text) {
+        const parsed = JSON.parse(response.text);
+        const imageUrl = `https://images.unsplash.com/featured/800x600/?${encodeURIComponent(parsed.unsplashSearchTerm || parsed.title)}`;
+
+        return {
+          title: parsed.title,
+          category: 'image',
+          styleCategory: selectedKey,
+          description: parsed.description,
+          promptText: parsed.promptText,
+          tipsForPersonalPhoto: parsed.tipsForPersonalPhoto,
+          imageUrl,
+          tags: parsed.tags || []
+        };
+      }
+    } catch (e) {
+      console.error('Gemini live prompt generation error:', e);
+    }
+  }
+
+  // Fallback to offline / local database prompts
+  const allLocal = db.aiPrompts || [];
+  if (allLocal.length > 0) {
+    const p = allLocal[Math.floor(Math.random() * allLocal.length)];
+    return {
+      title: p.title,
+      category: p.category as any,
+      description: p.description,
+      promptText: p.promptText,
+      imageUrl: p.imageUrl,
+      tags: p.tags,
+      tipsForPersonalPhoto: 'برای این پرامپت، یک عکس سلفی واضح و با نور مناسب از چهره خود را به عنوان مرجع به همراه پرامپت آپلود کنید.'
+    };
+  }
+
+  return {
+    title: 'تبدیل عکس چهره به کاراکتر انیمیشنی ۳ بعدی پیکسار',
+    category: 'image',
+    styleCategory: 'pixar',
+    description: 'یکی از پرطرفدارترین ترندهای وایرال در PromptHero و ردیت برای تبدیل چهره واقعی به کاراکتر بانمک پیکسار.',
+    promptText: '3D Pixar Disney style animated character of [upload your photo], cute expressive eyes, soft studio lighting, vibrant warm colors, smooth clay render, octane render, 8k --ar 9:16 --cw 20',
+    tipsForPersonalPhoto: 'از یک عکس پرتره یا سلفی تکی با نور طبیعی و نگاه مستقیم به دوربین استفاده کنید.',
+    imageUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=800&auto=format&fit=crop&q=60',
+    tags: ['پیکسار', 'تبدیل_عکس_شخصی', 'دیزنی', 'انیمیشن_۳بعدی']
+  };
+}
+
