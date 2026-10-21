@@ -17049,56 +17049,63 @@ async function startExpressServer() {
     return Buffer.from(JSON.stringify({ isAdmin: true, expires })).toString('base64');
   }
 
-  // Middleware to enforce admin authorization on all /api routes (except auth and webhook)
+  // Middleware to enforce admin authorization on protected admin /api routes
   app.use((req, res, next) => {
-    const publicPaths = [
-      '/api/health',
-      '/api/app-url',
-      '/api/auth/login',
-      '/api/auth/telegram-login',
-      '/api/telegram-webhook',
-      '/api/fun-news/refresh',
-      '/api/fun-news/send',
-      '/api/bot/auto-post/trigger-fun-news',
-      '/api/bot/auto-post/trigger-viral',
-      '/api/ai-prompts/extract-ai-trends',
-      '/api/ai-prompts/refresh',
-      '/api/bot/auto-post/trigger-ai-prompts'
-    ];
-    
-    if (publicPaths.includes(req.path) || req.path.startsWith('/api/fun-sources') || req.path.startsWith('/api/fun-news') || req.path.startsWith('/api/ai-prompts')) {
-      return next();
-    }
-    
-    // Allow regular users to read configs, proxies, tech items, fun sources, and vpn files list
-    const publicGetPaths = [
-      '/api/configs',
-      '/api/proxies',
-      '/api/tech-items',
-      '/api/vpn-files',
-      '/api/fun-sources',
-      '/api/fun-news',
-      '/api/ai-prompts'
-    ];
-    if (req.method === 'GET' && publicGetPaths.includes(req.path)) {
-      return next();
-    }
-    
-    // Only protect endpoints starting with /api/
+    // Non-/api/ routes (static files, subscription links /sub, etc.) are always public
     if (!req.path.startsWith('/api/')) {
       return next();
     }
-    
+
+    // Always public API endpoints (auth, health, webhooks, public settings, simulator)
+    if (
+      req.path === '/api/health' ||
+      req.path === '/api/app-url' ||
+      req.path === '/api/auth/login' ||
+      req.path === '/api/auth/telegram-login' ||
+      req.path.startsWith('/api/telegram-webhook') ||
+      req.path.startsWith('/api/public') ||
+      req.path.startsWith('/api/settings/public') ||
+      req.path.startsWith('/api/sub') ||
+      req.path.startsWith('/sub')
+    ) {
+      return next();
+    }
+
+    // Public GET endpoints accessible by Web Panel users without admin login
+    if (req.method === 'GET') {
+      const publicReadPaths = [
+        '/api/configs',
+        '/api/proxies',
+        '/api/tech-items',
+        '/api/vpn-files',
+        '/api/digital-tools',
+        '/api/force-join',
+        '/api/fun-sources',
+        '/api/fun-news',
+        '/api/ai-prompts',
+        '/api/v2ray-simulator/preset-configs'
+      ];
+      if (
+        publicReadPaths.includes(req.path) ||
+        req.path.startsWith('/api/fun-news') ||
+        req.path.startsWith('/api/ai-prompts') ||
+        req.path.startsWith('/api/digital-tools')
+      ) {
+        return next();
+      }
+    }
+
+    // All other /api/ endpoints require valid Admin Bearer Token
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, message: 'دسترسی غیرمجاز. لطفا ابتدا وارد پنل شوید.' });
     }
-    
+
     const token = authHeader.substring(7);
     if (!verifyToken(token)) {
       return res.status(401).json({ success: false, message: 'اعتبار نشست شما منقضی شده است. لطفا دوباره وارد شوید.' });
     }
-    
+
     next();
   });
 
