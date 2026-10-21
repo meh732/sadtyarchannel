@@ -121,6 +121,7 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
     description: '',
     promptText: '',
     imageUrl: '',
+    videoUrl: '',
     tags: ''
   });
   const [submitting, setSubmitting] = useState(false);

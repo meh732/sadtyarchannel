@@ -269,10 +269,12 @@ export interface ChannelHealthStatus {
   minutesSinceLastPost: number;
   inCooldown: boolean;
   cooldownRemainingMinutes: number;
+  minSpacingMinutes?: number;
   isSleepHours: boolean;
   isGoldenHour: boolean;
   currentTehranTime: string;
   reason?: string;
+  statusMessage?: string;
   statusLevel: 'optimal' | 'warning' | 'paused' | 'blocked';
 }
 
@@ -281,6 +283,12 @@ export interface DualChannelGrowthStatus {
   channel2: ChannelHealthStatus;
   globalAntiFloodActive: boolean;
   serverTimeTehran: string;
+  tehranTime?: {
+    timeStr: string;
+    dateStr: string;
+    isSleepHours: boolean;
+    isGoldenHour: boolean;
+  };
 }
 
 export interface FunNewsItem {
