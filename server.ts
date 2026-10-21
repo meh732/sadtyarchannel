@@ -20141,20 +20141,18 @@ ${pollLogs.length === 0 && polls.length === 0 ? 'هنوز نظرسنجی ثبت 
     });
   }
 
-  function startListening(portToUse: number, retriesLeft = 5) {
+  function startListening(portToUse: number, retriesLeft = 10) {
     const server = app.listen(portToUse, '0.0.0.0', () => {
       console.log(`Server running on http://localhost:${portToUse}`);
     });
 
     server.on('error', (err: any) => {
       if (err.code === 'EADDRINUSE') {
-        console.warn(`[PORT CONFLICT] Port ${portToUse} is already in use.`);
+        console.warn(`[PORT] Port ${portToUse} is temporarily in use. Waiting for release... (${retriesLeft} retries remaining)`);
         if (retriesLeft > 0) {
-          const nextPort = portToUse === 8080 ? 3000 : (portToUse === 3000 ? 8080 : portToUse + 1);
-          console.warn(`Attempting fallback to port ${nextPort} in 500ms...`);
-          setTimeout(() => startListening(nextPort, retriesLeft - 1), 500);
+          setTimeout(() => startListening(portToUse, retriesLeft - 1), 1200);
         } else {
-          console.error(`Fatal: Could not bind to port ${portToUse} after retries.`);
+          console.error(`Fatal: Port ${portToUse} is still in use after retries.`);
         }
       } else {
         console.error('Express server listen error:', err);
