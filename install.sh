@@ -376,6 +376,8 @@ update_bot() {
     if [ -f /tmp/sadtyar_update.zip ]; then
         unzip -q -o /tmp/sadtyar_update.zip -d /tmp/sadtyar_update_extract
         if [ -d "/tmp/sadtyar_update_extract/sadtyarchannel-main" ]; then
+            rm -rf /tmp/sadtyar_update_extract/sadtyarchannel-main/backups 2>/dev/null || true
+            rm -f /tmp/sadtyar_update_extract/sadtyarchannel-main/data_store.json /tmp/sadtyar_update_extract/sadtyarchannel-main/system_settings.json /tmp/sadtyar_update_extract/sadtyarchannel-main/.env 2>/dev/null || true
             cp -rf /tmp/sadtyar_update_extract/sadtyarchannel-main/* "$INSTALL_DIR/" 2>/dev/null || true
             cp -rf /tmp/sadtyar_update_extract/sadtyarchannel-main/.* "$INSTALL_DIR/" 2>/dev/null || true
         fi

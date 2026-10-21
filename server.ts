@@ -15,7 +15,23 @@ import net from 'net';
 import dns from 'dns';
 import tls from 'tls';
 import os from 'os';
-import { GoogleGenAI, Type } from '@google/genai';
+// Global process resilience: Never let stray socket/TLS/network errors kill the server or bot
+process.on('uncaughtException', (err) => {
+  console.error('[Process Guard] Uncaught Exception (prevented crash):', err?.message || err);
+});
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[Process Guard] Unhandled Rejection (prevented crash):', reason?.message || reason);
+});
+
+// Safe dynamic loader for optional @google/genai so missing npm package on VPS never crashes startup
+let GoogleGenAIClass: any = null;
+import('@google/genai')
+  .then((mod) => {
+    GoogleGenAIClass = mod.GoogleGenAI;
+  })
+  .catch(() => {
+    console.warn('[Gemini AI] @google/genai module not yet installed; AI prompt generation will use fallback until installed.');
+  });
 
 // --- Local IP Helper ---
 function getMachineIp(): string {
@@ -32,7 +48,6 @@ function getMachineIp(): string {
   return '127.0.0.1';
 }
 import { spawn, exec, execSync } from 'child_process';
-import { createServer as createViteServer } from 'vite';
 import { 
   ConfigItem, 
   ProxyItem,
@@ -1114,12 +1129,12 @@ function findBestDataStoreBackup(): any {
 
 function findBestSettingsBackup(): any {
   const candidatePaths = [
-    path.join(BACKUPS_DIR, 'system_settings_latest_healthy.json'),
-    path.join(process.cwd(), 'system_settings.json.bak'),
     '/var/lib/sadtyar-data/system_settings.json',
     '/var/lib/sadtyar-data/system_settings_latest_healthy.json',
     '/opt/sadtyar-permanent-backup/system_settings.json',
     '/tmp/sadtyar_safe_backup/system_settings.json',
+    path.join(process.cwd(), 'system_settings.json.bak'),
+    path.join(BACKUPS_DIR, 'system_settings_latest_healthy.json'),
     path.join(BACKUPS_DIR, 'system_settings_snapshot_1.json'),
     path.join(BACKUPS_DIR, 'system_settings_snapshot_2.json'),
     path.join(BACKUPS_DIR, 'system_settings_snapshot_3.json'),
@@ -1127,6 +1142,7 @@ function findBestSettingsBackup(): any {
     path.join(BACKUPS_DIR, 'system_settings_snapshot_5.json')
   ];
 
+  let fallbackParsed: any = null;
   for (const cPath of candidatePaths) {
     if (fs.existsSync(cPath)) {
       try {
@@ -1134,13 +1150,18 @@ function findBestSettingsBackup(): any {
         if (raw && raw.trim()) {
           const parsed = JSON.parse(raw);
           if (parsed && parsed.settings) {
-            return parsed;
+            if (parsed.settings.botToken && String(parsed.settings.botToken).trim()) {
+              return parsed;
+            }
+            if (!fallbackParsed) {
+              fallbackParsed = parsed;
+            }
           }
         }
       } catch (e) {}
     }
   }
-  return null;
+  return fallbackParsed;
 }
 
 function loadDatabase() {
@@ -1202,8 +1223,12 @@ function loadDatabase() {
       };
     }
 
-    const resolvedBotToken = envBotToken || loadedSettings?.settings?.botToken || loadedDataStore?.settings?.botToken || '';
-    const resolvedAdminId = envAdminId || loadedSettings?.settings?.adminId || loadedDataStore?.settings?.adminId || '';
+    const backupWithToken = (!envBotToken && !loadedSettings?.settings?.botToken && !loadedDataStore?.settings?.botToken)
+      ? findBestSettingsBackup()
+      : null;
+
+    const resolvedBotToken = envBotToken || loadedSettings?.settings?.botToken || loadedDataStore?.settings?.botToken || backupWithToken?.settings?.botToken || '';
+    const resolvedAdminId = envAdminId || loadedSettings?.settings?.adminId || loadedDataStore?.settings?.adminId || backupWithToken?.settings?.adminId || '';
     const resolvedIranRelayProxy = process.env.IRAN_RELAY_PROXY || loadedSettings?.settings?.iranRelayProxy || loadedDataStore?.settings?.iranRelayProxy || 'socks5://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
 
     const finalSettings = { 
@@ -1677,17 +1702,17 @@ function detectPublicIp() {
 detectPublicIp();
 
 // --- Gemini Client Lazy Initializer ---
-let geminiClient: GoogleGenAI | null = null;
+let geminiClient: any = null;
 let currentGeminiKey: string | null = null;
 
-function getGeminiClient(): GoogleGenAI | null {
+function getGeminiClient(): any {
   const activeKey = (db.settings.geminiApiKey || '').trim() || process.env.GEMINI_API_KEY || '';
-  if (!activeKey) {
+  if (!activeKey || !GoogleGenAIClass) {
     return null;
   }
   if (!geminiClient || currentGeminiKey !== activeKey) {
     try {
-      geminiClient = new GoogleGenAI({
+      geminiClient = new GoogleGenAIClass({
         apiKey: activeKey,
         httpOptions: {
           headers: {
@@ -1710,7 +1735,7 @@ function getGeminiClient(): GoogleGenAI | null {
  * Handles temporary spikes in demand (503 UNAVAILABLE) and rate limits (429) cleanly without crashes.
  */
 async function generateGeminiContentWithFallback(
-  ai: GoogleGenAI,
+  ai: any,
   prompt: string,
   preferredModel = 'gemini-2.5-flash',
   fallbackModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite']
@@ -17504,7 +17529,11 @@ async function startExpressServer() {
       if (!keyToTest) {
         return res.status(400).json({ success: false, message: 'لطفاً ابتدا کلید Gemini API را وارد کنید.' });
       }
-      const testClient = new GoogleGenAI({
+      if (!GoogleGenAIClass) {
+        const mod = await import('@google/genai');
+        GoogleGenAIClass = mod.GoogleGenAI;
+      }
+      const testClient = new GoogleGenAIClass({
         apiKey: keyToTest,
         httpOptions: {
           headers: {
@@ -20115,14 +20144,25 @@ ${pollLogs.length === 0 && polls.length === 0 ? 'هنوز نظرسنجی ثبت 
   });
 
   // Vite middleware setup for Development vs Production
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa'
-    });
-    app.use(vite.middlewares);
+  const distPath = path.join(process.cwd(), 'dist');
+  const hasBuiltDist = fs.existsSync(path.join(distPath, 'index.html'));
+
+  if (process.env.NODE_ENV !== 'production' || !hasBuiltDist) {
+    try {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa'
+      });
+      app.use(vite.middlewares);
+    } catch (viteErr) {
+      console.error('Vite middleware fallback error, serving static dist:', viteErr);
+      app.use(express.static(distPath));
+      app.get('*', (req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
+    }
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -20130,7 +20170,7 @@ ${pollLogs.length === 0 && polls.length === 0 ? 'هنوز نظرسنجی ثبت 
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
 }
 
