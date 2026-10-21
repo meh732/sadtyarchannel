@@ -3307,12 +3307,6 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       }
     }
 
-    // Check-Host Iran nodes verification fallback
-    const checkHostRes = await checkPortFromIran(details.host, details.port, details.sni);
-    if (checkHostRes.working) {
-      return { working: true, latency: Math.max(10, Math.round(checkHostRes.latency)) };
-    }
-
     return { working: false, latency: 999 };
   } catch (err) {
     return { working: false, latency: 999 };
@@ -3662,8 +3656,7 @@ async function checkPortFromIran(host: string, port: number, sni?: string): Prom
 
     // If polling timed out and no success, we default to false but mark rate-limited
     return { working: false, latency: 999, rateLimited: true };
-  } catch (err: any) {
-    console.error('Error checking port from Iran via Check-Host:', err.message);
+  } catch (_err: any) {
     return { working: false, latency: 999, rateLimited: true };
   }
 }
