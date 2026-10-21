@@ -56,7 +56,7 @@ import {
   Smile,
   Wrench
 } from 'lucide-react';
-import { motion, AnimatePresence } from './utils/motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   ConfigItem, 
   ProxyItem,
@@ -191,13 +191,9 @@ export default function App() {
     totalConfigs: 0,
     workingConfigsCount: 0,
     failedConfigsCount: 0,
-    checkingConfigsCount: 0,
-    untestedConfigsCount: 0,
     totalProxies: 0,
     workingProxiesCount: 0,
     failedProxiesCount: 0,
-    checkingProxiesCount: 0,
-    untestedProxiesCount: 0,
     telegramChannelsCount: 0,
     subsCount: 0,
     extractedTodayCount: 0
@@ -2941,7 +2937,7 @@ export default function App() {
           <button
             onClick={() => setActiveTab('public_panel')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 cursor-pointer ${
-              (activeTab as string) === 'public_panel'
+              activeTab === 'public_panel'
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
                 : 'text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20'
             }`}
@@ -3181,7 +3177,7 @@ export default function App() {
         {/* Footer info */}
         <div className="p-6 border-t border-slate-800 bg-slate-950/20 text-xs text-slate-500 space-y-1">
           <p>وضعیت سرور: فعال 🟢</p>
-          <p>سیستم تست واقعی HTTP: فعال در ایران</p>
+          <p>سیستم تست پورت: فعال در ایران</p>
           <p className="pt-2 text-[10px] text-slate-600">طراحی شده با React 19 + Express</p>
         </div>
       </aside>
@@ -3378,7 +3374,7 @@ export default function App() {
                       {((stats.checkingConfigsCount || 0) > 0 || (stats.checkingProxiesCount || 0) > 0 || actionLoading === 'test_all') && (
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[10px] font-bold animate-pulse">
                           <RefreshCw className="w-3 h-3 animate-spin" />
-                          <span>عملیات تست واقعی HTTP در حال اجراست...</span>
+                          <span>عملیات تست پورت در حال اجراست...</span>
                         </span>
                       )}
                     </h3>
@@ -3398,7 +3394,7 @@ export default function App() {
                         className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
                       >
                         <Play className={`w-4 h-4 ${((stats.checkingConfigsCount || 0) > 0 || actionLoading === 'test_all') ? 'animate-spin' : ''}`} />
-                        <span>تست واقعی HTTP کل کانفیگ‌ها</span>
+                        <span>تست اتصال پورت کل کانفیگ‌ها</span>
                       </button>
 
                       <button
@@ -3446,7 +3442,7 @@ export default function App() {
                           <div>
                             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                               <Sliders className={`w-4 h-4 ${isActivelyChecking ? 'text-amber-500 animate-spin' : 'text-indigo-600'}`} />
-                              <span>نوار پیشرفت زنده وضعیت تست واقعی HTTP و صف بررسی</span>
+                              <span>نوار پیشرفت زنده وضعیت تست پورت و صف بررسی</span>
                             </h3>
                             <p className="text-xs text-slate-500 mt-0.5">
                               اطلاعات کاشی‌های بالا و نوار پیشرفت کاملاً متصل و همگام هستند و با انجام تست‌ها جابه‌جا می‌شوند.
@@ -4951,15 +4947,13 @@ export default function App() {
                 >
                   <DigitalToolsView
                     tools={digitalTools}
-                    token={token}
                     targetChannel1={autoPostForm.targetChannel}
                     targetChannel2={autoPostForm.channel2?.targetChannel || ''}
                     actionLoading={actionLoading}
                     showToast={showToast}
-                    onRefreshTools={async () => { await fetchData(true); }}
                     onSaveTool={handleSaveDigitalTool}
                     onDeleteTool={handleDeleteDigitalTool}
-                    onTriggerSendTools={(chNum) => handleTriggerDigitalToolsAutoPost(chNum)}
+                    onTriggerSendTool={handleTriggerDigitalToolsAutoPost}
                   />
                 </motion.div>
               )}
@@ -5411,7 +5405,7 @@ export default function App() {
                           dir="ltr"
                         />
                         <p className="text-[10px] text-slate-400">
-                          تست واقعی HTTP فقط روی این تعداد از آخرین کانفیگ‌های جدید استخراج‌شده انجام می‌شود تا سرعت تست بهینه باشد.
+                          تست پورت‌ها فقط روی این تعداد از آخرین کانفیگ‌های جدید استخراج‌شده انجام می‌شود تا سرعت تست حداکثری باشد.
                         </p>
                       </div>
 

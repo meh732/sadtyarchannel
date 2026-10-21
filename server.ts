@@ -1030,7 +1030,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   autoTestInterval: 10,
   testBatchLimit: 100,
   autoExtractInterval: 30, // minutes
-  iranRelayProxy: process.env.IRAN_RELAY_PROXY || 'http://proxyuser:DfroUpvpeTCj@95.38.68.158:1080',
+  iranRelayProxy: process.env.IRAN_RELAY_PROXY || 'socks5://proxyuser:DfroUpvpeTCj@95.38.68.158:1080',
   autoPost: DEFAULT_AUTO_POST,
   postMonitoringEnabled: false,
   backupEnabled: false,
@@ -1204,10 +1204,7 @@ function loadDatabase() {
 
     const resolvedBotToken = envBotToken || loadedSettings?.settings?.botToken || loadedDataStore?.settings?.botToken || '';
     const resolvedAdminId = envAdminId || loadedSettings?.settings?.adminId || loadedDataStore?.settings?.adminId || '';
-    let resolvedIranRelayProxy = process.env.IRAN_RELAY_PROXY || loadedSettings?.settings?.iranRelayProxy || loadedDataStore?.settings?.iranRelayProxy || 'http://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
-    if (resolvedIranRelayProxy === 'socks5://proxyuser:DfroUpvpeTCj@95.38.68.158:1080') {
-      resolvedIranRelayProxy = 'http://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
-    }
+    const resolvedIranRelayProxy = process.env.IRAN_RELAY_PROXY || loadedSettings?.settings?.iranRelayProxy || loadedDataStore?.settings?.iranRelayProxy || 'socks5://proxyuser:DfroUpvpeTCj@95.38.68.158:1080';
 
     const finalSettings = { 
       ...DEFAULT_SETTINGS, 
@@ -2191,9 +2188,8 @@ function parseFullConfigDetails(rawConfig: string): {
   path: string;
   tls: boolean;
   protocol: string;
-  netType: string;
 } {
-  const result = { host: '', port: 0, sni: '', hostHeader: '', path: '', tls: false, protocol: 'unknown', netType: 'tcp' };
+  const result = { host: '', port: 0, sni: '', hostHeader: '', path: '', tls: false, protocol: 'unknown' };
   if (!rawConfig) return result;
   const trimmed = rawConfig.trim();
 
@@ -2210,7 +2206,6 @@ function parseFullConfigDetails(rawConfig: string): {
         result.hostHeader = parsed.host || '';
         result.path = parsed.path || '';
         result.tls = (parsed.tls === 'tls' || parsed.security === 'tls');
-        result.netType = parsed.net || parsed.type || 'tcp';
       }
       return result;
     }
@@ -2233,7 +2228,6 @@ function parseFullConfigDetails(rawConfig: string): {
         result.path = params.get('path') || '';
         const security = params.get('security') || '';
         result.tls = (security === 'tls' || security === 'xtls' || security === 'reality');
-        result.netType = params.get('type') || params.get('net') || 'tcp';
       }
       
       const atIndex = cleanUrl.lastIndexOf('@');
@@ -2839,54 +2833,53 @@ function checkTlsHandshake(host: string, port: number, sni: string, timeout = 35
   });
 }
 
-// Cache detected proxy protocol ('http' | 'socks5') per host:port to avoid repeated timeouts when URI scheme mismatches server type
-const detectedProxyProtocolCache = new Map<string, "http" | "socks5">();
-
-function connectTunnelSingleMode(
-  parsed: ReturnType<typeof parseProxyUri>,
-  mode: "http" | "socks5",
+/**
+ * Helper to establish a socket tunnel through HTTP CONNECT or SOCKS5 proxy to target host:port
+ */
+function connectTunnelViaProxy(
+  proxyUri: string,
   targetHost: string,
   targetPort: number,
-  timeout: number
+  timeout = 4000
 ): Promise<{ socket: net.Socket; latency: number }> {
+  const parsed = parseProxyUri(proxyUri);
+  const isSocks = proxyUri.toLowerCase().startsWith('socks5');
+
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const socket = new net.Socket();
     socket.setTimeout(timeout);
-    let finished = false;
 
+    let finished = false;
     const cleanup = (err?: Error) => {
       if (finished) return;
       finished = true;
-      clearTimeout(hardTimer);
       socket.removeAllListeners();
       try { socket.destroy(); } catch (_) {}
-      reject(err || new Error("Proxy tunnel connection failed"));
+      reject(err || new Error('Proxy tunnel connection failed'));
     };
 
-    const hardTimer = setTimeout(() => cleanup(new Error("Proxy tunnel timeout")), timeout + 100);
-    socket.on("error", (e) => cleanup(e));
-    socket.on("timeout", () => cleanup(new Error("Proxy tunnel timeout")));
+    socket.on('error', (e) => cleanup(e));
+    socket.on('timeout', () => cleanup(new Error('Proxy tunnel timeout')));
 
-    if (mode === "http") {
+    if (!isSocks) {
       // HTTP CONNECT Proxy
       socket.connect(parsed.pPort, parsed.pHost, () => {
         let req = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n`;
-        if (parsed.auth) {
-          const authBase64 = Buffer.from(parsed.auth).toString("base64");
-          req += `Proxy-Authorization: Basic ${authBase64}\r\n`;
+        if (parsed.user || parsed.pass) {
+          const auth = `${parsed.user || ''}:${parsed.pass || ''}`;
+          req += `Proxy-Authorization: Basic ${Buffer.from(auth).toString('base64')}\r\n`;
         }
         req += `\r\n`;
         socket.write(req);
-        socket.once("data", (data) => {
-          const resp = data.toString("utf8");
-          if (resp.includes(" 200 ") || resp.startsWith("HTTP/1.1 200") || resp.startsWith("HTTP/1.0 200")) {
+        socket.once('data', (data) => {
+          const resp = data.toString('utf8');
+          if (resp.includes('200')) {
             finished = true;
-            clearTimeout(hardTimer);
             socket.removeAllListeners();
             resolve({ socket, latency: Date.now() - start });
           } else {
-            cleanup(new Error(`Proxy CONNECT rejected: ${resp.split("\r\n")[0]}`));
+            cleanup(new Error(`Proxy CONNECT rejected: ${resp.split('\r\n')[0]}`));
           }
         });
       });
@@ -2894,41 +2887,25 @@ function connectTunnelSingleMode(
       // SOCKS5 Proxy
       socket.connect(parsed.pPort, parsed.pHost, () => {
         socket.write(Buffer.from([0x05, 0x02, 0x00, 0x02]));
-        socket.once("data", (data) => {
-          if (data.length < 2 || data[0] !== 0x05) return cleanup(new Error("Invalid SOCKS5 greeting"));
+        socket.once('data', (data) => {
+          if (data.length < 2 || data[0] !== 0x05) return cleanup(new Error('Invalid SOCKS5 greeting'));
           const method = data[1];
 
           const sendSocksConnect = () => {
-            let req: Buffer;
-            if (net.isIPv4(targetHost)) {
-              const parts = targetHost.split(".").map(Number);
-              req = Buffer.alloc(4 + 4 + 2);
-              req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x01; // ATYP IPv4
-              req[4] = parts[0]; req[5] = parts[1]; req[6] = parts[2]; req[7] = parts[3];
-              req.writeUInt16BE(targetPort, 8);
-            } else if (net.isIPv6(targetHost)) {
-              req = Buffer.alloc(4 + 16 + 2);
-              req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x04; // ATYP IPv6
-              const hexStr = targetHost.replace(/:/g, "");
-              const b6 = Buffer.from(hexStr, "hex");
-              b6.copy(req, 4);
-              req.writeUInt16BE(targetPort, 20);
-            } else {
-              const hBuf = Buffer.from(targetHost);
-              req = Buffer.alloc(4 + 1 + hBuf.length + 2);
-              req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x03; req[4] = hBuf.length; // ATYP Domain
-              hBuf.copy(req, 5);
-              req.writeUInt16BE(targetPort, 5 + hBuf.length);
-            }
+            const hBuf = Buffer.from(targetHost);
+            const req = Buffer.alloc(4 + 1 + hBuf.length + 2);
+            req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x03; req[4] = hBuf.length;
+            hBuf.copy(req, 5);
+            req.writeUInt16BE(targetPort, 5 + hBuf.length);
+
             socket.write(req);
-            socket.once("data", (rep) => {
+            socket.once('data', (rep) => {
               if (rep.length >= 2 && rep[1] === 0x00) {
                 finished = true;
-                clearTimeout(hardTimer);
                 socket.removeAllListeners();
                 resolve({ socket, latency: Date.now() - start });
               } else {
-                cleanup(new Error(`SOCKS5 Connect rejected (code ${rep[1]})`));
+                cleanup(new Error('SOCKS5 Connect rejected'));
               }
             });
           };
@@ -2940,14 +2917,14 @@ function connectTunnelSingleMode(
             authReq[0] = 0x01; authReq[1] = uBuf.length; uBuf.copy(authReq, 2);
             authReq[2 + uBuf.length] = pBuf.length; pBuf.copy(authReq, 3 + uBuf.length);
             socket.write(authReq);
-            socket.once("data", (authResp) => {
+            socket.once('data', (authResp) => {
               if (authResp.length >= 2 && authResp[1] === 0x00) sendSocksConnect();
-              else cleanup(new Error("SOCKS5 auth failed"));
+              else cleanup(new Error('SOCKS5 auth failed'));
             });
           } else if (method === 0x00) {
             sendSocksConnect();
           } else {
-            cleanup(new Error("SOCKS5 auth method unsupported"));
+            cleanup(new Error('SOCKS5 auth method unsupported'));
           }
         });
       });
@@ -2956,93 +2933,48 @@ function connectTunnelSingleMode(
 }
 
 /**
- * Helper to establish a socket tunnel through HTTP CONNECT or SOCKS5 proxy to target host:port
- * Automatically detects and caches whether the proxy server speaks HTTP CONNECT or SOCKS5.
- */
-async function connectTunnelViaProxy(
-  proxyUri: string,
-  targetHost: string,
-  targetPort: number,
-  timeout = 3500
-): Promise<{ socket: net.Socket; latency: number }> {
-  const parsed = parseProxyUri(proxyUri);
-  const cacheKey = `${parsed.pHost}:${parsed.pPort}`;
-  const cachedMode = detectedProxyProtocolCache.get(cacheKey);
-  const preferredMode: "http" | "socks5" = cachedMode
-    ? cachedMode
-    : (parsed.protocol === "socks5" || proxyUri.toLowerCase().includes("socks")) ? "socks5" : "http";
-
-  try {
-    const res = await connectTunnelSingleMode(parsed, preferredMode, targetHost, targetPort, timeout);
-    detectedProxyProtocolCache.set(cacheKey, preferredMode);
-    return res;
-  } catch (firstErr) {
-    // If protocol was not yet verified in cache, try the alternative protocol once
-    if (!cachedMode) {
-      const fallbackMode: "http" | "socks5" = preferredMode === "http" ? "socks5" : "http";
-      const res = await connectTunnelSingleMode(parsed, fallbackMode, targetHost, targetPort, Math.min(timeout, 2500));
-      detectedProxyProtocolCache.set(cacheKey, fallbackMode);
-      return res;
-    }
-    throw firstErr;
-  }
-}
-
-/**
  * Performs FULL V2Ray Protocol & Handshake Verification via Iran Proxy.
- * Verifies TCP Tunnel, TLS Client Hello / SNI, ALPN, and HTTP WebSocket Upgrade / Protocol Probe through the proxy!
+ * Verifies TLS Client Hello / SNI, ALPN, and HTTP WebSocket Upgrade / Protocol Probe through the proxy!
  */
 async function checkV2RayProtocolHandshakeViaProxy(
   proxyUri: string,
   details: ReturnType<typeof parseFullConfigDetails>,
-  timeout = 3500
+  timeout = 4500
 ): Promise<{ working: boolean; latency: number }> {
   if (!proxyUri || !proxyUri.trim() || !details.host || !details.port) {
     return { working: false, latency: 999 };
   }
+
   const start = Date.now();
+  const sni = (details.sni && details.sni.trim()) ? details.sni.trim() : details.host.trim();
   const targetHost = details.host.trim();
   const targetPort = details.port;
-  const rawSni = (details.sni && details.sni.trim()) ? details.sni.trim() : ((details.hostHeader && details.hostHeader.trim()) ? details.hostHeader.trim() : targetHost);
-  const servername = (rawSni && !net.isIP(rawSni)) ? rawSni : undefined;
-  const isWs = details.netType === "ws" || Boolean(details.path);
-
-  let rawSocket: net.Socket | null = null;
-  let activeSocket: net.Socket | tls.TLSSocket | null = null;
-
-  const destroySockets = () => {
-    try { if (activeSocket) activeSocket.destroy(); } catch (_) {}
-    try { if (rawSocket) rawSocket.destroy(); } catch (_) {}
-  };
 
   try {
     // Stage 1: Establish TCP socket tunnel through Iran proxy to destination host/port
-    const tunnelRes = await connectTunnelViaProxy(proxyUri, targetHost, targetPort, timeout);
-    rawSocket = tunnelRes.socket;
-    activeSocket = rawSocket;
+    const { socket: rawSocket } = await connectTunnelViaProxy(proxyUri, targetHost, targetPort, timeout);
+
+    let activeSocket: net.Socket | tls.TLSSocket = rawSocket;
 
     // Stage 2: If TLS / REALITY / XTLS is enabled, perform full TLS Handshake over the proxy tunnel
     if (details.tls) {
       activeSocket = await new Promise<tls.TLSSocket>((resolve, reject) => {
         const tlsTimer = setTimeout(() => {
-          destroySockets();
-          reject(new Error("TLS Handshake Timeout via Iran Proxy"));
-        }, Math.min(timeout, 3000));
+          try { rawSocket.destroy(); } catch (_) {}
+          reject(new Error('TLS Handshake Timeout via Iran Proxy'));
+        }, timeout);
 
-        const tlsOpts: tls.ConnectionOptions = {
-          socket: rawSocket!,
+        const tlsSocket = tls.connect({
+          socket: rawSocket,
+          servername: sni,
           rejectUnauthorized: false,
-          ALPNProtocols: isWs ? ["http/1.1"] : ["h2", "http/1.1"]
-        };
-        if (servername) {
-          tlsOpts.servername = servername;
-        }
-
-        const tlsSocket = tls.connect(tlsOpts, () => {
+          ALPNProtocols: ['h2', 'http/1.1']
+        }, () => {
           clearTimeout(tlsTimer);
           resolve(tlsSocket);
         });
-        tlsSocket.on("error", (e) => {
+
+        tlsSocket.on('error', (e) => {
           clearTimeout(tlsTimer);
           reject(e);
         });
@@ -3050,40 +2982,45 @@ async function checkV2RayProtocolHandshakeViaProxy(
     }
 
     // Stage 3: If WebSocket (ws) or HTTP path exists, test WebSocket Upgrade / HTTP Handshake Probe
-    if (isWs) {
-      const wsPath = details.path ? (details.path.startsWith("/") ? details.path : `/${details.path}`) : "/";
+    const path = details.path ? (details.path.startsWith('/') ? details.path : `/${details.path}`) : null;
+    if (path) {
       const wsHandshakeSuccess = await new Promise<boolean>((resolve) => {
         const probeTimer = setTimeout(() => {
+          try { activeSocket.destroy(); } catch (_) {}
           resolve(false);
-        }, 2500);
-        let respBuffer = "";
-        activeSocket!.on("data", (chunk) => {
-          respBuffer += chunk.toString("utf8");
-          if (respBuffer.includes("\r\n") || respBuffer.startsWith("HTTP/")) {
+        }, timeout);
+
+        let respBuffer = '';
+        activeSocket.on('data', (chunk) => {
+          respBuffer += chunk.toString('utf8');
+          if (respBuffer.includes('\r\n\r\n')) {
             clearTimeout(probeTimer);
-            const statusLine = respBuffer.split("\r\n")[0] || "";
-            // Reject dead gateway / unreachable upstream errors (502, 503, 504, 521-526)
-            if (statusLine.includes("502") || statusLine.includes("503") || statusLine.includes("504") || statusLine.includes("521") || statusLine.includes("522") || statusLine.includes("523") || statusLine.includes("524")) {
-              resolve(false);
-            } else if (statusLine.startsWith("HTTP/") || statusLine.includes("101") || statusLine.includes("200") || statusLine.includes("400") || statusLine.includes("403") || statusLine.includes("426") || statusLine.includes("100")) {
+            const statusLine = respBuffer.split('\r\n')[0] || '';
+            // Valid V2Ray WS Handshake response codes: 101 (Switching Protocols), 100, 200, 400 (Bad Request from V2Ray WS core)
+            if (statusLine.includes('101') || statusLine.includes('200') || statusLine.includes('400') || statusLine.includes('100')) {
               resolve(true);
             } else {
-              resolve(false);
+              resolve(false); // 404, 502, 503 means broken / filtered WS path
             }
           }
         });
-        activeSocket!.on("error", () => { clearTimeout(probeTimer); resolve(false); });
-        const hostHdr = details.hostHeader || rawSni || targetHost;
-        const wsReq = `GET ${wsPath} HTTP/1.1\r\n` +
+
+        activeSocket.on('error', () => { clearTimeout(probeTimer); resolve(false); });
+
+        const hostHdr = details.hostHeader || sni || targetHost;
+        const wsReq = `GET ${path} HTTP/1.1\r\n` +
           `Host: ${hostHdr}\r\n` +
           `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36\r\n` +
           `Upgrade: websocket\r\n` +
           `Connection: Upgrade\r\n` +
           `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n` +
           `Sec-WebSocket-Version: 13\r\n\r\n`;
-        activeSocket!.write(wsReq);
+
+        activeSocket.write(wsReq);
       });
-      destroySockets();
+
+      try { activeSocket.destroy(); } catch (_) {}
+
       if (wsHandshakeSuccess) {
         return { working: true, latency: Math.max(10, Date.now() - start) };
       } else {
@@ -3091,167 +3028,17 @@ async function checkV2RayProtocolHandshakeViaProxy(
       }
     }
 
-    // Stage 4: For non-WS TCP/TLS configs, TLS/TCP handshake succeeded over Iran Proxy
-    destroySockets();
+    // Stage 4: For non-WS TCP/TLS configs (e.g. VLESS REALITY, Trojan TCP, Shadowsocks), TLS/TCP handshake succeeded
+    try { activeSocket.destroy(); } catch (_) {}
     return { working: true, latency: Math.max(10, Date.now() - start) };
+
   } catch (err) {
-    destroySockets();
     return { working: false, latency: 999 };
   }
 }
 
 /**
- * Performs FULL V2Ray Protocol & Handshake Verification DIRECTLY (without proxy).
- */
-async function checkV2RayProtocolHandshakeDirect(
-  details: ReturnType<typeof parseFullConfigDetails>,
-  timeout = 3500
-): Promise<{ working: boolean; latency: number }> {
-  if (!details.host || !details.port) return { working: false, latency: 999 };
-  const start = Date.now();
-  const targetHost = details.host.trim();
-  const targetPort = details.port;
-  const rawSni = (details.sni && details.sni.trim()) ? details.sni.trim() : ((details.hostHeader && details.hostHeader.trim()) ? details.hostHeader.trim() : targetHost);
-  const servername = (rawSni && !net.isIP(rawSni)) ? rawSni : undefined;
-  const isWs = details.netType === "ws" || Boolean(details.path);
-
-  return new Promise<{ working: boolean; latency: number }>((resolve) => {
-    let resolved = false;
-    let rawSocket: net.Socket | null = null;
-    let activeSocket: net.Socket | tls.TLSSocket | null = null;
-
-    const finish = (working: boolean) => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timer);
-      try { if (activeSocket) activeSocket.destroy(); } catch (_) {}
-      try { if (rawSocket) rawSocket.destroy(); } catch (_) {}
-      const lat = working ? Math.max(10, Date.now() - start) : 999;
-      resolve({ working, latency: lat });
-    };
-
-    const timer = setTimeout(() => finish(false), timeout + 100);
-
-    try {
-      rawSocket = new net.Socket();
-      rawSocket.setTimeout(timeout);
-      rawSocket.on("error", () => finish(false));
-      rawSocket.on("timeout", () => finish(false));
-
-      rawSocket.connect(targetPort, targetHost, async () => {
-        activeSocket = rawSocket!;
-
-        if (details.tls) {
-          try {
-            activeSocket = await new Promise<tls.TLSSocket>((resTLS, rejTLS) => {
-              const tlsTimer = setTimeout(() => rejTLS(new Error("TLS timeout")), timeout - 400);
-              const tlsOpts: tls.ConnectionOptions = {
-                socket: rawSocket!,
-                rejectUnauthorized: false,
-                ALPNProtocols: isWs ? ["http/1.1"] : ["h2", "http/1.1"]
-              };
-              if (servername) {
-                tlsOpts.servername = servername;
-              }
-              const tlsSocket = tls.connect(tlsOpts, () => {
-                clearTimeout(tlsTimer);
-                resTLS(tlsSocket);
-              });
-              tlsSocket.on("error", (e) => { clearTimeout(tlsTimer); rejTLS(e); });
-            });
-          } catch (e) {
-            return finish(false);
-          }
-        }
-
-        if (isWs) {
-          const wsPath = details.path ? (details.path.startsWith("/") ? details.path : `/${details.path}`) : "/";
-          let respBuffer = "";
-          const wsTimer = setTimeout(() => {
-            finish(false);
-          }, 2000);
-
-          activeSocket!.on("data", (chunk) => {
-            respBuffer += chunk.toString("utf8");
-            if (respBuffer.includes("\r\n") || respBuffer.startsWith("HTTP/")) {
-              clearTimeout(wsTimer);
-              const statusLine = respBuffer.split("\r\n")[0] || "";
-              if (statusLine.includes("502") || statusLine.includes("503") || statusLine.includes("504") || statusLine.includes("521") || statusLine.includes("522") || statusLine.includes("523") || statusLine.includes("524")) {
-                finish(false);
-              } else if (statusLine.startsWith("HTTP/") || statusLine.includes("101") || statusLine.includes("200") || statusLine.includes("400") || statusLine.includes("403") || statusLine.includes("426") || statusLine.includes("100")) {
-                finish(true);
-              } else {
-                finish(false);
-              }
-            }
-          });
-
-          const hostHdr = details.hostHeader || rawSni || targetHost;
-          const wsReq = `GET ${wsPath} HTTP/1.1\r\n` +
-            `Host: ${hostHdr}\r\n` +
-            `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36\r\n` +
-            `Upgrade: websocket\r\n` +
-            `Connection: Upgrade\r\n` +
-            `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n` +
-            `Sec-WebSocket-Version: 13\r\n\r\n`;
-          activeSocket!.write(wsReq);
-          return;
-        }
-
-        finish(true);
-      });
-    } catch (_) {
-      finish(false);
-    }
-  });
-}
-
-let lastProxyCheckTs = 0;
-let lastProxyCheckOk = false;
-let lastProxyCheckUri = "";
-let proxyHealthInFlight: Promise<boolean> | null = null;
-
-async function isIranProxyHealthy(proxyUri: string, timeout = 3000): Promise<boolean> {
-  if (!proxyUri || !proxyUri.trim()) return false;
-  const cleanUri = proxyUri.trim();
-  const now = Date.now();
-  if (cleanUri === lastProxyCheckUri && (now - lastProxyCheckTs < 30000)) {
-    return lastProxyCheckOk;
-  }
-  if (proxyHealthInFlight) {
-    return proxyHealthInFlight;
-  }
-  proxyHealthInFlight = (async () => {
-    try {
-      const probe = await checkPortViaProxy(cleanUri, "1.1.1.1", 443, timeout);
-      lastProxyCheckTs = Date.now();
-      lastProxyCheckUri = cleanUri;
-      lastProxyCheckOk = probe.working;
-      if (probe.working) {
-        const parsed = parseProxyUri(cleanUri);
-        const cacheKey = `${parsed.pHost}:${parsed.pPort}`;
-        if (!detectedProxyProtocolCache.has(cacheKey)) {
-          // Verify whether HTTP CONNECT works directly to populate protocol cache
-          const httpTest = await checkPortHttpProxy(cleanUri, "1.1.1.1", 443, 2000);
-          detectedProxyProtocolCache.set(cacheKey, httpTest.working ? "http" : "socks5");
-        }
-      }
-      return probe.working;
-    } catch (_) {
-      lastProxyCheckTs = Date.now();
-      lastProxyCheckUri = cleanUri;
-      lastProxyCheckOk = false;
-      return false;
-    } finally {
-      proxyHealthInFlight = null;
-    }
-  })();
-  return proxyHealthInFlight;
-}
-
-/**
- * Performs FULL V2Ray Protocol & Handshake Verification of a configuration.
- * Automatically checks Iran Relay Proxy health, fallback options, and direct/Check-Host protocol tests!
+ * Performs FULL V2Ray Protocol & Handshake Verification of a configuration via Iran Proxy
  */
 async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   try {
@@ -3260,50 +3047,48 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    const proxyUri = db.settings?.iranRelayProxy?.trim();
-    if (proxyUri) {
-      const proxyHealthy = await isIranProxyHealthy(proxyUri, 3000);
-      if (proxyHealthy) {
-        // Perform full V2Ray TLS / WebSocket / Header handshake test through Iran proxy
-        const fullHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, details, 3600);
-        if (fullHandshake.working) {
-          return fullHandshake;
+    // STRICT FULL V2RAY PROTOCOL HANDSHAKE VERIFICATION VIA IRAN RELAY PROXY:
+    if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
+      const proxyUri = db.settings.iranRelayProxy.trim();
+      
+      // Perform full V2Ray TLS / WebSocket / Header handshake test through Iran proxy
+      const fullHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, details, 4500);
+      if (fullHandshake.working) {
+        return fullHandshake;
+      }
+
+      // If SNI differs from host, attempt full handshake with SNI
+      if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
+        const altDetails = { ...details, host: details.sni.trim() };
+        const sniHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, altDetails, 4500);
+        if (sniHandshake.working) {
+          return sniHandshake;
         }
-        // If host is a foreign domain that failed DNS on the Iran proxy, resolve IP locally and retry through Iran proxy
-        if (!net.isIP(details.host.trim()) && !details.host.trim().endsWith('.ir')) {
-          const resolvedIp = await resolveHostFast(details.host.trim());
-          if (resolvedIp && net.isIP(resolvedIp) && resolvedIp !== details.host.trim()) {
-            const ipDetails = { ...details, host: resolvedIp, sni: details.sni || details.host.trim() };
-            const ipHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, ipDetails, 3200);
-            if (ipHandshake.working) {
-              return ipHandshake;
-            }
-          }
-        }
-        // If SNI differs from host, attempt full handshake with SNI
-        if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
-          const altDetails = { ...details, host: details.sni.trim() };
-          const sniHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, altDetails, 3200);
-          if (sniHandshake.working) {
-            return sniHandshake;
-          }
-        }
-        return { working: false, latency: 999 };
+      }
+
+      // If full V2Ray handshake fails through Iran Proxy, mark strictly as failed (0% false positives)
+      return { working: false, latency: 999 };
+    }
+
+    // 1. Fast direct TCP socket check to destination host/IP (only when Iran proxy is NOT configured)
+    const portCheck = await checkPort(details.host, details.port, 3800);
+    if (portCheck.working) {
+      return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
+    }
+
+    // 2. If destination host was an unreachable IP or CDN front, but SNI contains a valid domain, test SNI
+    if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
+      const sniCheck = await checkPort(details.sni.trim(), details.port, 3500);
+      if (sniCheck.working) {
+        return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
       }
     }
 
-    // Direct Full Handshake Check (when Iran proxy is not set or currently offline)
-    const directHandshake = await checkV2RayProtocolHandshakeDirect(details, 3500);
-    if (directHandshake.working) {
-      return directHandshake;
-    }
-
-    // Try SNI direct handshake if SNI differs from host
-    if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
-      const altDetails = { ...details, host: details.sni.trim() };
-      const sniHandshake = await checkV2RayProtocolHandshakeDirect(altDetails, 3200);
-      if (sniHandshake.working) {
-        return sniHandshake;
+    // 3. Fallback: If TLS is enabled, verify via TLS handshake
+    if (details.tls) {
+      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 3500);
+      if (tlsCheck.working) {
+        return { working: true, latency: Math.max(10, Math.round(tlsCheck.latency)) };
       }
     }
 
@@ -3314,51 +3099,55 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
 }
 
 // --- Universal Iran Relay Proxy Tester (Supports HTTP CONNECT with Basic Auth & SOCKS5 with RFC 1929 Auth) ---
-function parseProxyUri(proxyUri: string): { protocol: "http" | "socks5" | "auto"; pHost: string; pPort: number; auth: string; user?: string; pass?: string } {
+function parseProxyUri(proxyUri: string): { protocol: string; pHost: string; pPort: number; auth: string; user?: string; pass?: string } {
   let clean = proxyUri.trim();
-  let protocol: "http" | "socks5" | "auto" = "auto";
-  if (clean.includes("://")) {
-    const pIdx = clean.indexOf("://");
-    const scheme = clean.substring(0, pIdx).toLowerCase();
-    if (scheme.includes("socks")) protocol = "socks5";
-    else if (scheme.includes("http")) protocol = "http";
+  let protocol = 'auto';
+  if (clean.includes('://')) {
+    const pIdx = clean.indexOf('://');
+    protocol = clean.substring(0, pIdx).toLowerCase();
     clean = clean.substring(pIdx + 3);
   }
-  clean = clean.split("/")[0].split("?")[0].trim();
-  let auth = "";
-  let user = "";
-  let pass = "";
+  clean = clean.split('/')[0].split('?')[0].trim();
+
+  let auth = '';
+  let user = '';
+  let pass = '';
   let hostPort = clean;
-  if (clean.includes("@")) {
-    const atIdx = clean.lastIndexOf("@");
+
+  if (clean.includes('@')) {
+    const atIdx = clean.lastIndexOf('@');
     auth = clean.substring(0, atIdx);
     hostPort = clean.substring(atIdx + 1);
-    if (auth.includes(":")) {
-      const cIdx = auth.indexOf(":");
+    if (auth.includes(':')) {
+      const cIdx = auth.indexOf(':');
       user = decodeURIComponent(auth.substring(0, cIdx));
       pass = decodeURIComponent(auth.substring(cIdx + 1));
     } else {
       user = decodeURIComponent(auth);
     }
   }
+
   let pHost = hostPort;
   let pPort = 1080;
-  if (hostPort.includes(":")) {
-    const lastColon = hostPort.lastIndexOf(":");
+  if (hostPort.includes(':')) {
+    const lastColon = hostPort.lastIndexOf(':');
     pHost = hostPort.substring(0, lastColon);
     pPort = parseInt(hostPort.substring(lastColon + 1), 10) || 1080;
   }
+
   return { protocol, pHost, pPort, auth: (user && pass) ? `${user}:${pass}` : auth, user, pass };
 }
 
 async function checkPortHttpProxy(proxyUri: string, targetHost: string, targetPort: number, timeout = 3500): Promise<{ working: boolean; latency: number }> {
   const { pHost, pPort, auth } = parseProxyUri(proxyUri);
   if (!pHost || !pPort) return { working: false, latency: 999 };
+
   return new Promise((resolve) => {
     const start = Date.now();
     let resolved = false;
     const socket = new net.Socket();
     socket.setTimeout(timeout);
+
     const finish = (working: boolean, lat = 999) => {
       if (resolved) return;
       resolved = true;
@@ -3366,22 +3155,25 @@ async function checkPortHttpProxy(proxyUri: string, targetHost: string, targetPo
       clearTimeout(timer);
       resolve({ working, latency: working ? Math.max(10, Math.round(lat)) : 999 });
     };
+
     const timer = setTimeout(() => finish(false), timeout + 150);
-    socket.on("error", () => finish(false));
-    socket.on("timeout", () => finish(false));
-    socket.on("close", () => finish(false));
+
+    socket.on('error', () => finish(false));
+    socket.on('timeout', () => finish(false));
+    socket.on('close', () => finish(false));
+
     try {
       socket.connect(pPort, pHost, () => {
         let req = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n`;
         if (auth) {
-          const authBase64 = Buffer.from(auth).toString("base64");
+          const authBase64 = Buffer.from(auth).toString('base64');
           req += `Proxy-Authorization: Basic ${authBase64}\r\n`;
         }
         req += `\r\n`;
         socket.write(req);
-        socket.once("data", (data) => {
-          const resp = data.toString("utf8");
-          if (resp.includes(" 200 ") || resp.startsWith("HTTP/1.1 200") || resp.startsWith("HTTP/1.0 200")) {
+        socket.once('data', (data) => {
+          const resp = data.toString('utf8');
+          if (resp.includes(' 200 ') || resp.startsWith('HTTP/1.1 200') || resp.startsWith('HTTP/1.0 200')) {
             finish(true, Date.now() - start);
           } else {
             finish(false);
@@ -3397,11 +3189,13 @@ async function checkPortHttpProxy(proxyUri: string, targetHost: string, targetPo
 async function checkPortSocks5Proxy(proxyUri: string, targetHost: string, targetPort: number, timeout = 3500): Promise<{ working: boolean; latency: number }> {
   const { pHost, pPort, user, pass } = parseProxyUri(proxyUri);
   if (!pHost || !pPort) return { working: false, latency: 999 };
+
   return new Promise((resolve) => {
     const start = Date.now();
     let resolved = false;
     const socket = new net.Socket();
     socket.setTimeout(timeout);
+
     const finish = (working: boolean, lat = 999) => {
       if (resolved) return;
       resolved = true;
@@ -3409,40 +3203,33 @@ async function checkPortSocks5Proxy(proxyUri: string, targetHost: string, target
       clearTimeout(timer);
       resolve({ working, latency: working ? Math.max(10, Math.round(lat)) : 999 });
     };
+
     const timer = setTimeout(() => finish(false), timeout + 150);
-    socket.on("error", () => finish(false));
-    socket.on("timeout", () => finish(false));
-    socket.on("close", () => finish(false));
+
+    socket.on('error', () => finish(false));
+    socket.on('timeout', () => finish(false));
+    socket.on('close', () => finish(false));
+
     try {
       socket.connect(pPort, pHost, () => {
         socket.write(Buffer.from([0x05, 0x02, 0x00, 0x02]));
-        socket.once("data", (data) => {
+        socket.once('data', (data) => {
           if (data.length < 2 || data[0] !== 0x05) return finish(false);
           const method = data[1];
+
           const sendSocksConnect = () => {
-            let req: Buffer;
-            if (net.isIPv4(targetHost)) {
-              const parts = targetHost.split(".").map(Number);
-              req = Buffer.alloc(4 + 4 + 2);
-              req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x01;
-              req[4] = parts[0]; req[5] = parts[1]; req[6] = parts[2]; req[7] = parts[3];
-              req.writeUInt16BE(targetPort, 8);
-            } else if (net.isIPv6(targetHost)) {
-              req = Buffer.alloc(4 + 16 + 2);
-              req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x04;
-              const hexStr = targetHost.replace(/:/g, "");
-              const b6 = Buffer.from(hexStr, "hex");
-              b6.copy(req, 4);
-              req.writeUInt16BE(targetPort, 20);
-            } else {
-              const hBuf = Buffer.from(targetHost);
-              req = Buffer.alloc(4 + 1 + hBuf.length + 2);
-              req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x03; req[4] = hBuf.length;
-              hBuf.copy(req, 5);
-              req.writeUInt16BE(targetPort, 5 + hBuf.length);
-            }
+            const hBuf = Buffer.from(targetHost);
+            const req = Buffer.alloc(4 + 1 + hBuf.length + 2);
+            req[0] = 0x05;
+            req[1] = 0x01;
+            req[2] = 0x00;
+            req[3] = 0x03;
+            req[4] = hBuf.length;
+            hBuf.copy(req, 5);
+            req.writeUInt16BE(targetPort, 5 + hBuf.length);
+
             socket.write(req);
-            socket.once("data", (rep) => {
+            socket.once('data', (rep) => {
               if (rep.length >= 2 && rep[1] === 0x00) {
                 finish(true, Date.now() - start);
               } else {
@@ -3450,6 +3237,7 @@ async function checkPortSocks5Proxy(proxyUri: string, targetHost: string, target
               }
             });
           };
+
           if (method === 0x02 && user && pass) {
             const uBuf = Buffer.from(user);
             const pBuf = Buffer.from(pass);
@@ -3459,8 +3247,9 @@ async function checkPortSocks5Proxy(proxyUri: string, targetHost: string, target
             uBuf.copy(authReq, 2);
             authReq[2 + uBuf.length] = pBuf.length;
             pBuf.copy(authReq, 3 + uBuf.length);
+
             socket.write(authReq);
-            socket.once("data", (authResp) => {
+            socket.once('data', (authResp) => {
               if (authResp.length >= 2 && authResp[1] === 0x00) {
                 sendSocksConnect();
               } else {
@@ -3480,6 +3269,8 @@ async function checkPortSocks5Proxy(proxyUri: string, targetHost: string, target
   });
 }
 
+let cachedIranProxyProtocol: 'http' | 'socks5' = 'http';
+
 async function checkPortViaProxy(
   proxyUri: string,
   targetHost: string,
@@ -3488,17 +3279,27 @@ async function checkPortViaProxy(
 ): Promise<{ working: boolean; latency: number }> {
   if (!proxyUri || !proxyUri.trim()) return { working: false, latency: 999 };
   const cleanUri = proxyUri.trim();
-  const parsed = parseProxyUri(cleanUri);
 
-  if (parsed.protocol === "socks5" || cleanUri.toLowerCase().startsWith("socks")) {
-    const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, timeout);
-    if (socksRes.working) return socksRes;
-    return await checkPortHttpProxy(cleanUri, targetHost, targetPort, Math.min(timeout, 2000));
-  } else {
-    const httpRes = await checkPortHttpProxy(cleanUri, targetHost, targetPort, timeout);
-    if (httpRes.working) return httpRes;
-    return await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, Math.min(timeout, 2000));
+  // 1. Try HTTP CONNECT proxy mode first (works for HTTP proxy, Squid, CCProxy on 1080)
+  const httpRes = await checkPortHttpProxy(cleanUri, targetHost, targetPort, timeout);
+  if (httpRes.working) {
+    cachedIranProxyProtocol = 'http';
+    return httpRes;
   }
+
+  // 2. If already detected as HTTP proxy, don't waste time on SOCKS5 timeout
+  if (cachedIranProxyProtocol === 'http') {
+    return { working: false, latency: 999 };
+  }
+
+  // 3. Fallback to SOCKS5 proxy mode
+  const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, Math.min(timeout, 2000));
+  if (socksRes.working) {
+    cachedIranProxyProtocol = 'socks5';
+    return socksRes;
+  }
+
+  return { working: false, latency: 999 };
 }
 
 async function checkPort(host: string, port: number, timeout = 3800): Promise<{ working: boolean; latency: number }> {
@@ -3656,7 +3457,8 @@ async function checkPortFromIran(host: string, port: number, sni?: string): Prom
 
     // If polling timed out and no success, we default to false but mark rate-limited
     return { working: false, latency: 999, rateLimited: true };
-  } catch (_err: any) {
+  } catch (err: any) {
+    console.error('Error checking port from Iran via Check-Host:', err.message);
     return { working: false, latency: 999, rateLimited: true };
   }
 }
@@ -4963,24 +4765,16 @@ async function testConfigsBatch(ids: string[]) {
   }
   saveDatabase();
 
-  // Pre-verify Iran proxy health once before launching concurrent workers
-  if (isIranProxyActive && db.settings?.iranRelayProxy) {
-    await isIranProxyHealthy(db.settings.iranRelayProxy.trim(), 3000);
-  }
-
-  const CONCURRENCY = isIranProxyActive ? 3 : 25;
+  const CONCURRENCY = isIranProxyActive ? 10 : 35;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
-    await Promise.allSettled(chunk.map(async (id, workerIdx) => {
-      if (isIranProxyActive && workerIdx > 0) {
-        await new Promise(r => setTimeout(r, workerIdx * 120));
-      }
+    await Promise.allSettled(chunk.map(async (id) => {
       const config = db.configs.find(c => c.id === id);
       if (!config) return;
 
       const checkResult = await withHardTimeout(
         () => checkConfigFully(config.raw),
-        8500,
+        5200,
         { working: false, latency: 999 }
       );
       
@@ -4999,7 +4793,7 @@ async function testConfigsBatch(ids: string[]) {
     if (i % (CONCURRENCY * 3) === 0 || i + CONCURRENCY >= ids.length) {
       saveDatabase();
     }
-    await new Promise(r => setTimeout(r, isIranProxyActive ? 80 : 10));
+    await new Promise(r => setTimeout(r, 10));
   }
 
   // Final sanity cleanup for any config still in 'checking' status in this batch
@@ -5011,7 +4805,7 @@ async function testConfigsBatch(ids: string[]) {
   }
 
   saveDatabase(true);
-  addLog('success', `پایان تست کامل پروتکل و اتصال کانفیگ‌ها: تعداد ${workingCount} فعال و ${failedCount} غیرفعال شناسایی شدند.`);
+  addLog('success', `پایان تست اتصال پورت: تعداد ${workingCount} فعال و ${failedCount} غیرفعال شناسایی شدند.`);
 }
 
 /**
@@ -20235,26 +20029,9 @@ ${pollLogs.length === 0 && polls.length === 0 ? 'هنوز نظرسنجی ثبت 
     });
   }
 
-  function startListening(portToUse: number, retriesLeft = 10) {
-    const server = app.listen(portToUse, '0.0.0.0', () => {
-      console.log(`Server running on http://localhost:${portToUse}`);
-    });
-
-    server.on('error', (err: any) => {
-      if (err.code === 'EADDRINUSE') {
-        console.warn(`[PORT] Port ${portToUse} is temporarily in use. Waiting for release... (${retriesLeft} retries remaining)`);
-        if (retriesLeft > 0) {
-          setTimeout(() => startListening(portToUse, retriesLeft - 1), 1200);
-        } else {
-          console.error(`Fatal: Port ${portToUse} is still in use after retries.`);
-        }
-      } else {
-        console.error('Express server listen error:', err);
-      }
-    });
-  }
-
-  startListening(PORT);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
 }
 
 startExpressServer().catch(err => {

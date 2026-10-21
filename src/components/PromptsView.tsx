@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { motion, AnimatePresence } from '../utils/motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Palette, 
   Search, 
@@ -121,7 +121,6 @@ export const PromptsView: React.FC<PromptsViewProps> = ({
     description: '',
     promptText: '',
     imageUrl: '',
-    videoUrl: '',
     tags: ''
   });
   const [submitting, setSubmitting] = useState(false);
