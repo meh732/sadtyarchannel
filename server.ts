@@ -20141,9 +20141,28 @@ ${pollLogs.length === 0 && polls.length === 0 ? 'هنوز نظرسنجی ثبت 
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  function startListening(portToUse: number, retriesLeft = 5) {
+    const server = app.listen(portToUse, '0.0.0.0', () => {
+      console.log(`Server running on http://localhost:${portToUse}`);
+    });
+
+    server.on('error', (err: any) => {
+      if (err.code === 'EADDRINUSE') {
+        console.warn(`[PORT CONFLICT] Port ${portToUse} is already in use.`);
+        if (retriesLeft > 0) {
+          const nextPort = portToUse === 8080 ? 3000 : (portToUse === 3000 ? 8080 : portToUse + 1);
+          console.warn(`Attempting fallback to port ${nextPort} in 500ms...`);
+          setTimeout(() => startListening(nextPort, retriesLeft - 1), 500);
+        } else {
+          console.error(`Fatal: Could not bind to port ${portToUse} after retries.`);
+        }
+      } else {
+        console.error('Express server listen error:', err);
+      }
+    });
+  }
+
+  startListening(PORT);
 }
 
 startExpressServer().catch(err => {
