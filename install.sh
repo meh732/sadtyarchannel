@@ -421,7 +421,7 @@ WantedBy=multi-user.target
 EOF
 
     # Release any stuck/stale process holding the web port
-    SAVED_PORT=$(grep -oP "PORT="?\K[0-9]+" "$INSTALL_DIR/.env" 2>/dev/null || echo "2222")
+    SAVED_PORT=$(grep -oP 'PORT="?\K[0-9]+' "$INSTALL_DIR/.env" 2>/dev/null || echo "2222")
     if command -v fuser >/dev/null 2>&1; then
         fuser -k "${SAVED_PORT}/tcp" 2>/dev/null || true
     fi
