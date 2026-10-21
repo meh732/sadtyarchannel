@@ -15,6 +15,7 @@ export interface ConfigItem {
   isNpv?: boolean;
   createdAt?: string;
   extractedAt?: string;
+  sourcePostDate?: string;
   postedToChannel?: boolean;
   postedToChannel1?: boolean;
   postedToChannel2?: boolean;
@@ -40,6 +41,8 @@ export interface ProxyItem {
   latency: number | null;
   lastChecked: string | null;
   createdAt?: string;
+  extractedAt?: string;
+  sourcePostDate?: string;
   postedToChannel?: boolean;
   postedToChannel1?: boolean;
   postedToChannel2?: boolean;

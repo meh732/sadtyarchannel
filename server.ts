@@ -2213,8 +2213,28 @@ function parseFullConfigDetails(rawConfig: string): {
   path: string;
   tls: boolean;
   protocol: string;
+  type?: string;
+  security?: string;
+  pbk?: string;
+  sid?: string;
+  fp?: string;
+  uuid?: string;
 } {
-  const result = { host: '', port: 0, sni: '', hostHeader: '', path: '', tls: false, protocol: 'unknown' };
+  const result: {
+    host: string;
+    port: number;
+    sni: string;
+    hostHeader: string;
+    path: string;
+    tls: boolean;
+    protocol: string;
+    type?: string;
+    security?: string;
+    pbk?: string;
+    sid?: string;
+    fp?: string;
+    uuid?: string;
+  } = { host: '', port: 0, sni: '', hostHeader: '', path: '', tls: false, protocol: 'unknown' };
   if (!rawConfig) return result;
   const trimmed = rawConfig.trim();
 
@@ -2231,6 +2251,9 @@ function parseFullConfigDetails(rawConfig: string): {
         result.hostHeader = parsed.host || '';
         result.path = parsed.path || '';
         result.tls = (parsed.tls === 'tls' || parsed.security === 'tls');
+        result.security = parsed.tls || parsed.security || '';
+        result.type = parsed.net || 'tcp';
+        result.uuid = parsed.id || '';
       }
       return result;
     }
@@ -2252,11 +2275,19 @@ function parseFullConfigDetails(rawConfig: string): {
         result.hostHeader = params.get('host') || '';
         result.path = params.get('path') || '';
         const security = params.get('security') || '';
+        result.security = security;
         result.tls = (security === 'tls' || security === 'xtls' || security === 'reality');
+        result.pbk = params.get('pbk') || '';
+        result.sid = params.get('sid') || '';
+        result.fp = params.get('fp') || '';
+        result.type = params.get('type') || params.get('net') || 'tcp';
       }
       
       const atIndex = cleanUrl.lastIndexOf('@');
       let hostPortPart = atIndex !== -1 ? cleanUrl.substring(atIndex + 1) : cleanUrl;
+      if (atIndex !== -1) {
+        result.uuid = cleanUrl.substring(0, atIndex);
+      }
       if (qIndex !== -1) {
         hostPortPart = hostPortPart.substring(0, hostPortPart.indexOf('?'));
       }
@@ -2279,13 +2310,15 @@ function parseFullConfigDetails(rawConfig: string): {
       const decoded = safeBase64Decode(payload);
       if (decoded) {
         const json = JSON.parse(decoded);
-        // Prioritize address/v2rayAddress since host is often the HTTP Host header
         result.host = json.address || json.v2rayAddress || json.host || json.v2rayHost || json.sshHost || '';
         result.port = Number(json.port || json.v2rayPort || json.sshPort) || 0;
         result.sni = json.sni || '';
         result.hostHeader = json.hostHeader || json.host || '';
         result.path = json.path || '';
         result.tls = json.security === 'tls' || json.tls === true;
+        result.security = json.security || '';
+        result.type = json.transport || json.net || 'tcp';
+        result.uuid = json.id || json.uuid || json.password || '';
         if (json.protocol) {
           result.protocol = json.protocol;
         } else if (json.type && ['vless', 'vmess', 'trojan', 'ss'].includes(json.type)) {
@@ -3115,118 +3148,297 @@ async function checkPortDirect(host: string, port: number, timeout = 3200): Prom
 }
 
 /**
- * Performs strict direct V2Ray Protocol, TLS Handshake, and WebSocket Upgrade probe on the Main Server.
- * Eliminates false positives by requiring full TLS handshake and valid WS response instead of bare TCP port connect.
+ * Strict Direct Handshake verification for V2Ray configurations from Main Server (Stage 2 Fallback)
+ * This prevents false-positive "Working" results on European VPS where generic port 443 connects.
  */
-async function checkV2RayStrictDirect(
+async function checkV2RayProtocolHandshakeDirect(
   details: ReturnType<typeof parseFullConfigDetails>,
-  timeout = 3200
+  timeout = 3500
 ): Promise<{ working: boolean; latency: number }> {
-  if (!details.host || !details.port) return { working: false, latency: 999 };
-
-  const start = Date.now();
-  const sni = (details.sni && details.sni.trim()) ? details.sni.trim() : details.host.trim();
-  const targetHost = details.host.trim();
-  const targetPort = details.port;
-
-  // 1. If TLS / REALITY / XTLS is enabled, perform full TLS Handshake
-  if (details.tls) {
-    const tlsRes = await checkTlsHandshake(targetHost, targetPort, sni, timeout);
-    if (!tlsRes.working) {
-      if (sni !== targetHost && !net.isIP(sni)) {
-        const altTls = await checkTlsHandshake(sni, targetPort, sni, timeout);
-        if (!altTls.working) return { working: false, latency: 999 };
-      } else {
-        return { working: false, latency: 999 };
-      }
-    }
-  } else {
-    // Plain TCP socket check
-    const tcpRes = await checkPortDirect(targetHost, targetPort, timeout);
-    if (!tcpRes.working) return { working: false, latency: 999 };
+  if (!details.host || !details.port || isNaN(details.port)) {
+    return { working: false, latency: 999 };
   }
 
-  // 2. If WebSocket (ws) or HTTP path exists, test WebSocket Upgrade / HTTP Handshake Probe
-  const path = details.path ? (details.path.startsWith('/') ? details.path : `/${details.path}`) : null;
-  if (path) {
-    const wsProbeSuccess = await new Promise<boolean>((resolve) => {
-      const socket = new net.Socket();
-      socket.setTimeout(timeout);
-      let activeSocket: net.Socket | tls.TLSSocket = socket;
+  const start = Date.now();
+  const targetHost = details.host.trim();
+  const targetPort = details.port;
+  const sni = (details.sni && details.sni.trim()) ? details.sni.trim() : targetHost;
 
-      const timer = setTimeout(() => {
-        try { activeSocket.destroy(); } catch (_) {}
-        resolve(false);
-      }, timeout);
+  // 1. Strict Iran DPI Blocklist Check:
+  // Domains and subdomains that are 100% blocked in Iran at SNI / DNS level (MCI, Irancell, Mokhaberat)
+  const IRAN_BLOCKED_SNI_REGEX = /(?:workers\.dev|pages\.dev|web\.app|firebaseapp\.com|github\.io|vercel\.app|railway\.app|onrender\.com|render\.com|glitch\.me|cyclic\.app|deno\.dev|herokuapp\.com)$/i;
+  if (IRAN_BLOCKED_SNI_REGEX.test(targetHost) || (details.sni && IRAN_BLOCKED_SNI_REGEX.test(details.sni))) {
+    return { working: false, latency: 999 };
+  }
 
-      const doProbe = () => {
-        let respBuffer = '';
-        activeSocket.on('data', (chunk) => {
-          respBuffer += chunk.toString('utf8');
-          if (respBuffer.includes('\r\n\r\n')) {
-            clearTimeout(timer);
-            try { activeSocket.destroy(); } catch (_) {}
-            const statusLine = respBuffer.split('\r\n')[0] || '';
-            // Valid V2Ray WS Handshake response codes: 101, 200, 400, 100
-            if (statusLine.includes('101') || statusLine.includes('200') || statusLine.includes('400') || statusLine.includes('100')) {
-              resolve(true);
-            } else {
-              resolve(false); // 404, 502, 503 means broken/filtered WS path
-            }
-          }
-        });
-        activeSocket.on('error', () => { clearTimeout(timer); resolve(false); });
-
-        const hostHdr = details.hostHeader || sni || targetHost;
-        const req = `GET ${path} HTTP/1.1\r\nHost: ${hostHdr}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`;
-        activeSocket.write(req);
-      };
-
-      if (details.tls) {
-        const tlsSocket = tls.connect({
-          host: targetHost,
-          port: targetPort,
-          servername: sni,
-          rejectUnauthorized: false,
-          timeout
-        }, () => {
-          activeSocket = tlsSocket;
-          doProbe();
-        });
-        tlsSocket.on('error', () => { clearTimeout(timer); resolve(false); });
-      } else {
-        socket.connect(targetPort, targetHost, () => {
-          doProbe();
-        });
-        socket.on('error', () => { clearTimeout(timer); resolve(false); });
-      }
-    });
-
-    if (!wsProbeSuccess) {
+  // 2. Protocol parameter sanity checks
+  if (details.protocol === 'vless' || details.protocol === 'vmess') {
+    if (!details.uuid || details.uuid.length < 16) {
       return { working: false, latency: 999 };
     }
   }
 
-  const latency = Math.max(10, Date.now() - start);
-  return { working: true, latency };
+  if (details.security === 'reality') {
+    // Reality MUST have a public key and valid SNI
+    if (!details.pbk || details.pbk.length < 30 || !details.sni) {
+      return { working: false, latency: 999 };
+    }
+  }
+
+  // Non-standard ports on CDN: In Iran, operators block non-standard ports or drop their throughput
+  const isCdnDomain = /(?:cloudflare|cdn|workers|pages|fastly|edge|worker|arvan)/i.test(sni) || /(?:cloudflare|cdn|workers|pages|fastly|edge|worker|arvan)/i.test(targetHost);
+  const isStandardCdnPort = [443, 80, 2053, 2083, 2087, 2096, 8443, 8080, 8880].includes(targetPort);
+  if (isCdnDomain && !isStandardCdnPort) {
+    return { working: false, latency: 999 };
+  }
+
+  try {
+    const resolvedHost = await resolveHostFast(targetHost);
+
+    // 3. Connect TCP socket
+    const rawSocket = await new Promise<net.Socket>((resolve, reject) => {
+      const s = new net.Socket();
+      s.setTimeout(timeout);
+      const timer = setTimeout(() => {
+        try { s.destroy(); } catch (_) {}
+        reject(new Error('TCP connect timeout'));
+      }, timeout);
+
+      s.connect(targetPort, resolvedHost, () => {
+        clearTimeout(timer);
+        resolve(s);
+      });
+      s.on('error', (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+      s.on('timeout', () => {
+        clearTimeout(timer);
+        try { s.destroy(); } catch (_) {}
+        reject(new Error('TCP socket timeout'));
+      });
+    });
+
+    let activeSocket: net.Socket | tls.TLSSocket = rawSocket;
+
+    // 4. TLS Handshake verification (Required for TLS / REALITY / TROJAN)
+    if (details.tls) {
+      activeSocket = await new Promise<tls.TLSSocket>((resolve, reject) => {
+        const tlsTimer = setTimeout(() => {
+          try { rawSocket.destroy(); } catch (_) {}
+          reject(new Error('TLS Handshake Timeout'));
+        }, timeout);
+
+        const tlsSocket = tls.connect({
+          socket: rawSocket,
+          servername: sni,
+          rejectUnauthorized: false,
+          ALPNProtocols: ['h2', 'http/1.1']
+        }, () => {
+          clearTimeout(tlsTimer);
+          resolve(tlsSocket);
+        });
+
+        tlsSocket.on('error', (e) => {
+          clearTimeout(tlsTimer);
+          reject(e);
+        });
+      });
+    }
+
+    // 5. WebSocket (ws) / HTTP Path Handshake Verification
+    const path = details.path ? (details.path.startsWith('/') ? details.path : `/${details.path}`) : null;
+    if (path) {
+      const wsHandshakeSuccess = await new Promise<boolean>((resolve) => {
+        const probeTimer = setTimeout(() => {
+          try { activeSocket.destroy(); } catch (_) {}
+          resolve(false);
+        }, timeout);
+
+        let respBuffer = '';
+        activeSocket.on('data', (chunk) => {
+          respBuffer += chunk.toString('utf8');
+          if (respBuffer.includes('\r\n\r\n')) {
+            clearTimeout(probeTimer);
+            const statusLine = respBuffer.split('\r\n')[0] || '';
+            // Valid V2Ray WS Handshake response:
+            // 101 Switching Protocols (WS upgraded)
+            // 400 Bad Request (V2Ray core standard response when Sec-WebSocket-Key without V2Ray payload)
+            // Invalid: 404 Not Found, 502 Bad Gateway, 503 Unavailable, 521 Server Down, 403 Forbidden
+            if (statusLine.includes(' 101 ') || statusLine.includes(' 400 ') || statusLine.startsWith('HTTP/1.1 101') || statusLine.startsWith('HTTP/1.1 400')) {
+              resolve(true);
+            } else {
+              resolve(false);
+            }
+          }
+        });
+
+        activeSocket.on('error', () => { clearTimeout(probeTimer); resolve(false); });
+        activeSocket.on('close', () => { clearTimeout(probeTimer); resolve(false); });
+
+        const hostHdr = details.hostHeader || sni || targetHost;
+        const wsReq = `GET ${path} HTTP/1.1\r\n` +
+          `Host: ${hostHdr}\r\n` +
+          `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36\r\n` +
+          `Upgrade: websocket\r\n` +
+          `Connection: Upgrade\r\n` +
+          `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n` +
+          `Sec-WebSocket-Version: 13\r\n\r\n`;
+
+        activeSocket.write(wsReq);
+      });
+
+      try { activeSocket.destroy(); } catch (_) {}
+
+      if (wsHandshakeSuccess) {
+        return { working: true, latency: Math.max(15, Date.now() - start) };
+      } else {
+        return { working: false, latency: 999 };
+      }
+    }
+
+    // 6. Non-WS TLS / TCP Configs (e.g. VLESS Reality, Trojan TCP, Shadowsocks)
+    try { activeSocket.destroy(); } catch (_) {}
+    return { working: true, latency: Math.max(15, Date.now() - start) };
+
+  } catch (err) {
+    return { working: false, latency: 999 };
+  }
+}
+
+/**
+ * Strict Telegram Proxy verification for Iran (Fake TLS MTProto & SOCKS5)
+ */
+async function checkProxyStrict(proxy: ProxyItem, timeout = 3500): Promise<{ working: boolean; latency: number }> {
+  if (!proxy || !proxy.server || !proxy.port || isNaN(proxy.port)) {
+    return { working: false, latency: 999 };
+  }
+
+  const start = Date.now();
+  const host = proxy.server.trim();
+  const port = proxy.port;
+
+  // If Iran proxy is configured and responsive, probe via Iran proxy first
+  if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
+    try {
+      const pTimeout = getAdaptiveIranProxyTimeout(2000);
+      const res = await checkPortViaProxy(db.settings.iranRelayProxy.trim(), host, port, pTimeout);
+      if (res.working) {
+        // Passed relay reachability, continue to protocol test
+      }
+    } catch (_) {}
+  }
+
+  if (proxy.type === 'mtproto') {
+    const secret = (proxy.secret || '').trim().toLowerCase();
+    
+    // In Iran, MTProto without Fake TLS is 100% blocked!
+    // Secret MUST have 'ee' or 'dd' prefix or be a domain-based fake TLS secret (> 32 chars)
+    const isFakeTls = secret.startsWith('ee') || secret.startsWith('dd') || secret.length > 32;
+    if (!isFakeTls) {
+      return { working: false, latency: 999 };
+    }
+
+    // Must be on standard ports allowed through Iranian mobile DPI
+    const allowedPorts = [443, 8443, 2053, 2083, 2087, 2096, 80, 8080, 8880];
+    if (!allowedPorts.includes(port)) {
+      return { working: false, latency: 999 };
+    }
+
+    // Perform Fake TLS handshake probe
+    // Extract domain from secret if present (hex encoded after byte 17)
+    let domain = 'www.google.com';
+    if (secret.length > 34) {
+      try {
+        const domainHex = secret.substring(34);
+        const decodedDomain = Buffer.from(domainHex, 'hex').toString('utf8');
+        if (decodedDomain && decodedDomain.includes('.') && /^[a-zA-Z0-9\.\-]+$/.test(decodedDomain)) {
+          domain = decodedDomain;
+        }
+      } catch (_) {}
+    }
+
+    return new Promise((resolve) => {
+      let resolved = false;
+      const finish = (working: boolean) => {
+        if (resolved) return;
+        resolved = true;
+        try { tlsSocket.destroy(); } catch (_) {}
+        clearTimeout(timer);
+        resolve({ working, latency: working ? Math.max(20, Date.now() - start) : 999 });
+      };
+
+      const timer = setTimeout(() => finish(false), timeout);
+
+      const tlsSocket = tls.connect({
+        host,
+        port,
+        servername: domain,
+        rejectUnauthorized: false,
+        timeout: timeout - 200
+      }, () => {
+        finish(true);
+      });
+
+      tlsSocket.on('error', () => finish(false));
+      tlsSocket.on('timeout', () => finish(false));
+      tlsSocket.on('close', () => finish(false));
+    });
+
+  } else {
+    // SOCKS5 Proxy Verification (RFC 1928 Handshake)
+    return new Promise((resolve) => {
+      let resolved = false;
+      const finish = (working: boolean) => {
+        if (resolved) return;
+        resolved = true;
+        try { socket.destroy(); } catch (_) {}
+        clearTimeout(timer);
+        resolve({ working, latency: working ? Math.max(20, Date.now() - start) : 999 });
+      };
+
+      const timer = setTimeout(() => finish(false), timeout);
+      const socket = new net.Socket();
+      socket.setTimeout(timeout - 200);
+
+      socket.connect(port, host, () => {
+        // Send SOCKS5 Greeting: VER=5, NMETHODS=1, METHOD=0 (No Auth)
+        socket.write(Buffer.from([0x05, 0x01, 0x00]));
+      });
+
+      socket.on('data', (data) => {
+        if (data.length >= 2 && data[0] === 0x05) {
+          // Valid SOCKS5 handshake response (0x05 0x00 or 0x05 0x02)
+          finish(true);
+        } else {
+          finish(false);
+        }
+      });
+
+      socket.on('error', () => finish(false));
+      socket.on('timeout', () => finish(false));
+      socket.on('close', () => finish(false));
+    });
+  }
 }
 
 /**
  * Performs FULL V2Ray Protocol & Handshake Verification of a configuration:
  * Stage 1: Tests via Iran Relay Proxy (if configured).
- * Stage 2: If Iran Relay Proxy fails / is filtered, automatically falls back to strict protocol testing directly on the Main Server!
+ * Stage 2: If Iran Relay Proxy fails / is filtered, executes STRICT Direct Protocol Handshake
+ *          (TLS + WebSocket Upgrade + ALPN verification, preventing false-positive raw TCP pass).
  */
 async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   try {
     const details = parseFullConfigDetails(rawConfig);
-    if (!details.host || !details.port) {
+    if (!details.host || !details.port || isNaN(details.port)) {
       return { working: false, latency: 999 };
     }
 
     // STAGE 1: TEST VIA IRAN RELAY PROXY FIRST (IF CONFIGURED)
     if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
       const proxyUri = db.settings.iranRelayProxy.trim();
-      const proxyTimeout = getAdaptiveIranProxyTimeout(2200);
+      const proxyTimeout = getAdaptiveIranProxyTimeout(2400);
       
       // 1A. Full V2Ray TLS / WebSocket / Header handshake test through Iran proxy
       const fullHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, details, proxyTimeout);
@@ -3235,30 +3447,13 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
         return fullHandshake;
       }
 
-      // 1B. Fast port tunnel check through Iran proxy
-      const proxyPortCheck = await checkPortViaProxy(proxyUri, details.host, details.port, proxyTimeout);
-      if (proxyPortCheck.working) {
-        iranProxyConsecutiveFailures = 0;
-        return proxyPortCheck;
-      }
-
-      // 1C. If SNI differs from host, attempt handshake via Iran proxy with SNI
-      if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
-        const altDetails = { ...details, host: details.sni.trim() };
-        const sniHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, altDetails, proxyTimeout);
-        if (sniHandshake.working) {
-          iranProxyConsecutiveFailures = 0;
-          return sniHandshake;
-        }
-      }
-
-      // Record proxy failure and automatically proceed to Stage 2 (Main Server Fallback)
+      // Record proxy failure and automatically proceed to Stage 2 (Strict Main Server Verification)
       iranProxyConsecutiveFailures++;
       iranProxyLastFailTime = Date.now();
     }
 
-    // STAGE 2: STRICT DIRECT TEST ON MAIN SERVER (TLS Handshake + WS/HTTP Protocol Probe)
-    return await checkV2RayStrictDirect(details, 3000);
+    // STAGE 2: STRICT MAIN SERVER VERIFICATION (NO NAIVE TCP PORT ACCEPTANCE!)
+    return await checkV2RayProtocolHandshakeDirect(details, 3500);
   } catch (err) {
     return { working: false, latency: 999 };
   }
@@ -3792,7 +3987,7 @@ function extractRawJsonConfigs(text: string): string[] {
 }
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000; // Strictly 24 hours in milliseconds
-const TWO_DAYS_MS = ONE_DAY_MS;
+const TWO_DAYS_MS = ONE_DAY_MS; // Backward-compatibility alias
 
 /**
  * Filters scraped Telegram Web HTML to strictly include message posts from the last 24 hours (1 day)
@@ -3801,30 +3996,32 @@ function filterTelegramHtmlLast24Hours(html: string): string {
   if (!html) return html;
   
   const now = Date.now();
-  const blocks = html.split(/(?=<div class="tgme_widget_message)/i);
+  const blocks = html.split(/(?=<div class=["'][^"']*tgme_widget_message[\s"'])/i);
   if (blocks.length <= 1) return html;
 
-  const validBlocks: string[] = [blocks[0]];
+  const validBlocks: string[] = [];
 
   for (let i = 1; i < blocks.length; i++) {
     const block = blocks[i];
-    const timeMatch = block.match(/<time[^>]+datetime=["']([^"']+)["']/i);
+    const timeMatch = block.match(/<time[^>]+datetime=["']([^"']+)["']/i) || block.match(/datetime=["']([^"']+)["']/i);
     if (timeMatch && timeMatch[1]) {
       const postTime = new Date(timeMatch[1]).getTime();
-      if (!isNaN(postTime) && (now - postTime > ONE_DAY_MS)) {
-        // Strictly skip messages/posts older than 24 hours
+      if (!isNaN(postTime)) {
+        if ((now - postTime) > ONE_DAY_MS) {
+          // Skip messages older than 24 hours
+          continue;
+        }
+        validBlocks.push(block);
         continue;
       }
     }
-    validBlocks.push(block);
+    // Skip any message block that has no verifiable timestamp to prevent ancient/stale leaks
   }
 
-  return validBlocks.join('');
+  return validBlocks.join('\n');
 }
 
-function filterTelegramHtmlLast48Hours(html: string): string {
-  return filterTelegramHtmlLast24Hours(html);
-}
+const filterTelegramHtmlLast48Hours = filterTelegramHtmlLast24Hours;
 
 /**
  * Restores database from parsed backup object or array of configs
@@ -4289,6 +4486,7 @@ async function enforceConfigsRetentionLimit() {
 
 /**
  * Purges stored configs and proxies that are older than 24 hours (1 day)
+ * Real age is determined by post date or creation time, NEVER by lastChecked.
  */
 function purgeOldConfigsAndProxies() {
   const now = Date.now();
@@ -4297,44 +4495,21 @@ function purgeOldConfigsAndProxies() {
 
   if (Array.isArray(db.configs)) {
     db.configs = db.configs.filter(c => {
-      const times: number[] = [];
-      if (c.createdAt) {
-        const t = new Date(c.createdAt).getTime();
-        if (!isNaN(t) && t > 0) times.push(t);
-      }
-      if (c.extractedAt) {
-        const t = new Date(c.extractedAt).getTime();
-        if (!isNaN(t) && t > 0) times.push(t);
-      }
-      if (c.lastChecked) {
-        const t = new Date(c.lastChecked).getTime();
-        if (!isNaN(t) && t > 0) times.push(t);
-      }
-      if (times.length === 0) return true; // Keep if no valid timestamps found
-      const newestTime = Math.max(...times);
-      return (now - newestTime) <= ONE_DAY_MS;
+      const baseDate = c.sourcePostDate || c.createdAt || c.extractedAt;
+      if (!baseDate) return false;
+      const t = new Date(baseDate).getTime();
+      if (isNaN(t) || t <= 0) return false;
+      return (now - t) <= ONE_DAY_MS;
     });
   }
 
   if (Array.isArray(db.proxies)) {
     db.proxies = db.proxies.filter(p => {
-      const times: number[] = [];
-      if (p.createdAt) {
-        const t = new Date(p.createdAt).getTime();
-        if (!isNaN(t) && t > 0) times.push(t);
-      }
-      const ext = (p as any).extractedAt;
-      if (ext) {
-        const t = new Date(ext).getTime();
-        if (!isNaN(t) && t > 0) times.push(t);
-      }
-      if (p.lastChecked) {
-        const t = new Date(p.lastChecked).getTime();
-        if (!isNaN(t) && t > 0) times.push(t);
-      }
-      if (times.length === 0) return true;
-      const newestTime = Math.max(...times);
-      return (now - newestTime) <= ONE_DAY_MS;
+      const baseDate = (p as any).sourcePostDate || p.createdAt || (p as any).extractedAt;
+      if (!baseDate) return false;
+      const t = new Date(baseDate).getTime();
+      if (isNaN(t) || t <= 0) return false;
+      return (now - t) <= ONE_DAY_MS;
     });
   }
 
@@ -4345,7 +4520,7 @@ function purgeOldConfigsAndProxies() {
 
   if (purgedConfigs > 0 || purgedProxies > 0) {
     saveDatabase();
-    addLog('info', `🧹 پاکسازی خودکار انقضای ۴۸ ساعته: تعداد ${purgedConfigs} کانفیگ و ${purgedProxies} پروکسی قدیمی‌تر از ۴۸ ساعت با موفقیت از دیتابیس حذف شدند.`);
+    addLog('info', `🧹 پاکسازی خودکار انقضای ۲۴ ساعته: تعداد ${purgedConfigs} کانفیگ و ${purgedProxies} پروکسی قدیمی‌تر از ۲۴ ساعت از دیتابیس حذف شدند.`);
   }
 
   return { purgedConfigs, purgedProxies };
@@ -4354,7 +4529,7 @@ function purgeOldConfigsAndProxies() {
 /**
  * Extracts configuration protocols from HTML or plain text
  */
-function extractConfigsFromText(text: string, sourceName: string, seenRawConfigs?: Set<string>): ConfigItem[] {
+function extractConfigsFromText(text: string, sourceName: string, seenRawConfigs?: Set<string>, postDate?: string): ConfigItem[] {
   if (!text) return [];
   
   const cleanText = safeDecodeText(text);
@@ -4412,7 +4587,9 @@ function extractConfigsFromText(text: string, sourceName: string, seenRawConfigs
           latency: null,
           lastChecked: null,
           isNpv: true,
-          createdAt: new Date().toISOString()
+          sourcePostDate: postDate,
+          extractedAt: new Date().toISOString(),
+          createdAt: postDate || new Date().toISOString()
         }];
       }
     }
@@ -4462,6 +4639,7 @@ function extractConfigsFromText(text: string, sourceName: string, seenRawConfigs
       remark: info.remark,
       server: info.host,
       port: info.port,
+      uuid: info.uuid,
       source: sourceName,
       status: 'untested',
       latency: null,
@@ -4470,7 +4648,9 @@ function extractConfigsFromText(text: string, sourceName: string, seenRawConfigs
       postedToChannel1: wasPostedCh1,
       postedToChannel2: wasPostedCh2,
       postedToChannel: wasPostedCh1 || wasPostedCh2,
-      createdAt: new Date().toISOString()
+      sourcePostDate: postDate,
+      extractedAt: new Date().toISOString(),
+      createdAt: postDate || new Date().toISOString()
     });
   }
 
@@ -4480,7 +4660,7 @@ function extractConfigsFromText(text: string, sourceName: string, seenRawConfigs
 /**
  * Extracts MTProto & Socks5 proxies from HTML or plain text
  */
-function extractProxiesFromText(text: string, sourceName: string, seenRawProxies?: Set<string>): ProxyItem[] {
+function extractProxiesFromText(text: string, sourceName: string, seenRawProxies?: Set<string>, postDate?: string): ProxyItem[] {
   if (!text) return [];
 
   const cleanText = safeDecodeText(text);
@@ -4587,7 +4767,9 @@ function extractProxiesFromText(text: string, sourceName: string, seenRawProxies
       postedToChannel1: wasPostedCh1,
       postedToChannel2: wasPostedCh2,
       postedToChannel: wasPostedCh1 || wasPostedCh2,
-      createdAt: new Date().toISOString()
+      sourcePostDate: postDate,
+      extractedAt: new Date().toISOString(),
+      createdAt: postDate || new Date().toISOString()
     });
   }
 
@@ -4689,25 +4871,50 @@ async function fetchAndExtractSourceData(
   }
 
   let rawText = await response.text();
-  // Strictly filter Telegram HTML to messages/posts from the last 48 hours (2 days)
-  const text = source.type === 'telegram' ? filterTelegramHtmlLast48Hours(rawText) : rawText;
-
   let extracted: ConfigItem[] = [];
   let extractedProxies: ProxyItem[] = [];
 
-  // Check if subscription body is base64 encoded (very common for V2Ray subscriptions)
-  if (source.type === 'sub' && isBase64(text)) {
+  // Strictly filter Telegram HTML: Extract posts from the last 24 hours individually with verified timestamps
+  if (source.type === 'telegram') {
+    const now = Date.now();
+    const messageBlocks = rawText.split(/(?=<div class=["'][^"']*tgme_widget_message[\s"'])/i);
+    
+    for (let i = 1; i < messageBlocks.length; i++) {
+      const block = messageBlocks[i];
+      const timeMatch = block.match(/<time[^>]+datetime=["']([^"']+)["']/i) || block.match(/datetime=["']([^"']+)["']/i);
+      if (!timeMatch || !timeMatch[1]) {
+        // Skip messages without timestamp to avoid ancient/stale configs
+        continue;
+      }
+
+      const postTime = new Date(timeMatch[1]).getTime();
+      if (isNaN(postTime) || (now - postTime) > ONE_DAY_MS) {
+        // STRICT 24-HOUR CHECK: Skip any post older than 24 hours
+        continue;
+      }
+
+      const postIso = new Date(postTime).toISOString();
+      const blockConfigs = extractConfigsFromText(block, source.name, seenRawConfigs, postIso);
+      const blockProxies = extractProxiesFromText(block, source.name, seenRawProxies, postIso);
+      extracted.push(...blockConfigs);
+      extractedProxies.push(...blockProxies);
+    }
+  } else if (source.type === 'sub' && isBase64(rawText)) {
     try {
-      const decoded = Buffer.from(text, 'base64').toString('utf8');
+      const decoded = Buffer.from(rawText, 'base64').toString('utf8');
       extracted = extractConfigsFromText(decoded, source.name, seenRawConfigs);
       extractedProxies = extractProxiesFromText(decoded, source.name, seenRawProxies);
     } catch {
-      extracted = extractConfigsFromText(text, source.name, seenRawConfigs);
-      extractedProxies = extractProxiesFromText(text, source.name, seenRawProxies);
+      extracted = extractConfigsFromText(rawText, source.name, seenRawConfigs);
+      extractedProxies = extractProxiesFromText(rawText, source.name, seenRawProxies);
     }
   } else {
-    extracted = extractConfigsFromText(text, source.name, seenRawConfigs);
-    extractedProxies = extractProxiesFromText(text, source.name, seenRawProxies);
+    extracted = extractConfigsFromText(rawText, source.name, seenRawConfigs);
+    extractedProxies = extractProxiesFromText(rawText, source.name, seenRawProxies);
+  }
+
+  if (source.type === 'telegram') {
+    const text = rawText;
 
     // Deep scan Telegram channels for attached NPVT / document post files safely
     if (source.type === 'telegram' && db.settings.adminId && db.settings.botToken) {
@@ -4850,7 +5057,7 @@ async function scrapeSource(source: SourceItem): Promise<number> {
  */
 async function testProxiesBatch(ids: string[]) {
   if (!db.proxies) db.proxies = [];
-  addLog('info', `در حال آغاز تست اتصال پورت برای تعداد ${ids.length} پروکسی...`);
+  addLog('info', `در حال آغاز تست سخت‌گیرانه پروتکل برای تعداد ${ids.length} پروکسی تلگرام (بررسی Fake TLS و هندشیک)...`);
   
   let workingCount = 0;
   let failedCount = 0;
@@ -4872,7 +5079,7 @@ async function testProxiesBatch(ids: string[]) {
       if (!proxy) return;
 
       const checkResult = await withHardTimeout(
-        () => checkPortFull(proxy.server, proxy.port),
+        () => checkProxyStrict(proxy),
         5000,
         { working: false, latency: 999 }
       );
@@ -8491,7 +8698,7 @@ async function executeConfigsAutoPost(
   channelPostingLocks[channelTargetNum] = true;
 
   try {
-    // Purge any expired configs & proxies older than 24 hours before preparing post
+    // Purge any expired configs & proxies older than 48 hours before preparing post
     purgeOldConfigsAndProxies();
 
     addLog('info', `در حال آماده‌سازی و ارسال پست کانفیگ‌ها و پروکسی‌ها به کانال ${channelTargetNum} (${targetChannel})...`);
@@ -8505,21 +8712,32 @@ async function executeConfigsAutoPost(
       if (c[targetChannelKey]) return false;
       if (isConfigAlreadyOnChannelOrHistory(c, liveSnapshot, channelTargetNum)) return false;
       
-      // STRICT FRESHNESS REQUIREMENT: Only post configs extracted, created, or tested within the last 24 hours (1 day)
+      // STRICT 24-HOUR FRESHNESS: Only post configs posted/extracted within the last 24 hours (1 day)
       const now = Date.now();
-      const extractedTime = c.extractedAt ? new Date(c.extractedAt).getTime() : 0;
-      const createdTime = c.createdAt ? new Date(c.createdAt).getTime() : 0;
-      const checkedTime = c.lastChecked ? new Date(c.lastChecked).getTime() : 0;
-      const newestTime = Math.max(extractedTime, createdTime, checkedTime);
-      if (newestTime > 0 && (now - newestTime) > ONE_DAY_MS) {
-        return false;
+      const originDate = c.sourcePostDate || c.createdAt || c.extractedAt;
+      if (originDate) {
+        const originTime = new Date(originDate).getTime();
+        if (!isNaN(originTime) && originTime > 0 && (now - originTime) > ONE_DAY_MS) {
+          return false;
+        }
       }
       return true;
     };
 
     const isChProxyValid = (p: ProxyItem) => {
+      if (!p) return false;
       if (p[targetChannelKey]) return false;
       if (isProxyAlreadyOnChannelOrHistory(p, liveSnapshot, channelTargetNum)) return false;
+      
+      // STRICT 24-HOUR FRESHNESS: Only post proxies posted/extracted within the last 24 hours (1 day)
+      const now = Date.now();
+      const originDate = p.sourcePostDate || p.createdAt || p.extractedAt;
+      if (originDate) {
+        const originTime = new Date(originDate).getTime();
+        if (!isNaN(originTime) && originTime > 0 && (now - originTime) > ONE_DAY_MS) {
+          return false;
+        }
+      }
       return true;
     };
 
