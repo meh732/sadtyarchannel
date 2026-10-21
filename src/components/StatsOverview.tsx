@@ -11,7 +11,7 @@ export const StatsOverview: React.FC<StatsOverviewProps> = ({ configs, settings 
   const total = configs.length;
   const working = configs.filter((c) => c.status === 'working').length;
   const failed = configs.filter((c) => c.status === 'failed').length;
-  const pending = configs.filter((c) => c.status === 'pending' || !c.status).length;
+  const pending = configs.filter((c) => (c.status as string) === 'pending' || c.status === 'untested' || !c.status).length;
   const npvCount = configs.filter((c) => c.isNpv || c.protocol === 'npv').length;
 
   const successRate = total > 0 ? Math.round((working / (working + failed || 1)) * 100) : 0;

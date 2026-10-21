@@ -56,7 +56,7 @@ import {
   Smile,
   Wrench
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from './utils/motion';
 import { 
   ConfigItem, 
   ProxyItem,

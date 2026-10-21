@@ -386,7 +386,8 @@ export interface BotUser {
 export interface BotLog {
   id: string;
   timestamp: string;
-  level: 'info' | 'warn' | 'error' | 'success';
+  level: 'info' | 'warn' | 'error' | 'success' | 'warning';
+  type?: 'info' | 'warn' | 'error' | 'success' | 'warning';
   message: string;
 }
 
@@ -615,4 +616,17 @@ export interface LiveAntiDuplicateReport {
   totalBlacklistedTech: number;
   totalBlacklistedTools: number;
   message: string;
+}
+
+export type SystemLog = BotLog;
+
+export interface TestStatus {
+  isRunning: boolean;
+  total: number;
+  tested: number;
+  working: number;
+  failed: number;
+  currentConfig?: string;
+  progress: number;
+  mode?: 'real_http_curl' | 'port_check';
 }
