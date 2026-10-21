@@ -2846,7 +2846,7 @@ function connectTunnelViaProxy(
   timeout = 4500
 ): Promise<{ socket: net.Socket; latency: number }> {
   const parsed = parseProxyUri(proxyUri);
-  const isSocks = parsed.protocol === "socks5" || parsed.protocol === "socks" || proxyUri.toLowerCase().startsWith("socks");
+  const isSocks = parsed.protocol === "socks5" || proxyUri.toLowerCase().includes("socks");
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const socket = new net.Socket();
