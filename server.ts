@@ -3037,8 +3037,62 @@ async function checkV2RayProtocolHandshakeViaProxy(
   }
 }
 
+// Track Iran proxy consecutive failures to adapt timeout dynamically (fast fallback when proxy is filtered/down)
+let iranProxyConsecutiveFailures = 0;
+let iranProxyLastFailTime = 0;
+
+function getAdaptiveIranProxyTimeout(defaultMs = 2200): number {
+  if (iranProxyConsecutiveFailures >= 3 && (Date.now() - iranProxyLastFailTime) < 120000) {
+    return 850; // Fast 850ms probe when Iran proxy is known to be filtered/down so it still tests proxy first without slowing down main server fallback
+  }
+  return defaultMs;
+}
+
 /**
- * Performs FULL V2Ray Protocol & Handshake Verification of a configuration via Iran Proxy
+ * Direct TCP socket check from the Main Server (bypasses Iran proxy)
+ */
+async function checkPortDirect(host: string, port: number, timeout = 3200): Promise<{ working: boolean; latency: number }> {
+  if (!host || !port || isNaN(port)) {
+    return { working: false, latency: 999 };
+  }
+
+  const targetHost = await resolveHostFast(host);
+
+  return new Promise((resolve) => {
+    const start = Date.now();
+    let resolved = false;
+
+    const finish = (working: boolean) => {
+      if (resolved) return;
+      resolved = true;
+      try { socket.destroy(); } catch (e) {}
+      clearTimeout(timer);
+      const latency = Date.now() - start;
+      resolve({ working, latency: working ? Math.max(10, latency) : 999 });
+    };
+
+    const timer = setTimeout(() => finish(false), timeout + 150);
+
+    const socket = new net.Socket();
+    socket.setTimeout(timeout);
+
+    socket.on('connect', () => finish(true));
+    socket.on('error', () => finish(false));
+    socket.on('timeout', () => finish(false));
+    socket.on('close', () => finish(false));
+
+    try {
+      socket.connect(port, targetHost);
+    } catch (e) {
+      finish(false);
+    }
+  });
+}
+
+/**
+ * Performs FULL V2Ray Protocol & Handshake Verification of a configuration:
+ * Stage 1: Tests via Iran Relay Proxy (if configured).
+ * Stage 2: If Iran Relay Proxy fails / is filtered, automatically falls back to testing directly on the Main Server!
  */
 async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; latency: number }> {
   try {
@@ -3047,46 +3101,58 @@ async function checkConfigFully(rawConfig: string): Promise<{ working: boolean; 
       return { working: false, latency: 999 };
     }
 
-    // STRICT FULL V2RAY PROTOCOL HANDSHAKE VERIFICATION VIA IRAN RELAY PROXY:
+    // STAGE 1: TEST VIA IRAN RELAY PROXY FIRST (IF CONFIGURED)
     if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
       const proxyUri = db.settings.iranRelayProxy.trim();
+      const proxyTimeout = getAdaptiveIranProxyTimeout(2200);
       
-      // Perform full V2Ray TLS / WebSocket / Header handshake test through Iran proxy
-      const fullHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, details, 4500);
+      // 1A. Full V2Ray TLS / WebSocket / Header handshake test through Iran proxy
+      const fullHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, details, proxyTimeout);
       if (fullHandshake.working) {
+        iranProxyConsecutiveFailures = 0;
         return fullHandshake;
       }
 
-      // If SNI differs from host, attempt full handshake with SNI
+      // 1B. Fast port tunnel check through Iran proxy
+      const proxyPortCheck = await checkPortViaProxy(proxyUri, details.host, details.port, proxyTimeout);
+      if (proxyPortCheck.working) {
+        iranProxyConsecutiveFailures = 0;
+        return proxyPortCheck;
+      }
+
+      // 1C. If SNI differs from host, attempt handshake via Iran proxy with SNI
       if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
         const altDetails = { ...details, host: details.sni.trim() };
-        const sniHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, altDetails, 4500);
+        const sniHandshake = await checkV2RayProtocolHandshakeViaProxy(proxyUri, altDetails, proxyTimeout);
         if (sniHandshake.working) {
+          iranProxyConsecutiveFailures = 0;
           return sniHandshake;
         }
       }
 
-      // If full V2Ray handshake fails through Iran Proxy, mark strictly as failed (0% false positives)
-      return { working: false, latency: 999 };
+      // Record proxy failure and automatically proceed to Stage 2 (Main Server Fallback)
+      iranProxyConsecutiveFailures++;
+      iranProxyLastFailTime = Date.now();
     }
 
-    // 1. Fast direct TCP socket check to destination host/IP (only when Iran proxy is NOT configured)
-    const portCheck = await checkPort(details.host, details.port, 3800);
+    // STAGE 2: AUTOMATIC FALLBACK TO MAIN SERVER DIRECT TEST
+    // 2A. Direct TCP socket check from Main Server to destination host/IP
+    const portCheck = await checkPortDirect(details.host, details.port, 3000);
     if (portCheck.working) {
       return { working: true, latency: Math.max(10, Math.round(portCheck.latency)) };
     }
 
-    // 2. If destination host was an unreachable IP or CDN front, but SNI contains a valid domain, test SNI
+    // 2B. If destination host was an unreachable IP or CDN front, but SNI contains a valid domain, test SNI on Main Server
     if (details.sni && details.sni.trim() && details.sni.trim() !== details.host.trim() && !net.isIP(details.sni.trim())) {
-      const sniCheck = await checkPort(details.sni.trim(), details.port, 3500);
+      const sniCheck = await checkPortDirect(details.sni.trim(), details.port, 2800);
       if (sniCheck.working) {
         return { working: true, latency: Math.max(10, Math.round(sniCheck.latency)) };
       }
     }
 
-    // 3. Fallback: If TLS is enabled, verify via TLS handshake
+    // 2C. Fallback: If TLS is enabled, verify via direct TLS handshake from Main Server
     if (details.tls) {
-      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 3500);
+      const tlsCheck = await checkTlsHandshake(details.host, details.port, details.sni, 2800);
       if (tlsCheck.working) {
         return { working: true, latency: Math.max(10, Math.round(tlsCheck.latency)) };
       }
@@ -3269,31 +3335,40 @@ async function checkPortSocks5Proxy(proxyUri: string, targetHost: string, target
   });
 }
 
-let cachedIranProxyProtocol: 'http' | 'socks5' = 'http';
+let cachedIranProxyProtocol: 'http' | 'socks5' | null = null;
 
 async function checkPortViaProxy(
   proxyUri: string,
   targetHost: string,
   targetPort: number,
-  timeout = 3500
+  timeout = 2200
 ): Promise<{ working: boolean; latency: number }> {
   if (!proxyUri || !proxyUri.trim()) return { working: false, latency: 999 };
   const cleanUri = proxyUri.trim();
+  const isExplicitSocks = cleanUri.toLowerCase().startsWith('socks');
 
-  // 1. Try HTTP CONNECT proxy mode first (works for HTTP proxy, Squid, CCProxy on 1080)
+  if (isExplicitSocks || cachedIranProxyProtocol === 'socks5') {
+    const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, timeout);
+    if (socksRes.working) {
+      cachedIranProxyProtocol = 'socks5';
+      return socksRes;
+    }
+    const httpFallback = await checkPortHttpProxy(cleanUri, targetHost, targetPort, Math.min(timeout, 1200));
+    if (httpFallback.working) {
+      cachedIranProxyProtocol = 'http';
+      return httpFallback;
+    }
+    return { working: false, latency: 999 };
+  }
+
+  // Try HTTP CONNECT proxy mode first, then fallback to SOCKS5
   const httpRes = await checkPortHttpProxy(cleanUri, targetHost, targetPort, timeout);
   if (httpRes.working) {
     cachedIranProxyProtocol = 'http';
     return httpRes;
   }
 
-  // 2. If already detected as HTTP proxy, don't waste time on SOCKS5 timeout
-  if (cachedIranProxyProtocol === 'http') {
-    return { working: false, latency: 999 };
-  }
-
-  // 3. Fallback to SOCKS5 proxy mode
-  const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, Math.min(timeout, 2000));
+  const socksRes = await checkPortSocks5Proxy(cleanUri, targetHost, targetPort, Math.min(timeout, 1500));
   if (socksRes.working) {
     cachedIranProxyProtocol = 'socks5';
     return socksRes;
@@ -3302,52 +3377,35 @@ async function checkPortViaProxy(
   return { working: false, latency: 999 };
 }
 
-async function checkPort(host: string, port: number, timeout = 3800): Promise<{ working: boolean; latency: number }> {
+/**
+ * Dual-stage Port Check:
+ * 1. Tests via Iran relay proxy first if configured.
+ * 2. If Iran relay proxy fails or is filtered, automatically falls back to direct test on the Main Server.
+ */
+async function checkPort(host: string, port: number, timeout = 3200): Promise<{ working: boolean; latency: number }> {
   if (!host || !port || isNaN(port)) {
     return { working: false, latency: 999 };
   }
 
-  // If Iran relay proxy is configured in system settings, test port strictly via the Iran proxy
+  // Stage 1: Test via Iran relay proxy if configured
   if (db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim()) {
     try {
-      const proxyCheck = await checkPortViaProxy(db.settings.iranRelayProxy.trim(), host, port, timeout);
-      return proxyCheck;
+      const proxyTimeout = getAdaptiveIranProxyTimeout(Math.min(timeout, 2000));
+      const proxyCheck = await checkPortViaProxy(db.settings.iranRelayProxy.trim(), host, port, proxyTimeout);
+      if (proxyCheck.working) {
+        iranProxyConsecutiveFailures = 0;
+        return proxyCheck;
+      }
+      iranProxyConsecutiveFailures++;
+      iranProxyLastFailTime = Date.now();
     } catch (_) {
-      return { working: false, latency: 999 };
+      iranProxyConsecutiveFailures++;
+      iranProxyLastFailTime = Date.now();
     }
   }
 
-  const targetHost = await resolveHostFast(host);
-
-  return new Promise((resolve) => {
-    const start = Date.now();
-    let resolved = false;
-
-    const finish = (working: boolean) => {
-      if (resolved) return;
-      resolved = true;
-      try { socket.destroy(); } catch (e) {}
-      clearTimeout(timer);
-      const latency = Date.now() - start;
-      resolve({ working, latency: working ? Math.max(10, latency) : 999 });
-    };
-
-    const timer = setTimeout(() => finish(false), timeout + 150);
-
-    const socket = new net.Socket();
-    socket.setTimeout(timeout);
-
-    socket.on('connect', () => finish(true));
-    socket.on('error', () => finish(false));
-    socket.on('timeout', () => finish(false));
-    socket.on('close', () => finish(false));
-
-    try {
-      socket.connect(port, targetHost);
-    } catch (e) {
-      finish(false);
-    }
-  });
+  // Stage 2: Automatic fallback to Main Server direct TCP test
+  return checkPortDirect(host, port, timeout);
 }
 
 /**
@@ -4710,7 +4768,7 @@ async function testProxiesBatch(ids: string[]) {
 
       const checkResult = await withHardTimeout(
         () => checkPortFull(proxy.server, proxy.port),
-        2500,
+        5000,
         { working: false, latency: 999 }
       );
       
@@ -4748,7 +4806,7 @@ async function testConfigsBatch(ids: string[]) {
   const isIranProxyActive = Boolean(db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim());
   const proxyDisplay = isIranProxyActive ? db.settings.iranRelayProxy.replace(/:[^@]+@/, ':***@') : null;
   if (isIranProxyActive) {
-    addLog('info', `در حال آغاز تست اتصال پورت برای تعداد ${ids.length} کانفیگ از مسیر پروکسی ایران (${proxyDisplay})...`);
+    addLog('info', `در حال آغاز تست دو مرحله‌ای برای ${ids.length} کانفیگ (تست اول از مسیر پروکسی ایران ${proxyDisplay} و در صورت عدم پاسخ، تست مستقیم روی سرور اصلی)...`);
   } else {
     addLog('info', `در حال آغاز تست اتصال پورت برای تعداد ${ids.length} کانفیگ...`);
   }
@@ -4765,7 +4823,7 @@ async function testConfigsBatch(ids: string[]) {
   }
   saveDatabase();
 
-  const CONCURRENCY = isIranProxyActive ? 10 : 35;
+  const CONCURRENCY = isIranProxyActive ? 20 : 35;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const chunk = ids.slice(i, i + CONCURRENCY);
     await Promise.allSettled(chunk.map(async (id) => {
@@ -4774,7 +4832,7 @@ async function testConfigsBatch(ids: string[]) {
 
       const checkResult = await withHardTimeout(
         () => checkConfigFully(config.raw),
-        5200,
+        7500,
         { working: false, latency: 999 }
       );
       
@@ -16883,7 +16941,7 @@ function setupIntervals() {
     triggerBulkScrape();
   }, mins * 60 * 1000);
 
-  // Auto test interval (every 10 minutes test untested and stale working ones)
+  // Auto test interval (every 10 minutes test untested, stale working ones, and recover failed if working pool is low)
   const testMins = db.settings.autoTestInterval || 10;
   testIntervalRef = setInterval(() => {
     if (db.settings.autoTest) {
@@ -16900,7 +16958,13 @@ function setupIntervals() {
         .slice(0, 40)
         .map(c => c.id);
 
-      const configsToTest = [...untestedIds, ...staleWorkingIds];
+      // 2.5 If working configs are low (< 20), also re-test failed configs (e.g. when Iran proxy was filtered)
+      const workingConfigsCount = db.configs.filter(c => c.status === 'working').length;
+      const failedRecoveryIds = workingConfigsCount < 20
+        ? db.configs.filter(c => c.status === 'failed').slice(0, 60).map(c => c.id)
+        : [];
+
+      const configsToTest = Array.from(new Set([...untestedIds, ...staleWorkingIds, ...failedRecoveryIds]));
 
       // 3. Untested proxies
       const untestedProxies = (db.proxies || [])
@@ -16914,15 +16978,20 @@ function setupIntervals() {
         .slice(0, 20)
         .map(p => p.id);
 
-      const proxiesToTest = [...untestedProxies, ...staleWorkingProxies];
+      const workingProxiesCount = (db.proxies || []).filter(p => p.status === 'working').length;
+      const failedProxyRecoveryIds = workingProxiesCount < 5
+        ? (db.proxies || []).filter(p => p.status === 'failed').slice(0, 30).map(p => p.id)
+        : [];
+
+      const proxiesToTest = Array.from(new Set([...untestedProxies, ...staleWorkingProxies, ...failedProxyRecoveryIds]));
       
       if (configsToTest.length > 0) {
-        addLog('info', `اجرای خودکار تست بر روی ${untestedIds.length} کانفیگ جدید و ${staleWorkingIds.length} کانفیگ فعال قدیمی...`);
+        addLog('info', `اجرای خودکار تست بر روی ${configsToTest.length} کانفیگ (جدید: ${untestedIds.length}، قدیمی: ${staleWorkingIds.length}، بازیابی: ${failedRecoveryIds.length})...`);
         testConfigsBatch(configsToTest);
       }
 
       if (proxiesToTest.length > 0) {
-        addLog('info', `اجرای خودکار تست بر روی ${untestedProxies.length} پروکسی جدید و ${staleWorkingProxies.length} پروکسی فعال قدیمی...`);
+        addLog('info', `اجرای خودکار تست بر روی ${proxiesToTest.length} پروکسی...`);
         testProxiesBatch(proxiesToTest);
       }
     }
@@ -17020,6 +17089,30 @@ function setupIntervals() {
     monitorChannelPosts();
     checkAndTriggerBackup();
     runHourlyContentRefresh();
+
+    // Immediate recovery test if working configs are low (< 20)
+    const currentWorking = (db.configs || []).filter(c => c.status === 'working').length;
+    if (currentWorking < 20 && (db.configs || []).length > 0) {
+      const recoveryIds = (db.configs || [])
+        .filter(c => c.status === 'untested' || c.status === 'failed')
+        .slice(0, 80)
+        .map(c => c.id);
+      if (recoveryIds.length > 0) {
+        addLog('info', `🔄 بازیابی خودکار کانفیگ‌ها: آغاز تست دو مرحله‌ای (پروکسی ایران + سرور اصلی) بر روی ${recoveryIds.length} کانفیگ...`);
+        testConfigsBatch(recoveryIds).catch(err => console.error('Startup recovery test error:', err));
+      }
+    }
+
+    const currentWorkingProxies = (db.proxies || []).filter(p => p.status === 'working').length;
+    if (currentWorkingProxies < 5 && (db.proxies || []).length > 0) {
+      const proxyRecoveryIds = (db.proxies || [])
+        .filter(p => p.status === 'untested' || p.status === 'failed')
+        .slice(0, 40)
+        .map(p => p.id);
+      if (proxyRecoveryIds.length > 0) {
+        testProxiesBatch(proxyRecoveryIds).catch(err => console.error('Startup proxy recovery test error:', err));
+      }
+    }
   }, 5 * 1000);
 }
 
@@ -17689,7 +17782,7 @@ async function startExpressServer() {
           message: `✅ اتصال پروکسی ایران برقرار است! پینگ: ${finalResult.latency}ms | IP خروجی: ${exitNodeInfo.ip} (${exitNodeInfo.isp})`
         });
       } else {
-        diagnosticLogs.push({ time: nowStr, message: `ارتباط با پروکسی ایران ناموفق بود. لطفاً نام‌کاربری/رمزعبور، پورت یا فیلترینگ سرور واسط را بررسی نمایید.`, type: 'error' });
+        diagnosticLogs.push({ time: nowStr, message: `ارتباط با پروکسی ایران ناموفق بود (احتمال فیلترینگ یا مسدودی پورت). سیستم به‌صورت هوشمند در صورت عدم پاسخ پروکسی ایران، کانفیگ‌ها را مستقیماً روی سرور اصلی نیز تست می‌کند تا کانفیگ‌های سالم شناسایی شوند.`, type: 'warn' });
         return res.status(400).json({
           success: false,
           latency: 999,
@@ -17698,7 +17791,7 @@ async function startExpressServer() {
           sanitizedCurl: curls.sanitizedCurl,
           targetsTested,
           diagnosticLogs,
-          message: '❌ برقراری ارتباط با پروکسی ایران ناموفق بود. لطفاً آدرس IP، پورت و نام‌کاربری/رمزعبور را بررسی نمایید.'
+          message: '⚠️ ارتباط با پروکسی ایران برقرار نشد (احتمال فیلترینگ). با این حال، سیستم پس از تست پروکسی ایران، به‌صورت خودکار تست مستقیم روی سرور اصلی را انجام می‌دهد تا کانفیگ‌های سالم بدون وقفه شناسایی شوند.'
         });
       }
     } catch (err: any) {
@@ -17767,14 +17860,21 @@ async function startExpressServer() {
         
         curls = generateProxyCurlCommands(activeProxyUri, `http://${details.host}:${details.port}`);
 
-        // Perform test via Iran Proxy
-        simLogs.push({ time: nowStr, message: `تست اتصال پورت ${details.port} از مسیر تونل پروکسی ایران...`, type: 'info' });
-        proxyPing = await checkPortViaProxy(activeProxyUri, details.host, details.port, 3500);
+        // Perform test via Iran Proxy first
+        simLogs.push({ time: nowStr, message: `مرحله ۱: تست اتصال پورت ${details.port} از مسیر تونل پروکسی ایران...`, type: 'info' });
+        proxyPing = await checkPortViaProxy(activeProxyUri, details.host, details.port, 3000);
 
         if (proxyPing.working) {
-          simLogs.push({ time: nowStr, message: `✅ پاسخ پورت از سرور V2Ray با موفقیت دریافت گردید! (پینگ دست‌به‌دست: ${proxyPing.latency}ms)`, type: 'success' });
+          simLogs.push({ time: nowStr, message: `✅ پاسخ پورت از مسیر پروکسی ایران با موفقیت دریافت گردید! (پینگ دست‌به‌دست: ${proxyPing.latency}ms)`, type: 'success' });
         } else {
-          simLogs.push({ time: nowStr, message: `⚠️ پورت ${details.port} از مسیر پروکسی ایران پاسخی نداد (احتمال مسدودی یا خاموش بودن سرور).`, type: 'warn' });
+          simLogs.push({ time: nowStr, message: `⚠️ پورت ${details.port} از مسیر پروکسی ایران پاسخی نداد (احتمال فیلتر بودن پروکسی ایران). در حال اجرای مرحله ۲: تست مستقیم روی سرور اصلی...`, type: 'warn' });
+          const directFallback = await checkPortDirect(details.host, details.port, 3000);
+          if (directFallback.working) {
+            proxyPing = directFallback;
+            simLogs.push({ time: nowStr, message: `✅ مرحله ۲ (سرور اصلی): اتصال مستقیم به سرور کانفیگ با موفقیت برقرار شد! (پینگ سرور اصلی: ${directFallback.latency}ms)`, type: 'success' });
+          } else {
+            simLogs.push({ time: nowStr, message: `❌ پورت ${details.port} در تست مستقیم روی سرور اصلی نیز پاسخی نداد (کانفیگ غیرفعال است).`, type: 'error' });
+          }
         }
 
         try {
@@ -17782,8 +17882,8 @@ async function startExpressServer() {
           exitNodeInfo = { ...exitNodeInfo, ...detected };
         } catch (_) {}
       } else {
-        simLogs.push({ time: nowStr, message: `پروکسی ایران تنظیم نشده است؛ شبیه‌سازی به‌صورت مستقیم بدون واسط ایران انجام می‌پذیرد.`, type: 'warn' });
-        const directCheck = await checkPort(details.host, details.port, 3500);
+        simLogs.push({ time: nowStr, message: `پروکسی ایران تنظیم نشده است؛ شبیه‌سازی به‌صورت مستقیم روی سرور اصلی انجام می‌پذیرد.`, type: 'warn' });
+        const directCheck = await checkPortDirect(details.host, details.port, 3500);
         proxyPing = directCheck;
         curls.rawCurl = `curl -v "http://${details.host}:${details.port}"`;
         curls.sanitizedCurl = curls.rawCurl;

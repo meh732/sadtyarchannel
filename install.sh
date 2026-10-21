@@ -289,6 +289,8 @@ EOF
 
     # 7. Create Systemd Service
     echo -e "Creating systemd background service (${SERVICE_NAME})..."
+    NODE_BIN=$(which node 2>/dev/null || echo "/usr/bin/node")
+    NPM_BIN=$(which npm 2>/dev/null || echo "/usr/bin/npm")
     cat <<EOF > "$SERVICE_FILE"
 [Unit]
 Description=Sadtyar Telegram V2Ray Extractor & Auto-Poster Bot
@@ -298,10 +300,13 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=/usr/bin/npm start
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=${INSTALL_DIR}/.env
+ExecStart=${NODE_BIN} ${INSTALL_DIR}/server.js
 Restart=always
 RestartSec=3
-EnvironmentFile=${INSTALL_DIR}/.env
+KillSignal=SIGINT
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target
@@ -391,6 +396,35 @@ update_bot() {
     echo -e "${BLUE}Installing dependencies and building bundle...${PLAIN}"
     npm install --production=false
     npm run build
+
+    echo -e "${BLUE}Updating systemd service configuration...${PLAIN}"
+    NODE_BIN=$(which node 2>/dev/null || echo "/usr/bin/node")
+    cat <<EOF > "$SERVICE_FILE"
+[Unit]
+Description=Sadtyar Telegram V2Ray Extractor & Auto-Poster Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${INSTALL_DIR}
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=${INSTALL_DIR}/.env
+ExecStart=${NODE_BIN} ${INSTALL_DIR}/server.js
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Release any stuck/stale process holding the web port
+    SAVED_PORT=$(grep -oP 'PORT="?\K[0-9]+' "$INSTALL_DIR/.env" 2>/dev/null || echo "2222")
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k "${SAVED_PORT}/tcp" 2>/dev/null || true
+    fi
 
     echo -e "${BLUE}Restarting systemd service...${PLAIN}"
     systemctl daemon-reload

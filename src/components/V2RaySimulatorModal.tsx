@@ -150,7 +150,7 @@ export const V2RaySimulatorModal: React.FC<V2RaySimulatorModalProps> = ({
                 </span>
               </h2>
               <p className="text-xs text-slate-400">
-                تست پورت، شبیه‌سازی آنالیز ISPهای ایرانی، استخراج cURL و تولید config.json کلاینت
+                تست واقعی ارتباط HTTP، شبیه‌سازی آنالیز ISPهای ایرانی، استخراج cURL و تولید config.json کلاینت
               </p>
             </div>
           </div>
@@ -227,7 +227,7 @@ export const V2RaySimulatorModal: React.FC<V2RaySimulatorModalProps> = ({
                   </button>
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">
-                  {proxyUri ? 'تست پورت‌ها از مسیر این سرور انجام خواهد شد.' : 'پروکسی خالی است؛ تست به‌صورت مستقیم انجام می‌شود.'}
+                  {proxyUri ? 'تست واقعی ارتباط و دریافت داده از مسیر این سرور انجام خواهد شد.' : 'پروکسی خالی است؛ تست به‌صورت مستقیم انجام می‌شود.'}
                 </p>
               </div>
 
@@ -264,7 +264,7 @@ export const V2RaySimulatorModal: React.FC<V2RaySimulatorModalProps> = ({
                 {loading ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>در حال شبیه‌سازی و تست پورت...</span>
+                    <span>در حال شبیه‌سازی و تست واقعی HTTP...</span>
                   </>
                 ) : (
                   <>
