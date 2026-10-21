@@ -269,10 +269,12 @@ export interface ChannelHealthStatus {
   minutesSinceLastPost: number;
   inCooldown: boolean;
   cooldownRemainingMinutes: number;
+  minSpacingMinutes?: number;
   isSleepHours: boolean;
   isGoldenHour: boolean;
   currentTehranTime: string;
   reason?: string;
+  statusMessage?: string;
   statusLevel: 'optimal' | 'warning' | 'paused' | 'blocked';
 }
 
@@ -281,6 +283,12 @@ export interface DualChannelGrowthStatus {
   channel2: ChannelHealthStatus;
   globalAntiFloodActive: boolean;
   serverTimeTehran: string;
+  tehranTime?: {
+    timeStr: string;
+    dateStr: string;
+    isSleepHours: boolean;
+    isGoldenHour: boolean;
+  };
 }
 
 export interface FunNewsItem {
@@ -378,7 +386,8 @@ export interface BotUser {
 export interface BotLog {
   id: string;
   timestamp: string;
-  level: 'info' | 'warn' | 'error' | 'success';
+  level: 'info' | 'warn' | 'error' | 'success' | 'warning';
+  type?: 'info' | 'warn' | 'error' | 'success' | 'warning';
   message: string;
 }
 
@@ -607,4 +616,17 @@ export interface LiveAntiDuplicateReport {
   totalBlacklistedTech: number;
   totalBlacklistedTools: number;
   message: string;
+}
+
+export type SystemLog = BotLog;
+
+export interface TestStatus {
+  isRunning: boolean;
+  total: number;
+  tested: number;
+  working: number;
+  failed: number;
+  currentConfig?: string;
+  progress: number;
+  mode?: 'real_http_curl' | 'port_check';
 }
