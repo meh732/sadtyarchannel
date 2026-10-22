@@ -1967,7 +1967,7 @@ function applyBrandingToConfig(rawConfig: string, brandingText: string): string 
       const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
       const parsed = JSON.parse(decoded);
       parsed.ps = brandingText; // Set name of config (remarks)
-      const encoded = Buffer.from(JSON.stringify(parsed, null, 2)).toString('base64');
+      const encoded = Buffer.from(JSON.stringify(parsed)).toString('base64');
       return `vmess://${encoded}`;
     }
 
@@ -2748,18 +2748,6 @@ function cleanupCheckingStates() {
       if (c.status === 'checking') {
         c.status = 'untested';
         changed = true;
-      } else if (c.status === 'working') {
-        // Immediately fail configs with Iran DPI blocked domains/SNIs
-        if (IRAN_DPI_BLOCKED_DOMAINS_REGEX.test(c.raw || '') || IRAN_DPI_BLOCKED_DOMAINS_REGEX.test(c.server || '')) {
-          c.status = 'failed';
-          c.latency = null;
-          changed = true;
-        } else if (c.latency === null || c.latency < 75) {
-          // Reset old fake European raw-TCP pings (<75ms) so they are re-verified via real Xray core
-          c.status = 'untested';
-          c.latency = null;
-          changed = true;
-        }
       }
     }
   }
@@ -2767,10 +2755,6 @@ function cleanupCheckingStates() {
     for (const p of db.proxies) {
       if (p.status === 'checking') {
         p.status = 'untested';
-        changed = true;
-      } else if (p.status === 'working' && (p.latency === null || p.latency < 75)) {
-        p.status = 'untested';
-        p.latency = null;
         changed = true;
       }
     }
@@ -4542,24 +4526,22 @@ async function enforceConfigsRetentionLimit() {
   
   if (db.configs.length > maxRetention) {
     const initialCount = db.configs.length;
-    // Remove failed configs first
-    const nonFailed = db.configs.filter(c => c.status !== 'failed');
-    if (nonFailed.length <= maxRetention) {
-      db.configs = nonFailed;
-    } else {
-      db.configs = nonFailed.slice(0, maxRetention);
-    }
+    // Always preserve 'working' configs first, then 'untested'/'checking', and drop 'failed' first
+    const workingConfigs = db.configs.filter(c => c.status === 'working');
+    const pendingConfigs = db.configs.filter(c => c.status !== 'working' && c.status !== 'failed');
+    const combined = [...workingConfigs, ...pendingConfigs];
+    db.configs = combined.slice(0, maxRetention);
     const pruned = initialCount - db.configs.length;
     if (pruned > 0) {
-      addLog('info', `🧹 انطباق سقف مجاز دیتابیس: تعداد ${pruned} کانفیگ مازاد پاکسازی شدند تا تعداد کل از سقف تنظیم‌شده (${maxRetention} عدد) فراتر نرود.`);
+      addLog('info', `🧹 انطباق سقف مجاز دیتابیس: تعداد ${pruned} کانفیگ مازاد پاکسازی شدند تا تعداد کل از سقف تنظیم‌شده (${maxRetention} عدد) فراتر نرود (کانفیگ‌های سالم حفظ شدند).`);
       saveDatabase(true);
     }
   }
 }
 
 /**
- * Purges stored configs and proxies that are older than 24 hours (1 day)
- * Real age is determined by post date or creation time, NEVER by lastChecked.
+ * Purges stored configs and proxies that are older than 48 hours (2 days).
+ * Active working configs tested within the last 48 hours are strictly preserved.
  */
 function purgeOldConfigsAndProxies() {
   const now = Date.now();
@@ -4568,21 +4550,33 @@ function purgeOldConfigsAndProxies() {
 
   if (Array.isArray(db.configs)) {
     db.configs = db.configs.filter(c => {
-      const baseDate = c.sourcePostDate || c.createdAt || c.extractedAt;
-      if (!baseDate) return false;
+      if (c.status === 'working') {
+        const checkTime = c.lastChecked ? new Date(c.lastChecked).getTime() : 0;
+        if (!isNaN(checkTime) && checkTime > 0 && (now - checkTime) <= TWO_DAYS_MS) {
+          return true;
+        }
+      }
+      const baseDate = c.extractedAt || c.createdAt || c.sourcePostDate;
+      if (!baseDate) return c.status === 'working';
       const t = new Date(baseDate).getTime();
-      if (isNaN(t) || t <= 0) return false;
-      return (now - t) <= ONE_DAY_MS;
+      if (isNaN(t) || t <= 0) return c.status === 'working';
+      return (now - t) <= TWO_DAYS_MS;
     });
   }
 
   if (Array.isArray(db.proxies)) {
     db.proxies = db.proxies.filter(p => {
-      const baseDate = (p as any).sourcePostDate || p.createdAt || (p as any).extractedAt;
-      if (!baseDate) return false;
+      if (p.status === 'working') {
+        const checkTime = p.lastChecked ? new Date(p.lastChecked).getTime() : 0;
+        if (!isNaN(checkTime) && checkTime > 0 && (now - checkTime) <= TWO_DAYS_MS) {
+          return true;
+        }
+      }
+      const baseDate = (p as any).extractedAt || p.createdAt || (p as any).sourcePostDate;
+      if (!baseDate) return p.status === 'working';
       const t = new Date(baseDate).getTime();
-      if (isNaN(t) || t <= 0) return false;
-      return (now - t) <= ONE_DAY_MS;
+      if (isNaN(t) || t <= 0) return p.status === 'working';
+      return (now - t) <= TWO_DAYS_MS;
     });
   }
 
@@ -4593,7 +4587,7 @@ function purgeOldConfigsAndProxies() {
 
   if (purgedConfigs > 0 || purgedProxies > 0) {
     saveDatabase();
-    addLog('info', `🧹 پاکسازی خودکار انقضای ۲۴ ساعته: تعداد ${purgedConfigs} کانفیگ و ${purgedProxies} پروکسی قدیمی‌تر از ۲۴ ساعت از دیتابیس حذف شدند.`);
+    addLog('info', `🧹 پاکسازی خودکار انقضا: تعداد ${purgedConfigs} کانفیگ و ${purgedProxies} پروکسی قدیمی از دیتابیس حذف شدند.`);
   }
 
   return { purgedConfigs, purgedProxies };
@@ -5187,71 +5181,84 @@ async function testProxiesBatch(ids: string[]) {
 /**
  * Run 6-Layer Iran Network & Real Xray Core tunnel test on specific config IDs
  */
+let isTestingConfigsBatch = false;
+
 async function testConfigsBatch(ids: string[]) {
-  const isIranProxyActive = Boolean(db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim());
-  const proxyDisplay = isIranProxyActive ? db.settings.iranRelayProxy.replace(/:[^@]+@/, ':***@') : null;
-  if (isIranProxyActive) {
-    addLog('info', `در حال آغاز تست ۶ لایه شبکه ایران + هسته واقعی Xray برای ${ids.length} کانفیگ (به همراه پروکسی ایران ${proxyDisplay})...`);
-  } else {
-    addLog('info', `در حال آغاز تست واقعی ۶ لایه (فیلترینگ DPI ایران + تانل واقعی Xray Core + دریافت HTTP 204) برای ${ids.length} کانفیگ...`);
+  if (!ids || ids.length === 0) return;
+  if (isTestingConfigsBatch) {
+    addLog('info', `یک نوبت تست کانفیگ هم‌اکنون در حال اجراست؛ درخواست جدید (${ids.length} کانفیگ) با صف فعلی ادغام شد.`);
+    return;
   }
-  
-  let workingCount = 0;
-  let failedCount = 0;
+  isTestingConfigsBatch = true;
 
-  // Bulk set status to checking first for immediate UI reflection
-  for (const id of ids) {
-    const config = db.configs.find(c => c.id === id);
-    if (config) {
-      config.status = 'checking';
+  try {
+    const isIranProxyActive = Boolean(db.settings?.iranRelayProxy && db.settings.iranRelayProxy.trim());
+    const proxyDisplay = isIranProxyActive ? db.settings.iranRelayProxy.replace(/:[^@]+@/, ':***@') : null;
+    if (isIranProxyActive) {
+      addLog('info', `در حال آغاز تست ۶ لایه شبکه ایران + هسته واقعی Xray برای ${ids.length} کانفیگ (به همراه پروکسی ایران ${proxyDisplay})...`);
+    } else {
+      addLog('info', `در حال آغاز تست واقعی ۶ لایه (فیلترینگ DPI ایران + تانل واقعی Xray Core + دریافت HTTP 204) برای ${ids.length} کانفیگ...`);
     }
-  }
-  saveDatabase();
+    
+    let workingCount = 0;
+    let failedCount = 0;
 
-  const CONCURRENCY = 14;
-  for (let i = 0; i < ids.length; i += CONCURRENCY) {
-    const chunk = ids.slice(i, i + CONCURRENCY);
-    await Promise.allSettled(chunk.map(async (id) => {
-      const config = db.configs.find(c => c.id === id);
-      if (!config) return;
+    const CONCURRENCY = 14;
+    for (let i = 0; i < ids.length; i += CONCURRENCY) {
+      const chunk = ids.slice(i, i + CONCURRENCY);
 
-      const checkResult = await withHardTimeout(
-        () => checkConfigFully(config.raw),
-        8000,
-        { working: false, latency: 999 }
-      );
-      
-      // Refresh connection to DB object in case it was modified
-      const currentConfig = db.configs.find(c => c.id === id);
-      if (currentConfig) {
-        currentConfig.status = checkResult.working ? 'working' : 'failed';
-        currentConfig.latency = checkResult.working ? checkResult.latency : null;
-        currentConfig.lastChecked = new Date().toISOString();
-        
-        if (checkResult.working) workingCount++;
-        else failedCount++;
+      // Only mark the active chunk as 'checking' (and preserve 'working' status until check completes)
+      for (const id of chunk) {
+        const config = db.configs.find(c => c.id === id);
+        if (config && config.status !== 'working') {
+          config.status = 'checking';
+        }
       }
-    }));
+      saveDatabase();
 
-    saveDatabase();
-    await new Promise(r => setTimeout(r, 15));
-  }
+      await Promise.allSettled(chunk.map(async (id) => {
+        const config = db.configs.find(c => c.id === id);
+        if (!config) return;
 
-  // Final sanity cleanup for any config still in 'checking' status in this batch
-  for (const id of ids) {
-    const c = db.configs.find(item => item.id === id);
-    if (c && c.status === 'checking') {
-      c.status = 'failed';
+        const checkResult = await withHardTimeout(
+          () => checkConfigFully(config.raw),
+          8000,
+          { working: false, latency: 999 }
+        );
+        
+        // Refresh connection to DB object in case it was modified
+        const currentConfig = db.configs.find(c => c.id === id);
+        if (currentConfig) {
+          currentConfig.status = checkResult.working ? 'working' : 'failed';
+          currentConfig.latency = checkResult.working ? checkResult.latency : null;
+          currentConfig.lastChecked = new Date().toISOString();
+          
+          if (checkResult.working) workingCount++;
+          else failedCount++;
+        }
+      }));
+
+      saveDatabase();
+      await new Promise(r => setTimeout(r, 15));
     }
-  }
 
-  saveDatabase(true);
-  addLog('success', `پایان تست واقعی Xray و فیلترینگ ایران: تعداد ${workingCount} کانفیگ سالم و ${failedCount} کانفیگ فیلتر/غیرفعال شناسایی شدند.`);
+    // Final sanity cleanup for any config still in 'checking' status in this batch
+    for (const id of ids) {
+      const c = db.configs.find(item => item.id === id);
+      if (c && c.status === 'checking') {
+        c.status = 'failed';
+      }
+    }
+
+    saveDatabase(true);
+    addLog('success', `پایان تست واقعی Xray و فیلترینگ ایران: تعداد ${workingCount} کانفیگ سالم و ${failedCount} کانفیگ فیلتر/غیرفعال شناسایی شدند.`);
+  } finally {
+    isTestingConfigsBatch = false;
+  }
 }
 
 /**
- * Triggers bulk extraction across all active sources.
- * Empties all previous configs & proxies and replaces them with fresh newly extracted ones.
+ * Triggers bulk extraction across all active sources while preserving existing working configs & proxies.
  */
 async function triggerBulkScrape(): Promise<number> {
   // Purge expired configs older than 48 hours
@@ -5263,10 +5270,14 @@ async function triggerBulkScrape(): Promise<number> {
     return 0;
   }
 
-  addLog('info', `🔄 شروع فرآیند استخراج سراسری از ${enabledSources.length} منبع فعال... (تخلیه کامل کانفیگ‌های قبلی و جایگزینی با موارد جدید)`);
+  // Preserve existing working configs & proxies so channel posting never loses verified items!
+  const preservedWorkingConfigs = (db.configs || []).filter(c => c.status === 'working');
+  const preservedWorkingProxies = (db.proxies || []).filter(p => p.status === 'working');
 
-  const seenRawConfigs = new Set<string>();
-  const seenRawProxies = new Set<string>();
+  addLog('info', `🔄 شروع فرآیند استخراج سراسری از ${enabledSources.length} منبع فعال (با حفظ ${preservedWorkingConfigs.length} کانفیگ سالم فعلی)...`);
+
+  const seenRawConfigs = new Set<string>(preservedWorkingConfigs.map(c => (c.raw || '').trim()));
+  const seenRawProxies = new Set<string>(preservedWorkingProxies.map(p => (p.raw || '').trim()));
 
   const allNewConfigs: ConfigItem[] = [];
   const allNewProxies: ProxyItem[] = [];
@@ -5288,26 +5299,31 @@ async function triggerBulkScrape(): Promise<number> {
     }));
   }
 
-  // Purge previous configs and proxies and replace with newly extracted ones
-  const previousConfigsCount = db.configs.length;
-  const previousProxiesCount = (db.proxies || []).length;
-
   allowEmptyConfigsWipe = true;
-  db.configs = allNewConfigs;
-  db.proxies = allNewProxies;
+  db.configs = [...preservedWorkingConfigs, ...allNewConfigs];
+  db.proxies = [...preservedWorkingProxies, ...allNewProxies];
 
-  enforceConfigsRetentionLimit();
+  await enforceConfigsRetentionLimit();
   saveDatabase(true);
 
-  addLog('success', `✅ استخراج سراسری پایان یافت: تعداد ${previousConfigsCount} کانفیگ قبلی تخلیه شدند و ${allNewConfigs.length} کانفیگ جدید و ${allNewProxies.length} پروکسی جدید جایگزین گردیدند.`);
+  addLog('success', `✅ استخراج سراسری پایان یافت: ${preservedWorkingConfigs.length} کانفیگ سالم حفظ شد و ${allNewConfigs.length} کانفیگ جدید و ${allNewProxies.length} پروکسی جدید اضافه گردیدند.`);
 
-  // Auto-test ports if auto-test is enabled
+  // Auto-test a bounded batch of untested configs if auto-test is enabled
   if (db.settings.autoTest) {
-    if (allNewConfigs.length > 0) {
-      testConfigsBatch(allNewConfigs.map(c => c.id));
+    const batchLimit = Math.max(50, Math.min(250, Number(db.settings.testBatchLimit) || 120));
+    const untestedConfigIds = db.configs
+      .filter(c => c.status === 'untested')
+      .slice(0, batchLimit)
+      .map(c => c.id);
+    if (untestedConfigIds.length > 0) {
+      testConfigsBatch(untestedConfigIds).catch(console.error);
     }
-    if (allNewProxies.length > 0) {
-      testProxiesBatch(allNewProxies.map(p => p.id));
+    const untestedProxyIds = db.proxies
+      .filter(p => p.status === 'untested')
+      .slice(0, 60)
+      .map(p => p.id);
+    if (untestedProxyIds.length > 0) {
+      testProxiesBatch(untestedProxyIds).catch(console.error);
     }
   }
 
@@ -8186,27 +8202,15 @@ async function inspectChannelLiveContent(channelHandleOrUrl: string, forceRefres
 // Verification functions: 100% Anti-Duplicate Verification
 function isConfigAlreadyOnChannelOrHistory(c: ConfigItem, snapshot: ChannelLiveSnapshot, channelNum: 1 | 2): boolean {
   if (!c) return true;
-  // 1. Check persistent signatures
-  if (c.server && c.port) {
-    const sig = `${c.server.toLowerCase().trim()}:${c.port}`;
-    if (db.postedConfigSignatures?.some(s => s.ch === channelNum && s.sig === sig)) return true;
-  }
+  // 1. Check persistent signatures by exact UUID or server:port:uuid
   if (c.uuid) {
     const uuidSig = c.uuid.toLowerCase().trim();
     if (db.postedConfigSignatures?.some(s => s.ch === channelNum && s.sig === uuidSig)) return true;
-  }
-  // 2. Check snapshot from Telegram web view and internal post history
-  if (c.server) {
-    const cleanHost = c.server.toLowerCase().trim();
-    if (snapshot.extractedServers.has(cleanHost)) return true;
-  }
-  if (c.uuid) {
-    const cleanUuid = c.uuid.toLowerCase().trim();
-    if (snapshot.extractedUuids.has(cleanUuid)) return true;
+    if (snapshot.extractedUuids.has(uuidSig)) return true;
   }
   if (c.raw) {
-    const cleanRaw = c.raw.trim().toLowerCase();
-    if (snapshot.normalizedTexts.some(txt => txt.includes(cleanRaw))) return true;
+    const cleanRaw = c.raw.split('#')[0].trim().toLowerCase();
+    if (cleanRaw.length > 16 && snapshot.normalizedTexts.some(txt => txt.includes(cleanRaw))) return true;
   }
   return false;
 }
@@ -8752,19 +8756,30 @@ async function executeConfigsAutoPost(
 ): Promise<boolean> {
   const isCh2 = channelTargetNum === 2;
   const settings = isCh2 ? (db.settings.autoPost.channel2 || DEFAULT_CHANNEL2_SETTINGS) : db.settings.autoPost;
-  const targetChannel = customTargetChannel || settings?.targetChannel;
+  let rawTargetChannel = (customTargetChannel || settings?.targetChannel || (!isCh2 ? db.settings.branding : '') || '').trim();
+  if (rawTargetChannel && !rawTargetChannel.startsWith('@') && !rawTargetChannel.startsWith('-100') && !rawTargetChannel.includes('t.me/')) {
+    const handleMatch = rawTargetChannel.match(/@[a-zA-Z0-9_]+/);
+    if (handleMatch) rawTargetChannel = handleMatch[0];
+  }
+  const targetChannel = rawTargetChannel;
   if (!targetChannel) {
-    addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} انجام نشد: کانال مقصد تنظیم نشده است.`);
+    addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} انجام نشد: آیدی کانال مقصد در تنظیمات ثبت نشده است.`);
     return false;
   }
   if (!db.settings.botToken) {
-    addLog('warn', 'ارسال کانفیگ‌ها انجام نشد: توکن ربات فعال نیست.');
+    addLog('warn', 'ارسال کانفیگ‌ها انجام نشد: توکن ربات در تنظیمات فعال نیست.');
     return false;
   }
 
   if (channelPostingLocks[channelTargetNum]) {
-    addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} موقتاً متوقف شد: یک ارسال دیگر در همین لحظه در جریان است.`);
-    return false;
+    // Wait up to 4 seconds in case a brief operation is finishing
+    for (let w = 0; w < 8 && channelPostingLocks[channelTargetNum]; w++) {
+      await new Promise(r => setTimeout(r, 500));
+    }
+    if (channelPostingLocks[channelTargetNum]) {
+      addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} موقتاً متوقف شد: یک ارسال دیگر در همین لحظه در جریان است.`);
+      return false;
+    }
   }
   channelPostingLocks[channelTargetNum] = true;
 
@@ -8782,16 +8797,6 @@ async function executeConfigsAutoPost(
       if (!c) return false;
       if (c[targetChannelKey]) return false;
       if (isConfigAlreadyOnChannelOrHistory(c, liveSnapshot, channelTargetNum)) return false;
-      
-      // STRICT 24-HOUR FRESHNESS: Only post configs posted/extracted within the last 24 hours (1 day)
-      const now = Date.now();
-      const originDate = c.sourcePostDate || c.createdAt || c.extractedAt;
-      if (originDate) {
-        const originTime = new Date(originDate).getTime();
-        if (!isNaN(originTime) && originTime > 0 && (now - originTime) > ONE_DAY_MS) {
-          return false;
-        }
-      }
       return true;
     };
 
@@ -8799,16 +8804,6 @@ async function executeConfigsAutoPost(
       if (!p) return false;
       if (p[targetChannelKey]) return false;
       if (isProxyAlreadyOnChannelOrHistory(p, liveSnapshot, channelTargetNum)) return false;
-      
-      // STRICT 24-HOUR FRESHNESS: Only post proxies posted/extracted within the last 24 hours (1 day)
-      const now = Date.now();
-      const originDate = p.sourcePostDate || p.createdAt || p.extractedAt;
-      if (originDate) {
-        const originTime = new Date(originDate).getTime();
-        if (!isNaN(originTime) && originTime > 0 && (now - originTime) > ONE_DAY_MS) {
-          return false;
-        }
-      }
       return true;
     };
 
@@ -8962,37 +8957,72 @@ async function executeConfigsAutoPost(
     let selectedConfigs: ConfigItem[] = [];
 
     if (configLimit > 0) {
-      let unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
+      // Tier 1: Unposted working configs that pass anti-duplicate snapshot check
+      let candidatePool = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
 
-      // Quality control: If working green configs are fewer than required, auto-scrape fresh sources and live-test
-      if (unpostedWorking.length < configLimit) {
-        addLog('info', `موجودی کانفیگ‌های تست‌شده و سبز کاملاً جدید (${unpostedWorking.length} عدد) کمتر از سقف مجاز (${configLimit} عدد) است. در حال استخراج خودکار و تست اتصال فوری...`);
+      // Tier 2: Top up from any working config not yet marked posted on this channel
+      if (candidatePool.length < configLimit) {
+        const unpostedAny = db.configs.filter(c => c.status === 'working' && !c[targetChannelKey]);
+        const seenIds = new Set(candidatePool.map(c => c.id));
+        for (const c of unpostedAny) {
+          if (!seenIds.has(c.id)) {
+            candidatePool.push(c);
+            seenIds.add(c.id);
+          }
+        }
+      }
+
+      // Tier 3: Top up from all currently working green configs in DB (NEVER wipe existing working configs!)
+      if (candidatePool.length < configLimit) {
+        const allWorking = [...db.configs.filter(c => c.status === 'working')].sort((a, b) => {
+          const countA = a.postCount || 0;
+          const countB = b.postCount || 0;
+          if (countA !== countB) return countA - countB;
+          const latA = (typeof a.latency === 'number' && a.latency > 0) ? a.latency : 9999;
+          const latB = (typeof b.latency === 'number' && b.latency > 0) ? b.latency : 9999;
+          return latA - latB;
+        });
+        const seenIds = new Set(candidatePool.map(c => c.id));
+        for (const c of allWorking) {
+          if (!seenIds.has(c.id)) {
+            candidatePool.push(c);
+            seenIds.add(c.id);
+          }
+        }
+      }
+
+      // Tier 4: ONLY if total working configs in the entire database is less than configLimit, test a fast batch of untested configs
+      if (candidatePool.length < configLimit) {
+        addLog('info', `تعداد کل کانفیگ‌های سبز فعلی (${candidatePool.length} عدد) کمتر از ${configLimit} عدد است. در حال تست سریع کانفیگ‌های جدید...`);
         try {
-          await triggerBulkScrape();
+          if (db.configs.length === 0) {
+            await triggerBulkScrape();
+          }
           const untestedIds = db.configs
             .filter(c => c.status === 'untested')
-            .slice(0, Math.max(80, configLimit * 4))
+            .slice(0, 45)
             .map(c => c.id);
-          if (untestedIds.length > 0) {
+          if (untestedIds.length > 0 && !isTestingConfigsBatch) {
             await testConfigsBatch(untestedIds);
           }
         } catch (scrapeErr) {
-          console.error('Auto scrape on low unposted configs error:', scrapeErr);
+          console.error('Fast test on zero working configs error:', scrapeErr);
         }
-        unpostedWorking = db.configs.filter(c => c.status === 'working' && isChConfigValid(c));
-      }
-
-      // Fallback: If unpostedWorking is still fewer than configLimit, utilize all active green working configs
-      if (unpostedWorking.length < configLimit) {
-        const allWorking = db.configs.filter(c => c.status === 'working');
-        unpostedWorking = Array.from(new Set([...unpostedWorking, ...allWorking]));
+        const allWorkingNow = db.configs.filter(c => c.status === 'working');
+        const seenIds = new Set(candidatePool.map(c => c.id));
+        for (const c of allWorkingNow) {
+          if (!seenIds.has(c.id)) {
+            candidatePool.push(c);
+            seenIds.add(c.id);
+          }
+        }
       }
 
       // STRICT SPEED & QUALITY SORTING:
       // 1. Unposted configs first
       // 2. Lowest ping latency next
-      // 3. Least recently posted / checked
-      unpostedWorking.sort((a, b) => {
+      // 3. Most recently verified
+      candidatePool.sort((a, b) => {
         const unpostedA = !a[targetChannelKey] ? 0 : 1;
         const unpostedB = !b[targetChannelKey] ? 0 : 1;
         if (unpostedA !== unpostedB) return unpostedA - unpostedB;
@@ -9006,7 +9036,7 @@ async function executeConfigsAutoPost(
         return dateB - dateA;
       });
 
-      selectedConfigs = unpostedWorking.slice(0, configLimit);
+      selectedConfigs = candidatePool.slice(0, configLimit);
     }
 
     // Get requested proxies count
@@ -9018,17 +9048,17 @@ async function executeConfigsAutoPost(
     if (proxyLimit > 0) {
       const allProxies = db.proxies || [];
       const unpostedWorkingProxies = allProxies.filter(p => p.status === 'working' && isChProxyValid(p));
+      const anyWorkingProxies = allProxies.filter(p => p.status === 'working');
       const unpostedUntestedProxies = allProxies.filter(p => p.status === 'untested' && isChProxyValid(p));
-      const allUnpostedProxies = [...unpostedWorkingProxies, ...unpostedUntestedProxies];
+      const allCandidateProxies = Array.from(new Set([...unpostedWorkingProxies, ...anyWorkingProxies, ...unpostedUntestedProxies]));
 
-      if (allUnpostedProxies.length > 0) {
-        const shuffled = [...allUnpostedProxies].sort(() => 0.5 - Math.random());
-        selectedProxies = shuffled.slice(0, Math.min(proxyLimit, shuffled.length));
+      if (allCandidateProxies.length > 0) {
+        selectedProxies = allCandidateProxies.slice(0, Math.min(proxyLimit, allCandidateProxies.length));
       }
     }
 
     if (selectedConfigs.length === 0 && selectedProxies.length === 0) {
-      addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} انجام نشد: هیچ کانفیگ یا پروکسی جدید و منتشرنشده‌ای یافت نشد (جهت رعایت اکید قانون عدم ارسال تکراری، ارسال متوقف گردید).`);
+      addLog('warn', `ارسال کانفیگ‌ها به کانال ${channelTargetNum} انجام نشد: در حال حاضر هیچ کانفیگ سالمی در دیتابیس یافت نشد.`);
       return false;
     }
 
@@ -9070,19 +9100,18 @@ async function executeConfigsAutoPost(
     const allBrandedList = selectedConfigs.map(conf => applyBrandingToConfig(conf.raw, effectiveRemarkBranding));
     fullPackConfigsContent = allBrandedList.join('\n');
 
-    // Format all configs inside inlineBatch so ALL 20 configs appear directly in the post
+    // Format configs inside inlineBatch while respecting Telegram HTML entity expansion
     let inlineBatch = '';
     let inlineCount = 0;
     for (const confStr of allBrandedList) {
-      if ((inlineBatch + confStr + '\n').length < 3800) {
-        inlineBatch += (inlineBatch ? '\n' : '') + confStr;
+      const candidateBatch = inlineBatch ? `${inlineBatch}\n${confStr}` : confStr;
+      if (escapeHtml(candidateBatch).length < 3450) {
+        inlineBatch = candidateBatch;
         inlineCount++;
       } else {
-        // If approaching Telegram 4096 limit, pack the remaining configs tightly
         break;
       }
     }
-    // If still have configs and not combined, ensure full list is ready for attachment
     if (inlineCount < allBrandedList.length) {
       needsFullPackFile = true;
     }
@@ -9096,7 +9125,7 @@ async function executeConfigsAutoPost(
 
     const showPing = settings.displayPingInPosts === true;
     const hasMedia = Boolean(attachedFunItem && (attachedFunItem.imageUrl || attachedFunItem.videoUrl));
-    const maxAllowedChars = hasMedia ? 980 : 3850;
+    const maxAllowedChars = hasMedia ? 980 : 3950;
 
     // Helper to format post text with optional verbose intro/outro explanations
     const buildPostText = (includeVerboseExplanations: boolean, customInlineBatch?: string, customInlineCount?: number) => {
@@ -9114,9 +9143,7 @@ async function executeConfigsAutoPost(
       }
 
       t += `⚡ <b>${escapeHtml(effectiveHeadline)}</b>\n`;
-      t += `━━━━━━━━━━━━━━━━━━━━\n`;
-
-      t += `\n`;
+      t += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
       const activeBatch = customInlineBatch !== undefined ? customInlineBatch : inlineBatch;
       const activeCount = customInlineCount !== undefined ? customInlineCount : inlineCount;
@@ -9127,7 +9154,7 @@ async function executeConfigsAutoPost(
         if (activeBatch) {
           const copyTitle = activeCount === selectedConfigs.length 
             ? `📋 <b>کپی یکجای تمامی ${selectedConfigs.length} کانفیگ (روی کادر زیر لمس کنید):</b>`
-            : `📋 <b>کپی یکجای کانفیگ‌ها (${activeCount} از ${selectedConfigs.length} عدد):</b>`;
+            : `📋 <b>کپی یکجای کانفیگ‌ها (${activeCount} از ${selectedConfigs.length} عدد + فایل کامل در زیر):</b>`;
           t += `${copyTitle}\n`;
           t += `<blockquote expandable><code>${escapeHtml(activeBatch)}</code></blockquote>\n\n`;
         }
@@ -9155,19 +9182,12 @@ async function executeConfigsAutoPost(
 
     // If text exceeds Telegram character limit for this media type, automatically strip verbose intro/outro descriptions
     if (text.length > maxAllowedChars) {
-      addLog('info', `طول متن پست (${text.length} کاراکتر) از سقف مجاز تلگرام (${maxAllowedChars}) بیشتر بود. توضیحات تشریحی اضافه جهت جاگیری کامل تصویر/ویدیو تطبیق داده شد.`);
       text = buildPostText(false);
     }
 
-    // For pure 20-configs pack on Channel 1, NEVER drop configs!
-    if (!isCh2 && !isCombinedPost) {
-      // Ensure all 20 configs remain in text without dropping
-      needsFullPackFile = true;
-      if (text.length > maxAllowedChars) {
-        text = buildPostText(false);
-      }
-    } else if (text.length > maxAllowedChars) {
-      let trimmedList = [...allBrandedList];
+    // If still over maxAllowedChars, trim inline configs cleanly one by one so no config or footer is broken in half
+    if (text.length > maxAllowedChars) {
+      let trimmedList = allBrandedList.slice(0, inlineCount || allBrandedList.length);
       while (trimmedList.length > 1) {
         trimmedList.pop();
         const testBatch = trimmedList.join('\n');
@@ -9214,8 +9234,11 @@ async function executeConfigsAutoPost(
       }
     }
 
-    const safeText = safeTelegramHtmlLength(text, 3900);
-    const channelHandle = targetChannel.startsWith('@') ? targetChannel : `@${targetChannel.replace('@', '')}`;
+    const safeText = safeTelegramHtmlLength(text, 3980);
+    const cleanTarget = targetChannel.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\/(s\/)?/i, '').trim();
+    const channelHandle = (cleanTarget.startsWith('@') || cleanTarget.startsWith('-100'))
+      ? cleanTarget
+      : `@${cleanTarget.replace(/^@+/, '')}`;
     
     let sentMsg: any = null;
     if (attachedFunItem && (attachedFunItem.imageUrl || attachedFunItem.videoUrl)) {
@@ -9239,9 +9262,14 @@ async function executeConfigsAutoPost(
         }
         attachedFunItem.postedAt = nowIso;
       } else {
-        // If media sending failed, do NOT send plain text! Log warning and preserve channel quality
-        addLog('warn', 'ارسال مدیا (عکس/ویدیو) برای پست ترکیبی طنز ناموفق بود. جهت جلوگیری از ارسال متن خالی بدون تصویر، ارسال متوقف گردید.');
-        return false;
+        addLog('warn', 'مدیای مطلب طنز در دسترس نبود؛ در حال ارسال مستقیم کانفیگ‌ها به صورت متنی...');
+        sentMsg = await callTelegramApi('sendMessage', {
+          chat_id: channelHandle,
+          text: safeText,
+          parse_mode: 'HTML',
+          reply_markup: inlineButtons.length > 0 ? { inline_keyboard: inlineButtons } : undefined,
+          disable_notification: !!settings.silentMode
+        });
       }
     } else {
       sentMsg = await callTelegramApi('sendMessage', {
@@ -9405,7 +9433,11 @@ async function executeConfigsAutoPost(
       db.settings.autoPost.channel2.lastPostedAt = nowIso;
       db.settings.autoPost.channel2.lastAnyPostAt = nowIso;
     } else {
-      db.settings.autoPost.lastConfigsPostedAt = nowIso;
+      if (isCombinedPost || explicitPostMode === 'combined') {
+        db.settings.autoPost.lastFunConfigsPostedAt = nowIso;
+      } else {
+        db.settings.autoPost.lastConfigsPostedAt = nowIso;
+      }
       db.settings.autoPost.lastPostedAt = nowIso;
       db.settings.autoPost.lastAnyPostAt = nowIso;
     }
@@ -11926,7 +11958,7 @@ async function checkAndTriggerAutoPost() {
     if (ap.configsEnabled !== false && ((ap.configCount || 0) > 0 || (ap.proxyCount || 0) > 0)) {
       const configMinutes = Number(ap.configIntervalMinutes) || (Number(ap.configIntervalHours) ? Number(ap.configIntervalHours) * 60 : (Number(ap.postIntervalHours) ? Number(ap.postIntervalHours) * 60 : 240));
       const intervalMs = Math.max(30, configMinutes) * 60 * 1000;
-      const lastTime = ap.lastConfigsPostedAt || ap.lastPostedAt;
+      const lastTime = ap.lastConfigsPostedAt;
       const elapsed = lastTime ? (now - new Date(lastTime).getTime()) : Infinity;
       if (elapsed >= intervalMs) {
         const p = 20; // Highest priority: Channel 1 is strictly a VPN/Proxy channel
@@ -17426,7 +17458,7 @@ function setupIntervals() {
 
   
   // --- Unified Hourly Content Update Engine (AI Prompts, Tech News, Fun/Memes, Configs) ---
-  async function runHourlyContentRefresh() {
+  async function runHourlyContentRefresh(isStartup = false) {
     addLog('info', '⏰ در حال اجرای بروزرسانی ساعتی محتوا: کانفیگ‌ها، اخبار روز تکنولوژی، مطالب فان و پرامپت‌های هوش مصنوعی...');
     try {
       // 1. Refresh AI Prompts from web & seed
@@ -17450,8 +17482,11 @@ function setupIntervals() {
       // 3. Extract fresh Fun & Entertainment content
       await extractFunNewsFromSources().catch(err => console.error('Fun/News hourly refresh error:', err));
       
-      // 4. Scrape & refresh Configs and Proxies
-      await triggerBulkScrape().catch(err => console.error('Configs hourly scrape error:', err));
+      // 4. Scrape & refresh Configs and Proxies (skip on initial boot if working configs already exist)
+      const existingWorkingCount = (db.configs || []).filter(c => c.status === 'working').length;
+      if (!isStartup || existingWorkingCount < 20) {
+        await triggerBulkScrape().catch(err => console.error('Configs hourly scrape error:', err));
+      }
 
       addLog('success', '✅ بروزرسانی ساعتی محتوا با موفقیت کامل انجام شد (پرامپت‌ها، اخبار، مطالب فان و کانفیگ‌ها بروز شدند).');
     } catch (err: any) {
@@ -17461,7 +17496,7 @@ function setupIntervals() {
 
   // Auto refresh all content every 1 hour (60 minutes)
   setInterval(() => {
-    runHourlyContentRefresh();
+    runHourlyContentRefresh(false);
   }, 60 * 60 * 1000);
 
   // High-frequency crawl for Fun & News sources every 30 minutes
@@ -17482,7 +17517,7 @@ function setupIntervals() {
     }
     monitorChannelPosts();
     checkAndTriggerBackup();
-    runHourlyContentRefresh();
+    runHourlyContentRefresh(true);
 
     // Immediate recovery test if working configs are low (< 20)
     const currentWorking = (db.configs || []).filter(c => c.status === 'working').length;
@@ -19444,7 +19479,9 @@ async function startExpressServer() {
         const modeLabel = mode === 'pure' ? 'خالص (۲۰ تایی)' : (mode === 'combined' ? 'ترکیبی طنز (۵ تایی)' : '');
         res.json({ success: true, message: `پست کانفیگ‌ها ${modeLabel} با موفقیت به کانال ${channelNum} ارسال گردید.` });
       } else {
-        res.status(400).json({ success: false, message: 'ارسال کانفیگ‌ها با خطا مواجه شد یا موردی یافت نشد.' });
+        const lastWarnOrErr = (db.logs || []).find(l => l.type === 'warn' || l.type === 'error');
+        const reasonMsg = lastWarnOrErr?.message || 'ارسال کانفیگ‌ها با خطا مواجه شد یا موردی یافت نشد.';
+        res.status(400).json({ success: false, message: reasonMsg });
       }
     } catch(err: any) {
       res.status(500).json({ success: false, message: err.message });
